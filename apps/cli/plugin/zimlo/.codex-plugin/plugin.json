@@ -1,0 +1,28 @@
+{
+  "name": "zimlo",
+  "version": "0.1.0+codex.20260721164943",
+  "description": "Agent-authored progress Feed and action checkpoints for Codex",
+  "author": {
+    "name": "Zimlo"
+  },
+  "skills": "./skills/",
+  "interface": {
+    "displayName": "Zimlo",
+    "shortDescription": "Publish meaningful coding checkpoints to your local Feed.",
+    "longDescription": "Adds the Zimlo Feed protocol, MCP tools, and lifecycle checkpoints to Codex GUI tasks. Agents author posts explicitly; Zimlo stores and displays them without scraping logs or generating summaries.",
+    "developerName": "Zimlo",
+    "category": "Developer Tools",
+    "capabilities": [
+      "MCP tools",
+      "Lifecycle hooks",
+      "Local-only data"
+    ],
+    "defaultPrompt": [
+      "Start this coding task and keep Zimlo updated at meaningful checkpoints.",
+      "Post the current result to my Zimlo Feed.",
+      "Explain what is blocking this task and ask me through Zimlo."
+    ],
+    "brandColor": "#C7FF3D"
+  },
+  "mcpServers": "./.mcp.json"
+}

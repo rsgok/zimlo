@@ -3,6 +3,7 @@ import { platform, release } from "node:os";
 import { spawnSync } from "node:child_process";
 import { ZIMLO_PATHS } from "./paths.js";
 import { hookConfigChanges } from "./hook-config.js";
+import { inspectCodexPlugin } from "./codex-plugin.js";
 
 export interface DoctorCheck {
   name: string;
@@ -31,9 +32,15 @@ export async function runDoctor(entrypoint: string): Promise<DoctorCheck[]> {
     checks.push({ name: "~/.zimlo", ok: false, detail: error instanceof Error ? error.message : String(error) });
   }
   try {
+    const plugin = await inspectCodexPlugin(entrypoint);
+    checks.push({ name: "Codex GUI", ok: true, detail: plugin.detail });
+  } catch (error) {
+    checks.push({ name: "Codex GUI", ok: false, detail: error instanceof Error ? error.message : String(error) });
+  }
+  try {
     const changes = await hookConfigChanges(entrypoint);
     const installed = changes.every((change) => JSON.stringify(change.before) === JSON.stringify(change.after));
-    checks.push({ name: "hooks", ok: true, detail: installed ? "已安装" : "未安装或需要升级（被动发现仍可使用）" });
+    checks.push({ name: "CLI hooks", ok: true, detail: installed ? "已安装" : "未安装（GUI 用户应使用 Zimlo 插件）" });
   } catch (error) {
     checks.push({ name: "hooks", ok: false, detail: error instanceof Error ? error.message : String(error) });
   }

@@ -12,6 +12,7 @@ export interface HookConfigChange {
 }
 
 const CODEX_EVENTS = ["SessionStart", "UserPromptSubmit", "PreToolUse", "PostToolUse", "PermissionRequest", "Stop"] as const;
+const CODEX_PLUGIN_EVENTS = ["SessionStart", "UserPromptSubmit", "PermissionRequest", "Stop"] as const;
 const CLAUDE_EVENTS = [
   "SessionStart",
   "UserPromptSubmit",
@@ -23,6 +24,14 @@ const CLAUDE_EVENTS = [
   "Stop",
   "SessionEnd",
 ] as const;
+
+export function codexPluginHooks(entrypoint: string, nodePath = process.execPath): JsonObject {
+  const configured = appendHooks({}, CODEX_PLUGIN_EVENTS, zimloHookCommand(entrypoint, "codex", nodePath), "codex");
+  return {
+    description: "Zimlo Feed checkpoints and action bridge for Codex",
+    hooks: configured.hooks ?? {},
+  };
+}
 
 function clone(value: JsonObject): JsonObject {
   return JSON.parse(JSON.stringify(value)) as JsonObject;
@@ -41,8 +50,8 @@ function shellQuote(value: string): string {
   return `'${value.replaceAll("'", `'"'"'`)}'`;
 }
 
-export function zimloHookCommand(entrypoint: string, provider: "codex" | "claude"): string {
-  return `${shellQuote(process.execPath)} ${shellQuote(entrypoint)} hook --provider ${provider}`;
+export function zimloHookCommand(entrypoint: string, provider: "codex" | "claude", nodePath = process.execPath): string {
+  return `${shellQuote(nodePath)} ${shellQuote(entrypoint)} hook --provider ${provider}`;
 }
 
 function appendHooks(
@@ -69,7 +78,7 @@ function appendHooks(
     const handler: JsonObject = {
       type: "command",
       command,
-      timeout: event === "PermissionRequest" || event === "PreToolUse" ? 480 : 15,
+      timeout: event === "PermissionRequest" || event === "PreToolUse" ? 480 : event === "Stop" ? 3 : 5,
       statusMessage: event === "PermissionRequest" ? "Waiting for Zimlo approval" : "Updating Zimlo",
     };
     const group: JsonObject = { hooks: [handler] };

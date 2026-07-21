@@ -51,6 +51,7 @@ export function App() {
             localAdmin={bridge.localAdmin}
             devices={bridge.devices}
             pairing={bridge.pairing}
+            codexPlugin={bridge.codexPlugin}
             lanApprovalsEnabled={bridge.snapshot.lanApprovalsEnabled}
             send={bridge.send}
             forgetDevice={bridge.forgetDevice}
@@ -64,6 +65,7 @@ export function App() {
         <button aria-current={tab === "profile" ? "page" : undefined} className={tab === "profile" ? "active" : ""} onClick={() => {
           setTab("profile");
           if (bridge.localAdmin) bridge.send({ type: "devices.request" });
+          if (bridge.localAdmin) bridge.send({ type: "codex.plugin.request" });
         }}><span>◇</span>Profile</button>
       </nav>
 

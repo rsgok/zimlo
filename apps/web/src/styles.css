@@ -236,6 +236,9 @@ code, pre { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
 .empty-state h2 { margin: 12px 0 0; font-size: 30px; letter-spacing: -.04em; }
 .empty-state p { max-width: 500px; margin: 0; color: var(--muted); line-height: 1.65; }
 .empty-mark { width: 52px; height: 52px; font-size: 22px; }
+.settings-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; }
+.button-link { display: inline-flex; align-items: center; justify-content: center; text-decoration: none; }
+.codex-plugin-card small { display: block; margin-top: 8px; color: var(--muted); line-height: 1.5; }
 
 .bottom-nav {
   position: fixed;

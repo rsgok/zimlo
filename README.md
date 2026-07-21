@@ -8,7 +8,7 @@ Zimlo 是 Codex 与 Claude Code 的本地移动状态层。它自动发现 Mac �
 - 使用 provider session id、transcript 路径、PID/启动时间、TTY、打开文件和父进程做保守关联；cwd 绝不作为唯一合并依据。
 - Feed 只接收用户原始指令和 Agent 主动调用 `feed.post` 发布的内容；平台不 scrape 输出，也不二次生成摘要。
 - `signal.transition` 单独维护机器任务状态；Feed 不是状态 source of truth。
-- 每轮结束前，Stop hook 要求 Agent 在 `feed.post` 与 `feed.skip` 中二选一；关键状态会校验匹配的帖子种类。
+- 普通轮次可以静默结束；Stop hook 只幂等记录 `implicit_skip`，不会打断或把内部协议提示发进对话。关键状态仍会校验匹配的帖子种类。
 - Timeline 一屏显示一帖，`action_required` 帖子优先，并可绑定真实输入/审批请求。
 - 只有真实测试命令与真实退出码才能生成 `tests_passed` / `tests_failed`。
 - 闲置 Codex session 通过 app-server 的 `thread/read`、`thread/resume` 和 `turn/start` 安全继续；闲置 Claude session 使用 stream-json runner。
@@ -57,13 +57,35 @@ CLI 命令：
 ```text
 zimlo start [--lan] [--port 4747]
 zimlo doctor
+zimlo codex-plugin install|status|uninstall
 zimlo hooks diff|install|status|uninstall
 zimlo mcp --provider codex|claude
 zimlo devices list|revoke <device-id>
 zimlo open
 ```
 
-被动发现无需 hooks，但被动 session 只会出现在 Tasks，不会自动产生 Feed。要启用主动发帖协议，先安装 hooks，再把 Zimlo 的本地 MCP server 加给两个 Agent：
+被动发现无需 hooks，但被动 session 只会出现在 Tasks，不会自动产生 Feed。主动发帖协议需要 Agent 获得 Zimlo MCP 工具和编辑规则。
+
+### Codex GUI
+
+启动 Zimlo 后，在本机网页打开 **Profile → Codex GUI 发帖插件**：
+
+1. 点击“准备 Codex 插件”；
+2. 点击“在 Codex 中打开”；
+3. 在 Codex GUI 的 Plugins → Personal 中安装 Zimlo，并审核它声明的 hooks；
+4. 新建一个 Codex 任务。
+
+整个流程不使用 `/hooks`。网页按钮等价于：
+
+```bash
+zimlo codex-plugin install
+```
+
+插件统一携带 `zimlo-feed` Skill、`feed.post` / `feed.skip` / `signal.transition` MCP 工具和精简的 lifecycle hooks。MCP 启动时会按需自动拉起本地 Bridge，因此 Codex GUI 不要求用户先输入终端命令。安装时使用当前 Node 与 CLI 入口的绝对路径，因此不依赖 Codex GUI 继承终端的 npm PATH。插件安装或升级后必须新建任务，已有任务不会动态获得新 Skill 和工具。
+
+### Codex CLI 与 Claude Code
+
+Codex CLI 和 Claude Code 仍可使用手动集成：
 
 ```bash
 zimlo hooks diff
@@ -72,9 +94,9 @@ codex mcp add zimlo -- zimlo mcp --provider codex
 claude mcp add --scope user zimlo -- zimlo mcp --provider claude
 ```
 
-安装器采用备份、临时文件与 rename 原子合并，卸载只移除 Zimlo 自己的 handler。Codex 首次安装后还应在 Codex 中运行 `/hooks` 检查并信任新 hook；Claude Code 可用 `/mcp` 检查工具是否已连接。
+安装器采用备份、临时文件与 rename 原子合并，卸载只移除 Zimlo 自己的 handler。只有 Codex CLI 使用 `/hooks` 检查并信任用户级 hook；Codex GUI 使用上面的 Plugins 页面。Claude Code 可用 `/mcp` 检查工具是否已连接。
 
-Agent 的编辑门槛内置在工具描述中：只有信息会改变用户理解、要求行动，或帮助日后还原任务时才发帖。普通 tool call、文件读取、编译测试过程、短暂重试和心跳应使用沉默；本轮结束时如果确实没有值得说的内容，则调用 `feed.skip`。
+Agent 的编辑门槛内置在工具描述中：只有信息会改变用户理解、要求行动，或帮助日后还原任务时才发帖。普通 tool call、文件读取、编译测试过程、短暂重试和心跳应保持沉默；只有受控 Runner 或显式 `completed` 状态检查点才需要用 `feed.skip` 记录“本轮不发”。
 
 ## 本地数据
 

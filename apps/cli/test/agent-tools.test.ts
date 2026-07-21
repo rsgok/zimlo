@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { EMPTY_CAPABILITIES, type Session, type UnifiedEvent } from "@zimlo/protocol";
 import { AgentToolService, type AgentToolRequest } from "../src/agent-tools.js";
-import { stopFeedDecisionOutput } from "../src/hook-server.js";
+import { finalizeStopFeedDecision, hookClientTimeoutMs } from "../src/hook-server.js";
 import { RuntimeHub } from "../src/runtime.js";
 import { ZimloStore } from "../src/store.js";
 
@@ -103,27 +103,42 @@ describe("agent-authored feed protocol", () => {
 });
 
 describe("feed decision Stop checkpoint", () => {
-  it("blocks the turn until the Agent calls feed.post or feed.skip", () => {
+  it("silently records implicit_skip instead of blocking the turn", () => {
     const localStore = new ZimloStore(":memory:");
     const localRuntime = new RuntimeHub(localStore);
-    const localTools = new AgentToolService(localRuntime);
     try {
       localRuntime.upsertSession({ ...session, providerSessionId: "run-stop", id: "session-stop", cwd: "/tmp/project-stop", activePid: null });
-      expect(stopFeedDecisionOutput(localRuntime, "codex", "run-stop")).toMatchObject({ decision: "block" });
-
-      const skipped = localTools.handle({
-        type: "agent_tool",
-        id: "skip-1",
-        provider: "codex",
-        parentPid: 0,
-        cwd: "/tmp/project-stop",
-        name: "feed.skip",
-        arguments: { task_id: "run-stop", reason: "没有新的用户可见信息。" },
+      localStore.beginFeedCheckpoint({ agentId: "codex", runId: "run-stop", taskId: "task-stop", sessionId: "session-stop", startedAt: "2026-07-21T00:00:00.000Z" });
+      finalizeStopFeedDecision(localRuntime, "codex", "run-stop");
+      expect(localStore.getFeedCheckpoint("codex", "run-stop")).toMatchObject({
+        decisionKind: "implicit_skip",
+        decisionRef: "stop:implicit",
       });
-      expect(skipped.ok).toBe(true);
-      expect(stopFeedDecisionOutput(localRuntime, "codex", "run-stop")).toBeNull();
+      finalizeStopFeedDecision(localRuntime, "codex", "run-stop");
+      expect(localStore.getFeedCheckpoint("codex", "run-stop")?.decisionKind).toBe("implicit_skip");
     } finally {
       localStore.close();
     }
+  });
+
+  it("preserves an explicit decision and finalizes stale checkpoints on restart", () => {
+    const localStore = new ZimloStore(":memory:");
+    try {
+      localStore.beginFeedCheckpoint({ agentId: "codex", runId: "explicit", taskId: "task-explicit", sessionId: null, startedAt: "2026-07-21T00:00:00.000Z" });
+      localStore.recordFeedDecision({ agentId: "codex", runId: "explicit", taskId: "task-explicit", kind: "post", at: "2026-07-21T00:00:01.000Z", ref: "post-1" });
+      localStore.beginFeedCheckpoint({ agentId: "codex", runId: "stale", taskId: "task-stale", sessionId: null, startedAt: "2026-07-21T00:00:00.000Z" });
+      expect(localStore.finalizeOpenFeedCheckpoints("2026-07-21T00:02:00.000Z", "bridge:restart")).toBe(1);
+      expect(localStore.getFeedCheckpoint("codex", "explicit")?.decisionKind).toBe("post");
+      expect(localStore.getFeedCheckpoint("codex", "stale")).toMatchObject({ decisionKind: "implicit_skip", decisionRef: "bridge:restart" });
+    } finally {
+      localStore.close();
+    }
+  });
+
+  it("only lets approval and user-input hooks wait for a human", () => {
+    expect(hookClientTimeoutMs({ hook_event_name: "Stop" })).toBe(2_500);
+    expect(hookClientTimeoutMs({ hook_event_name: "PermissionRequest" })).toBe(481_000);
+    expect(hookClientTimeoutMs({ hook_event_name: "PreToolUse", tool_name: "AskUserQuestion" })).toBe(481_000);
+    expect(hookClientTimeoutMs({ hook_event_name: "PreToolUse", tool_name: "Bash" })).toBe(2_500);
   });
 });

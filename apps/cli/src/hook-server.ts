@@ -105,15 +105,20 @@ function eventKind(payload: Record<string, unknown>): UnifiedEvent["kind"] | nul
   return null;
 }
 
-const FEED_DECISION_REASON = "本轮尚未做 Feed 编辑决策。请调用 Zimlo 的 feed.post 发布值得说的内容，或调用 feed.skip 明确保持沉默，然后再结束。";
+const LEGACY_FEED_DECISION_REASON = "本轮尚未做 Feed 编辑决策。请调用 Zimlo 的 feed.post 发布值得说的内容，或调用 feed.skip 明确保持沉默，然后再结束。";
 
-export function stopFeedDecisionOutput(runtime: RuntimeHub, provider: Provider, runId: string): { decision: "block"; reason: string } | null {
+export function finalizeStopFeedDecision(runtime: RuntimeHub, provider: Provider, runId: string): void {
   const checkpoint = runtime.store.getFeedCheckpoint(provider, runId);
-  if (checkpoint?.decisionKind) return null;
-  return {
-    decision: "block",
-    reason: FEED_DECISION_REASON,
-  };
+  if (checkpoint?.decisionKind) return;
+  const now = new Date().toISOString();
+  runtime.store.recordFeedDecision({
+    agentId: provider,
+    runId,
+    taskId: checkpoint?.taskId ?? `run:${runId}`,
+    kind: "implicit_skip",
+    at: now,
+    ref: "stop:implicit",
+  });
 }
 
 export class HookServer {
@@ -211,7 +216,7 @@ export class HookServer {
 
     if (hookName === "UserPromptSubmit") {
       const prompt = payload.prompt ?? payload.message;
-      if (typeof prompt === "string" && prompt.trim() && prompt.trim() !== FEED_DECISION_REASON) {
+      if (typeof prompt === "string" && prompt.trim() && prompt.trim() !== LEGACY_FEED_DECISION_REASON) {
         const post: FeedPost = {
           id: uuidV7(),
           taskId: `run:${session.providerSessionId}`,
@@ -234,8 +239,7 @@ export class HookServer {
     }
 
     if (hookName === "Stop") {
-      const output = stopFeedDecisionOutput(this.runtime, request.provider, session.providerSessionId);
-      if (output) return { id: request.id, output };
+      finalizeStopFeedDecision(this.runtime, request.provider, session.providerSessionId);
     }
 
     const kind = eventKind(payload);
@@ -335,7 +339,7 @@ export async function runHookClient(provider: Provider, socketPath: string): Pro
     const timer = setTimeout(() => {
       socket.destroy();
       resolve(null);
-    }, 481_000);
+    }, hookClientTimeoutMs(payload));
     timer.unref();
     socket.setEncoding("utf8");
     socket.on("connect", () => socket.write(`${JSON.stringify(request)}\n`));
@@ -359,4 +363,11 @@ export async function runHookClient(provider: Provider, socketPath: string): Pro
   if (response?.output !== null && response?.output !== undefined) {
     process.stdout.write(`${JSON.stringify(response.output)}\n`);
   }
+}
+
+export function hookClientTimeoutMs(payload: Record<string, unknown>): number {
+  const event = String(payload.hook_event_name ?? "");
+  const waitsForHuman = event === "PermissionRequest"
+    || (event === "PreToolUse" && payload.tool_name === "AskUserQuestion");
+  return waitsForHuman ? 481_000 : 2_500;
 }

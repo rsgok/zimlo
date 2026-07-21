@@ -12,7 +12,8 @@
   "main": "dist/index.js",
   "files": [
     "dist",
-    "public"
+    "public",
+    "plugin"
   ],
   "scripts": {
     "build": "tsc -p tsconfig.json && node scripts/copy-web.mjs",

@@ -34,6 +34,8 @@ export interface DeviceRecord {
   isLocalAdmin: boolean;
 }
 
+export type FeedDecisionKind = "post" | "skip" | "implicit_skip";
+
 function json<T>(value: string): T {
   return JSON.parse(value) as T;
 }
@@ -498,7 +500,7 @@ export class ZimloStore {
     `).run(input.agentId, input.runId, input.taskId ?? null, input.sessionId, input.startedAt);
   }
 
-  recordFeedDecision(input: { agentId: string; runId: string; taskId: string; kind: "post" | "skip"; at: string; ref: string }): void {
+  recordFeedDecision(input: { agentId: string; runId: string; taskId: string; kind: FeedDecisionKind; at: string; ref: string }): void {
     this.database.prepare(`
       INSERT INTO feed_checkpoints (agent_id, run_id, task_id, session_id, started_at, decision_kind, decision_at, decision_ref)
       VALUES (?, ?, ?, NULL, ?, ?, ?, ?)
@@ -513,20 +515,31 @@ export class ZimloStore {
   getFeedCheckpoint(agentId: string, runId: string): {
     taskId: string | null;
     startedAt: string;
-    decisionKind: "post" | "skip" | null;
+    decisionKind: FeedDecisionKind | null;
     decisionAt: string | null;
+    decisionRef: string | null;
   } | null {
     const row = this.database.prepare(`
-      SELECT task_id, started_at, decision_kind, decision_at
+      SELECT task_id, started_at, decision_kind, decision_at, decision_ref
       FROM feed_checkpoints WHERE agent_id = ? AND run_id = ?
     `).get(agentId, runId) as Record<string, unknown> | undefined;
     if (!row) return null;
     return {
       taskId: row.task_id === null ? null : String(row.task_id),
       startedAt: String(row.started_at),
-      decisionKind: row.decision_kind === null ? null : row.decision_kind as "post" | "skip",
+      decisionKind: row.decision_kind === null ? null : row.decision_kind as FeedDecisionKind,
       decisionAt: row.decision_at === null ? null : String(row.decision_at),
+      decisionRef: row.decision_ref === null ? null : String(row.decision_ref),
     };
+  }
+
+  finalizeOpenFeedCheckpoints(at: string, ref: string): number {
+    const result = this.database.prepare(`
+      UPDATE feed_checkpoints
+      SET decision_kind = 'implicit_skip', decision_at = ?, decision_ref = ?
+      WHERE decision_kind IS NULL
+    `).run(at, ref);
+    return Number(result.changes);
   }
 
   listCards(): FeedCard[] {

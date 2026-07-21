@@ -45,11 +45,19 @@ export interface PairingInfo {
   expiresAt: string;
 }
 
+export interface CodexPluginInfo {
+  installed: boolean;
+  detail: string;
+  pluginPath: string;
+  deepLink: string;
+}
+
 interface BridgeState {
   snapshot: Snapshot;
   events: Record<string, UnifiedEvent[]>;
   devices: DeviceInfo[];
   pairing: PairingInfo | null;
+  codexPlugin: CodexPluginInfo | null;
   connected: boolean;
   pairingRequired: boolean;
   localAdmin: boolean;
@@ -116,6 +124,7 @@ export function useBridge() {
     events: {},
     devices: [],
     pairing: null,
+    codexPlugin: null,
     connected: false,
     pairingRequired: false,
     localAdmin: false,
@@ -171,6 +180,8 @@ export function useBridge() {
             return { ...current, pairing: message };
           case "lan.approvals.changed":
             return { ...current, snapshot: { ...current.snapshot, lanApprovalsEnabled: message.enabled } };
+          case "codex.plugin.status":
+            return { ...current, codexPlugin: message, notice: message.detail };
           case "capabilities.changed":
             return { ...current, snapshot: { ...current.snapshot, sessions: current.snapshot.sessions.map((session) => session.id === message.sessionId ? { ...session, capabilities: message.capabilities } : session) } };
           case "action.result":

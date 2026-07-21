@@ -7,6 +7,7 @@ import fastifyWebsocket from "@fastify/websocket";
 import QRCode from "qrcode";
 import type { ClientCommand, ServerMessage } from "@zimlo/protocol";
 import { ActionBroker } from "./action-broker.js";
+import { codexPluginDeepLink, inspectCodexPlugin, installCodexPlugin } from "./codex-plugin.js";
 import { DeviceManager } from "./device-manager.js";
 import { isLoopbackAddress, isTrustedLanAddress, preferredLanAddress } from "./network.js";
 import { ResumeService } from "./resume-service.js";
@@ -31,6 +32,7 @@ export class BridgeServer {
   private readonly devices: DeviceManager;
   private readonly resume: ResumeService;
   private readonly options: BridgeOptions;
+  private readonly entrypoint: string;
   private readonly connections = new Set<SecureSocket>();
   private readonly messageRuns = new Map<string, Promise<{ ok: boolean; message: string }>>();
   private app: FastifyInstance | null = null;
@@ -41,12 +43,14 @@ export class BridgeServer {
     broker: ActionBroker;
     devices: DeviceManager;
     resume: ResumeService;
+    entrypoint: string;
     options: BridgeOptions;
   }) {
     this.runtime = input.runtime;
     this.broker = input.broker;
     this.devices = input.devices;
     this.resume = input.resume;
+    this.entrypoint = input.entrypoint;
     this.options = input.options;
   }
 
@@ -145,6 +149,34 @@ export class BridgeServer {
           devices: this.devicesList(),
         });
         return;
+      case "codex.plugin.request": {
+        if (!connection.isLocalAdmin) return connection.send({ type: "error", code: "forbidden", message: "仅 Mac 本机管理页可查看 Codex 插件。" });
+        const status = await inspectCodexPlugin(this.entrypoint);
+        connection.send({
+          type: "codex.plugin.status",
+          installed: status.installed,
+          detail: status.detail,
+          pluginPath: status.paths.plugin,
+          deepLink: codexPluginDeepLink(status.paths),
+        });
+        return;
+      }
+      case "codex.plugin.install": {
+        if (!connection.isLocalAdmin) return connection.send({ type: "error", code: "forbidden", message: "仅 Mac 本机管理页可安装 Codex 插件。" });
+        try {
+          const status = await installCodexPlugin(this.entrypoint);
+          connection.send({
+            type: "codex.plugin.status",
+            installed: status.installed,
+            detail: "插件源已就绪。请在 Codex GUI 中安装 Zimlo，并审核 hooks。",
+            pluginPath: status.paths.plugin,
+            deepLink: codexPluginDeepLink(status.paths),
+          });
+        } catch (error) {
+          connection.send({ type: "error", code: "codex_plugin_install_failed", message: error instanceof Error ? error.message : String(error) });
+        }
+        return;
+      }
       case "action.decide": {
         if (!connection.isLocalAdmin && !this.runtime.lanApprovalsEnabled) {
           return connection.send({ type: "action.result", actionId: command.actionId, ok: false, message: "本次运行尚未在 Mac 上开启 LAN 审批。" });

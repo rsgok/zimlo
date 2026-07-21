@@ -6,6 +6,8 @@ import openBrowser from "open";
 import { ActionBroker } from "./action-broker.js";
 import { AgentToolService, runMcpServer } from "./agent-tools.js";
 import { BridgeServer } from "./bridge.js";
+import { ensureBridgeRunning } from "./bridge-supervisor.js";
+import { codexPluginDeepLink, inspectCodexPlugin, installCodexPlugin, uninstallCodexPlugin } from "./codex-plugin.js";
 import { DeviceManager } from "./device-manager.js";
 import { DiscoveryService } from "./discovery-service.js";
 import { formatDoctor, runDoctor } from "./doctor.js";
@@ -31,6 +33,7 @@ program.command("start")
     await mkdir(ZIMLO_PATHS.logs, { recursive: true, mode: 0o700 });
     const store = new ZimloStore(ZIMLO_PATHS.database);
     store.prune(7);
+    store.finalizeOpenFeedCheckpoints(new Date().toISOString(), "bridge:restart");
     const runtime = new RuntimeHub(store);
     const broker = new ActionBroker(runtime);
     const agentTools = new AgentToolService(runtime);
@@ -39,7 +42,7 @@ program.command("start")
     const resume = new ResumeService(runtime, broker);
     const hooks = new HookServer(runtime, broker, ZIMLO_PATHS.socket, agentTools);
     const discovery = new DiscoveryService(runtime);
-    const bridge = new BridgeServer({ runtime, broker, devices, resume, options: { port, lan: Boolean(options.lan) } });
+    const bridge = new BridgeServer({ runtime, broker, devices, resume, entrypoint, options: { port, lan: Boolean(options.lan) } });
 
     const urls = await bridge.start();
     await hooks.start();
@@ -84,12 +87,29 @@ hooks.command("install").action(async () => {
   const changes = await hookConfigChanges(entrypoint);
   await applyHookChanges(changes);
   console.log("Zimlo hooks 已原子合并；原配置已保留，已有文件同时创建了时间戳备份。");
-  console.log("Codex 用户首次安装后请在 Codex 中运行 `/hooks`，检查并信任新 hook。" );
+  console.log("Codex CLI 用户请运行 `/hooks` 检查并信任新 hook；Codex GUI 请改用 `zimlo codex-plugin install`。" );
 });
 hooks.command("uninstall").action(async () => {
   const changes = await hookConfigChanges(entrypoint, true);
   await applyHookChanges(changes);
   console.log("仅 Zimlo 自己的 hook 项已移除；用户原配置已保留。");
+});
+
+const codexPlugin = program.command("codex-plugin").description("Manage the Zimlo integration for Codex GUI");
+codexPlugin.command("install").action(async () => {
+  const status = await installCodexPlugin(entrypoint);
+  console.log("Zimlo 已加入 Codex GUI 的 Personal 插件源。" );
+  console.log("打开 Codex GUI → Plugins → Personal → Zimlo，点击安装并审核 hooks，然后新建任务。" );
+  console.log(`打开插件：${codexPluginDeepLink(status.paths)}`);
+});
+codexPlugin.command("status").action(async () => {
+  const status = await inspectCodexPlugin(entrypoint);
+  console.log(`${status.installed ? "✓" : "!"} ${status.detail}`);
+  console.log(status.paths.plugin);
+});
+codexPlugin.command("uninstall").action(async () => {
+  const status = await uninstallCodexPlugin();
+  console.log(status.detail);
 });
 
 const devices = program.command("devices").description("Manage paired browser devices");
@@ -133,6 +153,7 @@ program.command("mcp")
   .requiredOption("--provider <provider>")
   .action(async (options: { provider: string }) => {
     if (options.provider !== "codex" && options.provider !== "claude") throw new Error("未知 provider。");
+    await ensureBridgeRunning({ entrypoint, socketPath: ZIMLO_PATHS.socket, logPath: ZIMLO_PATHS.autostartLog });
     await runMcpServer(options.provider, ZIMLO_PATHS.socket);
   });
 

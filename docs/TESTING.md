@@ -1,5 +1,16 @@
 # 验证手册
 
+## Codex GUI 插件
+
+```bash
+pnpm exec vitest run apps/cli/test/codex-plugin.test.ts
+node apps/cli/dist/index.js codex-plugin status
+```
+
+手工验证：在本机 Profile 点击“准备 Codex 插件”，使用 deeplink 打开 Codex Plugins，安装并审核 hooks，然后**新建**任务。确认新任务能看到 Zimlo MCP 工具，MCP 会在 Bridge 未运行时自动拉起它，用户原始指令进入 Feed。普通轮次允许静默结束且不得出现 Feed 协议反馈；只有值得说的内容才调用 `feed.post`。
+
+Stop 回归检查：给 hook transport 输入一个没有 Feed 决策的 `Stop` 事件，stdout 必须为空，SQLite 对应 checkpoint 应变为 `implicit_skip`；重复同一 Stop 仍为空且不会覆盖显式 `post/skip`。
+
 ## 自动验证
 
 ```bash

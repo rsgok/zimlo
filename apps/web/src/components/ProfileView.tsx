@@ -1,16 +1,17 @@
 import type { ClientCommand } from "@zimlo/protocol";
-import type { DeviceInfo, PairingInfo } from "../hooks/useBridge";
+import type { CodexPluginInfo, DeviceInfo, PairingInfo } from "../hooks/useBridge";
 
 interface ProfileViewProps {
   localAdmin: boolean;
   devices: DeviceInfo[];
   pairing: PairingInfo | null;
   lanApprovalsEnabled: boolean;
+  codexPlugin: CodexPluginInfo | null;
   send: (command: ClientCommand) => void;
   forgetDevice: () => Promise<void>;
 }
 
-export function ProfileView({ localAdmin, devices, pairing, lanApprovalsEnabled, send, forgetDevice }: ProfileViewProps) {
+export function ProfileView({ localAdmin, devices, pairing, lanApprovalsEnabled, codexPlugin, send, forgetDevice }: ProfileViewProps) {
   return (
     <section className="profile-view">
       <div className="section-heading">
@@ -27,6 +28,21 @@ export function ProfileView({ localAdmin, devices, pairing, lanApprovalsEnabled,
 
       {localAdmin && (
         <>
+          <div className="settings-card codex-plugin-card">
+            <div>
+              <h3>Codex GUI 发帖插件</h3>
+              <p>{codexPlugin?.detail ?? "正在检查 Codex GUI 集成…"}</p>
+              <small>插件让新任务获得发帖与状态工具，并按需自动启动 Zimlo；普通对话可静默结束，无需输入 /hooks。</small>
+            </div>
+            <div className="settings-actions">
+              <button className="primary-button" onClick={() => send({ type: "codex.plugin.install" })}>
+                {codexPlugin?.installed ? "重新安装 / 修复" : "准备 Codex 插件"}
+              </button>
+              {codexPlugin?.installed && (
+                <a className="secondary-button button-link" href={codexPlugin.deepLink}>在 Codex 中打开</a>
+              )}
+            </div>
+          </div>
           <div className="settings-card settings-toggle">
             <div>
               <h3>允许本次运行接受 LAN 审批</h3>

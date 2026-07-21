@@ -17,7 +17,7 @@ export function FeedView({ posts, sessions, actions, send, onOpen }: FeedViewPro
       <div className="empty-state">
         <span className="empty-mark">Z</span>
         <h2>Feed 还没有帖子</h2>
-        <p>Session 会自动出现在 Tasks，但 Zimlo 不会把日志自动摘要成帖子。Agent 只有在明确调用 feed.post 后，内容才会出现在这里。</p>
+        <p>Session 会自动出现在 Tasks，但 Zimlo 不会把日志自动摘要成帖子。Codex GUI 用户请先在 Profile 准备并安装 Zimlo 插件；之后 Agent 明确调用 feed.post，内容才会出现在这里。</p>
       </div>
     );
   }

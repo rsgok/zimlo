@@ -34,7 +34,7 @@ function toolDefinitions() {
   return [
     {
       name: "feed.post",
-      description: `向 Zimlo 发布一条由你主动编辑、给人看的 Feed 帖子。平台不会替你 scrape 日志或生成摘要。${EDITORIAL_POLICY} 一轮结束前必须调用 feed.post 或 feed.skip 之一。`,
+      description: `向 Zimlo 发布一条由你主动编辑、给人看的 Feed 帖子。平台不会替你 scrape 日志或生成摘要。${EDITORIAL_POLICY} 普通轮次没有值得说的内容时可以直接保持沉默；关键状态由 signal.transition 校验。`,
       inputSchema: {
         type: "object",
         additionalProperties: false,
@@ -52,7 +52,7 @@ function toolDefinitions() {
     },
     {
       name: "feed.skip",
-      description: `明确记录本轮没有值得发布的新增信息。${EDITORIAL_POLICY} 这不是心跳帖，不会出现在 Timeline；它只满足结束检查点。`,
+      description: `显式记录当前受控检查点没有值得发布的新增信息。${EDITORIAL_POLICY} 这不是心跳帖，不会出现在 Timeline；普通聊天轮次无需为了结束而调用。`,
       inputSchema: {
         type: "object",
         additionalProperties: false,

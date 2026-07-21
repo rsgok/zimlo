@@ -235,6 +235,8 @@ export const ClientCommandSchema = z.discriminatedUnion("type", [
   }),
   z.object({ type: z.literal("session.events.request"), sessionId: z.string() }),
   z.object({ type: z.literal("devices.request") }),
+  z.object({ type: z.literal("codex.plugin.request") }),
+  z.object({ type: z.literal("codex.plugin.install") }),
   z.object({ type: z.literal("pairing.create") }),
   z.object({ type: z.literal("lan.approvals.set"), enabled: z.boolean() }),
 ]);
@@ -266,6 +268,13 @@ export type ServerMessage =
     }
   | { type: "pairing.created"; pairUrl: string; qrDataUrl: string; expiresAt: string }
   | { type: "lan.approvals.changed"; enabled: boolean }
+  | {
+      type: "codex.plugin.status";
+      installed: boolean;
+      detail: string;
+      pluginPath: string;
+      deepLink: string;
+    }
   | { type: "error"; code: string; message: string };
 
 export const EMPTY_CAPABILITIES: SessionCapabilities = {
