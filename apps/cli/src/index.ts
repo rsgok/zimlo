@@ -21,7 +21,7 @@ import { ZimloStore } from "./store.js";
 const entrypoint = fileURLToPath(import.meta.url);
 const program = new Command();
 
-program.name("zimlo").description("Local feed and action layer for coding agents").version("0.1.0");
+program.name("zimlo").description("Local feed and action layer for coding agents").version("0.2.0");
 
 program.command("start")
   .description("Start the local Bridge and web app")

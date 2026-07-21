@@ -28,7 +28,7 @@ export interface AgentToolResult {
   data?: unknown;
 }
 
-const EDITORIAL_POLICY = `只在信息会让用户更新对任务的理解、采取动作，或以后快速还原发生了什么时发布。应该发布：重要新事实、可理解的阶段成果、实质计划变化、风险/失败/输入请求、等待审查和最终影响。不要发布：单个 tool call、普通读文件/编译/测试过程、短暂重试、心跳或没有新信息的重复状态。`;
+const EDITORIAL_POLICY = `只在信息会改变用户判断、行动或信心时发布。每帖按“结论 → 用户影响 → 关键事实 → 证据 → 下一步”编辑；不要发布普通工具调用、文件读取、编译过程、原始日志、心跳或重复状态。`;
 
 function toolDefinitions() {
   return [
@@ -38,13 +38,17 @@ function toolDefinitions() {
       inputSchema: {
         type: "object",
         additionalProperties: false,
-        required: ["task_id", "kind", "title", "body", "action_required", "actions", "dedupe_key"],
+        required: ["task_id", "kind", "template", "headline", "takeaway", "highlights", "action_required", "actions", "dedupe_key"],
         properties: {
           task_id: { type: "string", minLength: 1, maxLength: 160, description: "本次任务的稳定标识；同一任务后续帖子保持一致。" },
           kind: { type: "string", enum: ["progress", "decision", "attention", "result", "failure"] },
-          title: { type: "string", minLength: 1, maxLength: 160 },
-          body: { type: "string", minLength: 1, maxLength: 4000 },
+          template: { type: "string", enum: ["paper", "grid", "sticky", "marker", "poster"], description: "选择有限的文字卡模板；不能传颜色、字体或 CSS。" },
+          headline: { type: "string", minLength: 1, maxLength: 72, description: "直接表达已经发生的结果，禁止使用“阶段进展”等空标题。" },
+          takeaway: { type: "string", minLength: 1, maxLength: 320, description: "用一到两句话解释为什么这件事值得用户现在读。" },
+          highlights: { type: "array", maxItems: 3, items: { type: "string", minLength: 1, maxLength: 100 }, description: "最多三条可验证事实，每条只表达一件事。" },
+          proof: { type: "string", minLength: 1, maxLength: 160, description: "可选的一项测试、检查或一手证据，不得粘贴原始日志。" },
           action_required: { type: "boolean" },
+          action_prompt: { type: "string", minLength: 1, maxLength: 240, description: "仅在需要用户处理时提供，直接说明用户要决定或输入什么。" },
           actions: { type: "array", maxItems: 4, items: { type: "string", enum: ["approve", "reject", "reply", "open_diff"] } },
           dedupe_key: { type: "string", minLength: 1, maxLength: 240, description: "同一语义帖重试时保持不变，避免重复发布。" },
         },
@@ -106,13 +110,17 @@ export class AgentToolService {
       agentId: request.provider,
       sessionId: session.id,
       kind: input.kind,
-      title: redactText(input.title, 160),
-      body: redactText(input.body, 4_000),
+      template: input.template,
+      headline: redactText(input.headline, 72),
+      takeaway: redactText(input.takeaway, 320),
+      highlights: input.highlights.map((highlight) => redactText(highlight, 100)),
+      ...(input.proof ? { proof: redactText(input.proof, 160) } : {}),
       actionRequired: input.action_required,
+      ...(input.action_prompt ? { actionPrompt: redactText(input.action_prompt, 240) } : {}),
       actions: input.actions,
       pendingActionIds: [],
       dedupeKey: input.dedupe_key,
-      source: "agent",
+      source: "agent" as const,
       createdAt: now,
     };
     const stored = this.runtime.postFeed(post);
@@ -245,7 +253,7 @@ export async function runMcpServer(provider: Provider, socketPath: string): Prom
     const method = String(message.method ?? "");
     if (id === undefined) return;
     if (method === "initialize") {
-      respond({ jsonrpc: "2.0", id, result: { protocolVersion: "2025-03-26", capabilities: { tools: {} }, serverInfo: { name: "zimlo", version: "0.1.0" } } });
+      respond({ jsonrpc: "2.0", id, result: { protocolVersion: "2025-03-26", capabilities: { tools: {} }, serverInfo: { name: "zimlo", version: "0.2.0" } } });
       return;
     }
     if (method === "ping") {

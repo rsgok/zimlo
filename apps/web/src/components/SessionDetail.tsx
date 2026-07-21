@@ -1,11 +1,12 @@
 import { useEffect, useState } from "react";
-import type { ClientCommand, PendingAction, Session, UnifiedEvent } from "@zimlo/protocol";
+import type { ClientCommand, FeedPost, PendingAction, Session, UnifiedEvent } from "@zimlo/protocol";
 import { ActionPanel } from "./ActionPanel";
 
 interface SessionDetailProps {
   session: Session;
   events: UnifiedEvent[];
   actions: PendingAction[];
+  posts: FeedPost[];
   send: (command: ClientCommand) => void;
   onClose: () => void;
 }
@@ -19,9 +20,16 @@ function eventTitle(event: UnifiedEvent): string {
   return event.kind.replaceAll("_", " ");
 }
 
-export function SessionDetail({ session, events, actions, send, onClose }: SessionDetailProps) {
+function instructionText(event: UnifiedEvent): string {
+  if (!event.payload || typeof event.payload !== "object") return readablePayload(event.payload);
+  const prompt = (event.payload as Record<string, unknown>).prompt;
+  return typeof prompt === "string" ? prompt : readablePayload(event.payload);
+}
+
+export function SessionDetail({ session, events, actions, posts, send, onClose }: SessionDetailProps) {
   const [message, setMessage] = useState("");
   const diffEvents = events.filter((event) => event.kind === "files_changed");
+  const instructions = events.filter((event) => event.kind === "user_instruction");
   useEffect(() => {
     const closeOnEscape = (event: KeyboardEvent) => {
       if (event.key === "Escape") onClose();
@@ -45,6 +53,36 @@ export function SessionDetail({ session, events, actions, send, onClose }: Sessi
           <div className="warning-banner">Zimlo 没有足够强的证据把该进程与某个 transcript 合并，因此保留为独立 Session。</div>
         )}
         {actions.map((action) => <ActionPanel key={action.actionId} action={action} send={send} />)}
+
+        {instructions.length > 0 && (
+          <section className="detail-section task-origins">
+            <h3>任务起点</h3>
+            <p className="muted">你交给 Agent 的原始指令只保留在任务详情，不进入主 Feed。</p>
+            {[...instructions].reverse().map((event) => (
+              <details className="instruction-row" key={event.id}>
+                <summary>
+                  <span>{instructionText(event).slice(0, 280)}{instructionText(event).length > 280 ? "…" : ""}</span>
+                  <small>{new Date(event.occurredAt).toLocaleString("zh-CN")}</small>
+                </summary>
+                {instructionText(event).length > 280 && <pre>{instructionText(event)}</pre>}
+              </details>
+            ))}
+          </section>
+        )}
+
+        {posts.length > 0 && (
+          <section className="detail-section detail-posts">
+            <h3>Feed 更新</h3>
+            {[...posts].reverse().map((post) => (
+              <article key={post.id}>
+                <strong>{post.headline}</strong>
+                <p>{post.takeaway}</p>
+                {post.highlights.length > 0 && <ul>{post.highlights.map((item) => <li key={item}>{item}</li>)}</ul>}
+                {post.proof && <small>已验证：{post.proof}</small>}
+              </article>
+            ))}
+          </section>
+        )}
 
         <section className="reply-section">
           <div>
@@ -73,7 +111,7 @@ export function SessionDetail({ session, events, actions, send, onClose }: Sessi
         <section className="detail-section">
           <h3>关键事件</h3>
           <div className="event-list">
-            {[...events].reverse().map((event) => (
+            {[...events].filter((event) => event.kind !== "user_instruction").reverse().map((event) => (
               <details className="event-row" key={event.id}>
                 <summary>
                   <span>{eventTitle(event)}</span>

@@ -1,5 +1,8 @@
 import type { ClientCommand, FeedPost, PendingAction, Session } from "@zimlo/protocol";
 import { FeedPostView } from "./FeedPostView";
+import { ActionFeedCard } from "./ActionFeedCard";
+import { buildFeedItems } from "./feedItems";
+import { SwipeToTask } from "./SwipeToTask";
 
 interface FeedViewProps {
   posts: FeedPost[];
@@ -11,29 +14,37 @@ interface FeedViewProps {
 
 export function FeedView({ posts, sessions, actions, send, onOpen }: FeedViewProps) {
   const sessionById = new Map(sessions.map((session) => [session.id, session]));
-  const sorted = [...posts].sort((left, right) => Number(right.actionRequired) - Number(left.actionRequired) || right.createdAt.localeCompare(left.createdAt));
-  if (sorted.length === 0) {
+  const items = buildFeedItems(posts, actions);
+  if (items.length === 0) {
     return (
       <div className="empty-state">
         <span className="empty-mark">Z</span>
         <h2>Feed 还没有帖子</h2>
-        <p>Session 会自动出现在 Tasks，但 Zimlo 不会把日志自动摘要成帖子。Codex GUI 用户请先在 Profile 准备并安装 Zimlo 插件；之后 Agent 明确调用 feed.post，内容才会出现在这里。</p>
+        <p>原始任务会保留在 Tasks。只有值得你阅读的 Agent 判断、结果和待处理操作才会出现在这里。</p>
       </div>
     );
   }
   return (
     <div className="feed-timeline" aria-label="Agent Feed">
-      {sorted.map((post, index) => (
-        <section className="feed-page" key={post.id} aria-label={`${index + 1} / ${sorted.length}`}>
-        <FeedPostView
-          post={post}
-          session={post.sessionId ? sessionById.get(post.sessionId) : undefined}
-          actions={actions.filter((action) => post.pendingActionIds.includes(action.actionId))}
-          send={send}
-          onOpen={onOpen}
-          position={index + 1}
-          total={sorted.length}
-        />
+      {items.map((item, index) => (
+        <section className="feed-page" key={`${item.type}:${item.id}`} aria-label={`${index + 1} / ${items.length}`}>
+          <SwipeToTask sessionId={item.type === "post" ? item.post.sessionId : item.action.sessionId} onOpen={onOpen}>
+            {item.type === "post" ? <FeedPostView
+              post={item.post}
+              session={item.post.sessionId ? sessionById.get(item.post.sessionId) : undefined}
+              actions={actions.filter((action) => item.post.pendingActionIds.includes(action.actionId))}
+              send={send}
+              onOpen={onOpen}
+              position={index + 1}
+              total={items.length}
+            /> : <ActionFeedCard
+              action={item.action}
+              session={sessionById.get(item.action.sessionId)}
+              send={send}
+              position={index + 1}
+              total={items.length}
+            />}
+          </SwipeToTask>
         </section>
       ))}
     </div>

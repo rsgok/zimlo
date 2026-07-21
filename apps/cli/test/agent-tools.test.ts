@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { EMPTY_CAPABILITIES, type Session, type UnifiedEvent } from "@zimlo/protocol";
 import { AgentToolService, type AgentToolRequest } from "../src/agent-tools.js";
-import { finalizeStopFeedDecision, hookClientTimeoutMs } from "../src/hook-server.js";
+import { finalizeStopFeedDecision, hookClientTimeoutMs, ingestUserInstruction } from "../src/hook-server.js";
 import { RuntimeHub } from "../src/runtime.js";
 import { ZimloStore } from "../src/store.js";
 
@@ -45,8 +45,11 @@ describe("agent-authored feed protocol", () => {
     const args = {
       task_id: "task-a",
       kind: "progress",
-      title: "完成认证重构",
-      body: "刷新竞态已修复，关键路径测试通过。",
+      template: "grid",
+      headline: "完成认证重构",
+      takeaway: "刷新竞态已修复，用户不会再被重复登出。",
+      highlights: ["刷新请求只保留一个在途实例"],
+      proof: "关键路径测试通过",
       action_required: false,
       actions: [],
       dedupe_key: "task-a:auth-fixed",
@@ -55,6 +58,24 @@ describe("agent-authored feed protocol", () => {
     expect(tools.handle(request("feed.post", args)).data).toMatchObject({ deduplicated: true });
     expect(store.listFeedPosts()).toHaveLength(1);
     expect(store.getFeedCheckpoint("codex", "run-a")?.decisionKind).toBe("post");
+    expect(store.listFeedPosts()[0]).toMatchObject({ template: "grid", headline: "完成认证重构", highlights: ["刷新请求只保留一个在途实例"] });
+  });
+
+  it("rejects incomplete V2 posts without storing partial content", () => {
+    const missingPrompt = tools.handle(request("feed.post", {
+      task_id: "task-a",
+      kind: "attention",
+      template: "marker",
+      headline: "需要选择兼容方案",
+      takeaway: "旧客户端无法读取新记录。",
+      highlights: [],
+      action_required: true,
+      actions: ["reply"],
+      dedupe_key: "task-a:invalid",
+    }));
+    expect(missingPrompt.ok).toBe(false);
+    expect(missingPrompt.message).toContain("action_prompt");
+    expect(store.listFeedPosts()).toHaveLength(0);
   });
 
   it("records feed.skip without creating a Timeline post", () => {
@@ -72,9 +93,12 @@ describe("agent-authored feed protocol", () => {
     tools.handle(request("feed.post", {
       task_id: "task-a",
       kind: "attention",
-      title: "需要选择兼容方案",
-      body: "两种迁移策略会影响旧客户端，请确认。",
+      template: "marker",
+      headline: "需要选择兼容方案",
+      takeaway: "两种迁移策略会影响旧客户端。",
+      highlights: ["旧客户端仍在使用"],
       action_required: true,
+      action_prompt: "建议先保留兼容读取，是否继续？",
       actions: ["reply"],
       dedupe_key: "task-a:compat-choice",
     }));
@@ -103,6 +127,21 @@ describe("agent-authored feed protocol", () => {
 });
 
 describe("feed decision Stop checkpoint", () => {
+  it("stores user prompts as Task events without creating Feed posts", () => {
+    const localStore = new ZimloStore(":memory:");
+    const localRuntime = new RuntimeHub(localStore);
+    try {
+      localRuntime.upsertSession(session);
+      ingestUserInstruction(localRuntime, "codex", session, "请修复登录问题", "turn-a");
+      expect(localStore.listFeedPosts()).toHaveLength(0);
+      expect(localStore.listEvents(session.id)).toEqual([
+        expect.objectContaining({ kind: "user_instruction", turnId: "turn-a", payload: { prompt: "请修复登录问题" } }),
+      ]);
+    } finally {
+      localStore.close();
+    }
+  });
+
   it("silently records implicit_skip instead of blocking the turn", () => {
     const localStore = new ZimloStore(":memory:");
     const localRuntime = new RuntimeHub(localStore);

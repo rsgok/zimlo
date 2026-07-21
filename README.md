@@ -6,10 +6,10 @@ Zimlo 是 Codex 与 Claude Code 的本地移动状态层。它自动发现 Mac �
 
 - 每 2 秒扫描 Codex/Claude Code 进程，并增量读取最近 7 天、每个 provider 最多 200 个 transcript。
 - 使用 provider session id、transcript 路径、PID/启动时间、TTY、打开文件和父进程做保守关联；cwd 绝不作为唯一合并依据。
-- Feed 只接收用户原始指令和 Agent 主动调用 `feed.post` 发布的内容；平台不 scrape 输出，也不二次生成摘要。
+- 用户原始指令只保留在 Task 详情；Feed 只接收 Agent 主动编辑的结构化阅读卡和真实待处理操作，平台不 scrape 输出，也不二次生成摘要。
 - `signal.transition` 单独维护机器任务状态；Feed 不是状态 source of truth。
 - 普通轮次可以静默结束；Stop hook 只幂等记录 `implicit_skip`，不会打断或把内部协议提示发进对话。关键状态仍会校验匹配的帖子种类。
-- Timeline 一屏显示一帖，`action_required` 帖子优先，并可绑定真实输入/审批请求。
+- Timeline 一屏显示一张文字卡，`action_required` 帖子优先，并可直接完成真实输入/审批请求。
 - 只有真实测试命令与真实退出码才能生成 `tests_passed` / `tests_failed`。
 - 闲置 Codex session 通过 app-server 的 `thread/read`、`thread/resume` 和 `turn/start` 安全继续；闲置 Claude session 使用 stream-json runner。
 - 活跃外部终端 session 禁止 TTY 注入；精确 hook 审批仍可按原请求闭环。
@@ -96,7 +96,9 @@ claude mcp add --scope user zimlo -- zimlo mcp --provider claude
 
 安装器采用备份、临时文件与 rename 原子合并，卸载只移除 Zimlo 自己的 handler。只有 Codex CLI 使用 `/hooks` 检查并信任用户级 hook；Codex GUI 使用上面的 Plugins 页面。Claude Code 可用 `/mcp` 检查工具是否已连接。
 
-Agent 的编辑门槛内置在工具描述中：只有信息会改变用户理解、要求行动，或帮助日后还原任务时才发帖。普通 tool call、文件读取、编译测试过程、短暂重试和心跳应保持沉默；只有受控 Runner 或显式 `completed` 状态检查点才需要用 `feed.skip` 记录“本轮不发”。
+Agent 的编辑门槛内置在工具描述与 Skill 中：只有信息会改变用户判断、行动或信心才发帖。每张卡按“结论 → 用户影响 → 关键事实 → 证据 → 下一步”书写，并从 `paper / grid / sticky / marker / poster` 中选择模板。普通 tool call、文件读取、编译测试过程、短暂重试和心跳应保持沉默；只有受控 Runner 或显式 `completed` 状态检查点才需要用 `feed.skip` 记录“本轮不发”。
+
+Feed V2 的 `feed.post` 使用结构化字段：`headline`、`takeaway`、最多三条 `highlights`、可选 `proof`，以及需要用户处理时的 `action_prompt`。升级插件后必须新建 Codex 任务；旧任务缓存的 V1 工具参数不再兼容。
 
 ## 本地数据
 

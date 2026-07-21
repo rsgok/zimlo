@@ -75,6 +75,7 @@ export function App() {
           session={selectedSession}
           events={bridge.events[selectedSession.id] ?? []}
           actions={bridge.snapshot.actions.filter((action) => action.sessionId === selectedSession.id)}
+          posts={bridge.snapshot.posts.filter((post) => post.sessionId === selectedSession.id)}
           send={bridge.send}
           onClose={() => setSelectedSessionId(null)}
         />

@@ -19,6 +19,7 @@ import {
   saveCredentials,
   type DeviceCredentials,
 } from "../lib/credentials";
+import { normalizeFeedPost, normalizeSnapshot } from "../lib/feedCompatibility";
 
 const EMPTY_SNAPSHOT: Snapshot = {
   sessions: [],
@@ -142,7 +143,7 @@ export function useBridge() {
       setState((current) => {
         switch (message.type) {
           case "session.snapshot":
-            return { ...current, snapshot: message.snapshot, error: null };
+            return { ...current, snapshot: normalizeSnapshot(message.snapshot), error: null };
           case "session.updated":
             return { ...current, snapshot: { ...current.snapshot, sessions: upsertById(current.snapshot.sessions, message.session) } };
           case "session.removed":
@@ -158,8 +159,12 @@ export function useBridge() {
             };
           case "card.upsert":
             return { ...current, snapshot: { ...current.snapshot, cards: upsertById(current.snapshot.cards, message.card) } };
-          case "feed.posted":
-            return { ...current, snapshot: { ...current.snapshot, posts: upsertById(current.snapshot.posts, message.post) } };
+          case "feed.posted": {
+            const post = normalizeFeedPost(message.post);
+            return post
+              ? { ...current, snapshot: { ...current.snapshot, posts: upsertById(current.snapshot.posts, post) } }
+              : current;
+          }
           case "task.updated":
             return { ...current, snapshot: { ...current.snapshot, tasks: upsertById(current.snapshot.tasks, message.task) } };
           case "action.upsert": {

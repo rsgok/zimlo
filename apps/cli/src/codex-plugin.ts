@@ -25,6 +25,7 @@ export interface CodexPluginStatus {
   pluginPresent: boolean;
   marketplacePresent: boolean;
   commandsCurrent: boolean;
+  versionCurrent: boolean;
   detail: string;
   paths: CodexPluginPaths;
 }
@@ -177,7 +178,9 @@ export async function installCodexPlugin(entrypoint: string, options: CodexPlugi
 export async function inspectCodexPlugin(entrypoint: string, options: CodexPluginOptions = {}): Promise<CodexPluginStatus> {
   const paths = codexPluginPaths(options.home);
   const nodePath = options.nodePath ?? process.execPath;
+  const sourceRoot = options.sourceRoot ?? bundledCodexPluginRoot(entrypoint);
   const manifest = await readJson(join(paths.plugin, ".codex-plugin", "plugin.json"));
+  const bundledManifest = await readJson(join(sourceRoot, ".codex-plugin", "plugin.json"));
   const marketplace = await readJson(paths.marketplace);
   const pluginPresent = manifest?.name === PLUGIN_NAME;
   const entries = Array.isArray(marketplace?.plugins) ? marketplace.plugins : [];
@@ -193,15 +196,20 @@ export async function inspectCodexPlugin(entrypoint: string, options: CodexPlugi
     && server?.command === nodePath
     && args[0] === entrypoint
     && args.slice(1).join(" ") === "mcp --provider codex";
-  const installed = pluginPresent && marketplacePresent && commandsCurrent;
+  const versionCurrent = typeof manifest?.version === "string"
+    && typeof bundledManifest?.version === "string"
+    && manifest.version === bundledManifest.version;
+  const installed = pluginPresent && marketplacePresent && commandsCurrent && versionCurrent;
   const detail = installed
     ? "已安装；请在 Codex GUI 的 Plugins → Personal 中启用 Zimlo"
     : !pluginPresent
       ? "未安装"
       : !marketplacePresent
         ? "插件文件存在，但 Personal marketplace 未注册"
-        : "插件命令指向旧版 CLI，需要重新安装";
-  return { installed, pluginPresent, marketplacePresent, commandsCurrent, detail, paths };
+        : !commandsCurrent
+          ? "插件命令指向旧版 CLI，需要重新安装"
+          : "插件内容版本已过期，请重新安装并新建 Codex 任务";
+  return { installed, pluginPresent, marketplacePresent, commandsCurrent, versionCurrent, detail, paths };
 }
 
 export async function uninstallCodexPlugin(options: CodexPluginOptions = {}): Promise<CodexPluginStatus> {
@@ -224,6 +232,7 @@ export async function uninstallCodexPlugin(options: CodexPluginOptions = {}): Pr
     pluginPresent: false,
     marketplacePresent: false,
     commandsCurrent: false,
+    versionCurrent: false,
     detail: "Zimlo Personal 插件源已移除；若 GUI 中仍显示已安装，请在 Plugins 页面卸载",
     paths,
   };

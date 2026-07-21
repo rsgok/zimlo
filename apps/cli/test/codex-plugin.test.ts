@@ -70,6 +70,21 @@ describe("Codex GUI plugin installer", () => {
     expect(updated.plugins.some((item: { name: string }) => item.name === "other")).toBe(true);
   });
 
+  it("detects an installed plugin whose bundled content version is stale", async () => {
+    const testHome = await home();
+    const paths = codexPluginPaths(testHome);
+    await installCodexPlugin(entrypoint, { home: testHome, sourceRoot, nodePath });
+    const manifestPath = resolve(paths.plugin, ".codex-plugin", "plugin.json");
+    const manifest = JSON.parse(await readFile(manifestPath, "utf8"));
+    manifest.version = "0.1.0-stale";
+    await writeFile(manifestPath, JSON.stringify(manifest));
+
+    const status = await inspectCodexPlugin(entrypoint, { home: testHome, sourceRoot, nodePath });
+    expect(status.installed).toBe(false);
+    expect(status.versionCurrent).toBe(false);
+    expect(status.detail).toContain("重新安装");
+  });
+
   it("removes only its own source entry and plugin directory", async () => {
     const testHome = await home();
     const paths = codexPluginPaths(testHome);

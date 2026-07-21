@@ -5,6 +5,7 @@ export type Provider = z.infer<typeof ProviderSchema>;
 
 export const EventKindSchema = z.enum([
   "session_started",
+  "user_instruction",
   "plan_updated",
   "files_changed",
   "command_started",
@@ -76,6 +77,7 @@ export const SessionSchema = z.object({
   provider: ProviderSchema,
   providerSessionId: z.string(),
   title: z.string(),
+  projectName: z.string().nullable().optional(),
   cwd: z.string().nullable(),
   transcriptPath: z.string().nullable(),
   status: SessionStatusSchema,
@@ -115,7 +117,6 @@ export const PendingActionSchema = z.object({
 export type PendingAction = z.infer<typeof PendingActionSchema>;
 
 export const FeedPostKindSchema = z.enum([
-  "instruction",
   "progress",
   "decision",
   "attention",
@@ -124,17 +125,34 @@ export const FeedPostKindSchema = z.enum([
 ]);
 export type FeedPostKind = z.infer<typeof FeedPostKindSchema>;
 
+export const FeedTemplateSchema = z.enum(["paper", "grid", "sticky", "marker", "poster"]);
+export type FeedTemplate = z.infer<typeof FeedTemplateSchema>;
+
 export const FeedActionSchema = z.enum(["approve", "reject", "reply", "open_diff"]);
 export type FeedAction = z.infer<typeof FeedActionSchema>;
 
 export const FeedPostInputSchema = z.object({
   task_id: z.string().min(1).max(160),
-  kind: FeedPostKindSchema.exclude(["instruction"]),
-  title: z.string().min(1).max(160),
-  body: z.string().min(1).max(4_000),
+  kind: FeedPostKindSchema,
+  template: FeedTemplateSchema,
+  headline: z.string().min(1).max(72),
+  takeaway: z.string().min(1).max(320),
+  highlights: z.array(z.string().min(1).max(100)).max(3).default([]),
+  proof: z.string().min(1).max(160).optional(),
   action_required: z.boolean().default(false),
+  action_prompt: z.string().min(1).max(240).optional(),
   actions: z.array(FeedActionSchema).max(4).default([]),
   dedupe_key: z.string().min(1).max(240),
+}).superRefine((post, context) => {
+  if (post.action_required && !post.action_prompt) {
+    context.addIssue({ code: "custom", path: ["action_prompt"], message: "需要用户处理时必须提供 action_prompt" });
+  }
+  if (!post.action_required && post.action_prompt) {
+    context.addIssue({ code: "custom", path: ["action_prompt"], message: "无需用户处理时不能提供 action_prompt" });
+  }
+  if (post.action_required && !post.actions.some((action) => action === "reply" || action === "approve" || action === "reject")) {
+    context.addIssue({ code: "custom", path: ["actions"], message: "需要用户处理时必须提供 reply、approve 或 reject 操作" });
+  }
 });
 export type FeedPostInput = z.infer<typeof FeedPostInputSchema>;
 
@@ -168,13 +186,17 @@ export const FeedPostSchema = z.object({
   agentId: z.string(),
   sessionId: z.string().nullable(),
   kind: FeedPostKindSchema,
-  title: z.string(),
-  body: z.string(),
+  template: FeedTemplateSchema,
+  headline: z.string(),
+  takeaway: z.string(),
+  highlights: z.array(z.string()),
+  proof: z.string().optional(),
   actionRequired: z.boolean(),
+  actionPrompt: z.string().optional(),
   actions: z.array(FeedActionSchema),
   pendingActionIds: z.array(z.string()),
   dedupeKey: z.string(),
-  source: z.enum(["user", "agent"]),
+  source: z.literal("agent"),
   createdAt: z.string(),
 });
 export type FeedPost = z.infer<typeof FeedPostSchema>;

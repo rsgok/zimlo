@@ -65,7 +65,7 @@ export class BridgeServer {
       }
     });
 
-    app.get("/healthz", async () => ({ ok: true, version: "0.1.0" }));
+    app.get("/healthz", async () => ({ ok: true, version: "0.2.0" }));
     app.get("/api/local-bootstrap", async (request, reply) => {
       if (!isLoopbackAddress(request.ip)) return reply.code(403).send({ error: "Loopback only" });
       const device = this.devices.localAdmin();
@@ -101,7 +101,9 @@ export class BridgeServer {
 
     const publicRoot = resolve(dirname(fileURLToPath(import.meta.url)), "../public");
     if (existsSync(publicRoot)) {
-      await app.register(fastifyStatic, { root: publicRoot, wildcard: false });
+      // Keep a wildcard route so newly built, content-hashed assets are served
+      // without requiring Fastify to have seen their filenames at startup.
+      await app.register(fastifyStatic, { root: publicRoot });
       app.setNotFoundHandler((request, reply) => {
         if (request.method === "GET") return reply.sendFile("index.html");
         return reply.code(404).send({ error: "Not found" });

@@ -1,5 +1,6 @@
 import { EventEmitter } from "node:events";
 import type { FeedPost, PendingAction, ServerMessage, Session, TaskRecord, UnifiedEvent } from "@zimlo/protocol";
+import { projectNameForCwd } from "./project-context.js";
 import { sanitizeEventPayload } from "./sanitization.js";
 import { ZimloStore } from "./store.js";
 
@@ -23,8 +24,9 @@ export class RuntimeHub extends EventEmitter {
 
   upsertSession(session: Session): Session {
     const stored = this.store.upsertSession(session);
-    this.send({ type: "session.updated", session: stored });
-    return stored;
+    const presented = this.withProject(stored);
+    this.send({ type: "session.updated", session: presented });
+    return presented;
   }
 
   ingestEvent(event: UnifiedEvent, action?: PendingAction): UnifiedEvent {
@@ -78,13 +80,19 @@ export class RuntimeHub extends EventEmitter {
   upsertAction(action: PendingAction): PendingAction {
     const stored = this.store.upsertAction(action);
     this.send({ type: "action.upsert", action: stored });
-    const post = this.store.linkPendingAction(action.sessionId, action.actionId);
-    if (post) this.send({ type: "feed.posted", post });
+    if (stored.state === "pending" || stored.state === "submitted") {
+      const post = this.store.linkPendingAction(action.sessionId, action.actionId);
+      if (post) this.send({ type: "feed.posted", post });
+    }
     return stored;
   }
 
   resolveAction(action: PendingAction): void {
-    this.upsertAction(action);
+    const stored = this.store.upsertAction(action);
+    this.send({ type: "action.upsert", action: stored });
+    for (const post of this.store.unlinkPendingAction(action.actionId)) {
+      this.send({ type: "feed.posted", post });
+    }
   }
 
   setLanApprovals(enabled: boolean): void {
@@ -93,7 +101,12 @@ export class RuntimeHub extends EventEmitter {
   }
 
   snapshot() {
-    return this.store.snapshot(this.lanApprovalsEnabled);
+    const snapshot = this.store.snapshot(this.lanApprovalsEnabled);
+    return { ...snapshot, sessions: snapshot.sessions.map((session) => this.withProject(session)) };
+  }
+
+  private withProject(session: Session): Session {
+    return { ...session, projectName: projectNameForCwd(session.cwd) };
   }
 
   private payloadContainsDiff(payload: unknown): boolean {

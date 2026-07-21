@@ -7,7 +7,7 @@ pnpm exec vitest run apps/cli/test/codex-plugin.test.ts
 node apps/cli/dist/index.js codex-plugin status
 ```
 
-手工验证：在本机 Profile 点击“准备 Codex 插件”，使用 deeplink 打开 Codex Plugins，安装并审核 hooks，然后**新建**任务。确认新任务能看到 Zimlo MCP 工具，MCP 会在 Bridge 未运行时自动拉起它，用户原始指令进入 Feed。普通轮次允许静默结束且不得出现 Feed 协议反馈；只有值得说的内容才调用 `feed.post`。
+手工验证：在本机 Profile 点击“准备 Codex 插件”，使用 deeplink 打开 Codex Plugins，安装并审核 hooks，然后**新建**任务。确认新任务能看到 Feed V2 MCP 工具，MCP 会在 Bridge 未运行时自动拉起它；用户原始指令只进入 Task 详情，不得出现在 Feed。普通轮次允许静默结束且不得出现 Feed 协议反馈；只有值得说的内容才调用结构化 `feed.post`。
 
 Stop 回归检查：给 hook transport 输入一个没有 Feed 决策的 `Stop` 事件，stdout 必须为空，SQLite 对应 checkpoint 应变为 `implicit_skip`；重复同一 Stop 仍为空且不会覆盖显式 `post/skip`。
 
@@ -43,6 +43,9 @@ pnpm --filter @zimlo/cli smoke
 | 双击/重放/断线重试 | 同一 idempotency key 不重复执行 |
 | Bridge 在审批时崩溃 | resolver 失效，重启后旧 action 过期 |
 | Mac Safari/Chrome、iPhone Safari | 一屏一帖、Tasks、详情与 Profile 无横向溢出 |
+| 320×568、390×844、768px、桌面 | 五套文字卡无横向溢出；普通卡无内部滚动 |
+| 输入、普通审批、高风险审批 | 卡内完成操作；确认短语只在选择高风险决策后展开 |
+| Plugin 旧内容版本 | status 提示重新安装；重新安装后要求新建任务 |
 | hook 安装/升级/卸载 | 用户已有配置与非 Zimlo handler 保持不变 |
 | 机密 fixture | SQLite、网页消息和日志均不含原始机密 |
 

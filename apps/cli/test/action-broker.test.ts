@@ -65,6 +65,42 @@ describe("ActionBroker", () => {
     store.close();
   });
 
+  it("binds pending actions to attention posts and clears their priority after resolution", async () => {
+    const { store, runtime, broker } = setup();
+    runtime.postFeed({
+      id: "post-a",
+      taskId: "task-a",
+      runId: "provider-a",
+      agentId: "codex",
+      sessionId: "session-a",
+      kind: "attention",
+      template: "marker",
+      headline: "需要批准操作",
+      takeaway: "Agent 需要执行受保护的命令。",
+      highlights: [],
+      actionRequired: true,
+      actionPrompt: "请确认是否允许一次。",
+      actions: ["approve", "reject"],
+      pendingActionIds: [],
+      dedupeKey: "approval-a",
+      source: "agent",
+      createdAt: new Date().toISOString(),
+    });
+    const pending = broker.create({
+      sessionId: "session-a",
+      kind: "approval",
+      title: "A",
+      detail: "A",
+      availableDecisions: [{ id: "yes", label: "Yes", scope: "once", value: true, risk: "low" }],
+    });
+    expect(store.listFeedPosts()[0]).toMatchObject({ actionRequired: true, pendingActionIds: [pending.action.actionId] });
+    expect(broker.decide({ deviceId: "device-a", actionId: pending.action.actionId, sessionId: "session-a", decisionId: "yes", idempotencyKey: "resolve" }).ok).toBe(true);
+    expect(store.listFeedPosts()[0]).toMatchObject({ actionRequired: false, pendingActionIds: [] });
+    expect(store.listFeedPosts()[0]?.actionPrompt).toBeUndefined();
+    await pending.result;
+    store.close();
+  });
+
   it("caps the complete redacted event payload at 4 KB", () => {
     const { store, runtime } = setup();
     runtime.ingestEvent({

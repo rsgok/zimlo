@@ -5,6 +5,8 @@ import { redactText, redactUnknown } from "@zimlo/adapters";
 import type {
   FeedCard,
   FeedPost,
+  FeedPostKind,
+  FeedTemplate,
   PendingAction,
   Session,
   SessionCapabilities,
@@ -35,6 +37,32 @@ export interface DeviceRecord {
 }
 
 export type FeedDecisionKind = "post" | "skip" | "implicit_skip";
+
+interface StoredFeedContentV2 {
+  template: FeedTemplate;
+  headline: string;
+  takeaway: string;
+  highlights: string[];
+  proof?: string;
+  actionPrompt?: string;
+}
+
+function defaultTemplate(kind: string): FeedTemplate {
+  const templates: Partial<Record<FeedPostKind, FeedTemplate>> = {
+    progress: "grid",
+    decision: "sticky",
+    attention: "marker",
+    result: "paper",
+    failure: "marker",
+  };
+  return templates[kind as FeedPostKind] ?? "paper";
+}
+
+function normalizeTemplate(value: unknown, kind: string): FeedTemplate {
+  return typeof value === "string" && ["paper", "grid", "sticky", "marker", "poster"].includes(value)
+    ? value as FeedTemplate
+    : defaultTemplate(kind);
+}
 
 function json<T>(value: string): T {
   return JSON.parse(value) as T;
@@ -123,6 +151,7 @@ export class ZimloStore {
         dedupe_key TEXT NOT NULL,
         source TEXT NOT NULL,
         created_at TEXT NOT NULL,
+        content_json TEXT,
         UNIQUE(agent_id, run_id, dedupe_key)
       );
       CREATE INDEX IF NOT EXISTS feed_posts_timeline_idx ON feed_posts(action_required DESC, created_at DESC);
@@ -194,14 +223,93 @@ export class ZimloStore {
         value TEXT NOT NULL
       );
     `);
+    const feedColumns = this.database.prepare("PRAGMA table_info(feed_posts)").all() as Array<{ name: string }>;
+    if (!feedColumns.some((column) => column.name === "content_json")) {
+      this.database.exec("ALTER TABLE feed_posts ADD COLUMN content_json TEXT");
+    }
+    this.migrateFeedV2();
     this.database.prepare("UPDATE actions SET state = 'expired' WHERE state IN ('pending', 'submitted')").run();
+    this.clearInactiveActionLinks();
     this.scrubStoredContent();
+  }
+
+  private clearInactiveActionLinks(): void {
+    const active = new Set((this.database.prepare(`
+      SELECT action_id FROM actions
+      WHERE state IN ('pending', 'submitted') AND expires_at > ?
+    `).all(new Date().toISOString()) as Array<{ action_id: string }>).map((row) => row.action_id));
+    const posts = this.database.prepare("SELECT id, pending_action_ids_json FROM feed_posts WHERE action_required = 1").all() as Array<{ id: string; pending_action_ids_json: string }>;
+    const update = this.database.prepare("UPDATE feed_posts SET pending_action_ids_json = ?, action_required = ? WHERE id = ?");
+    for (const post of posts) {
+      let linked: string[] = [];
+      try {
+        linked = json<string[]>(post.pending_action_ids_json).filter((id) => active.has(id));
+      } catch {
+        // Invalid historical linkage is cleared rather than keeping a stale card pinned.
+      }
+      if (linked.length > 0) update.run(JSON.stringify(linked), 1, post.id);
+      else update.run("[]", 0, post.id);
+    }
+  }
+
+  private migrateFeedV2(): void {
+    const migrationKey = "feed_v2_migration";
+    const current = this.database.prepare("SELECT value FROM metadata WHERE key = ?").get(migrationKey) as { value: string } | undefined;
+    if (Number(current?.value ?? 0) >= 1) return;
+    this.database.exec("BEGIN IMMEDIATE");
+    try {
+      const userPosts = this.database.prepare(`
+        SELECT id, run_id, agent_id, session_id, body, created_at
+        FROM feed_posts WHERE source = 'user' AND session_id IS NOT NULL
+      `).all() as Array<Record<string, unknown>>;
+      const insertInstruction = this.database.prepare(`
+        INSERT OR IGNORE INTO events (
+          id, provider, session_id, provider_session_id, kind, source,
+          occurred_at, payload_json, provenance
+        ) VALUES (?, ?, ?, ?, 'user_instruction', 'hook', ?, ?, 'verified')
+      `);
+      for (const post of userPosts) {
+        insertInstruction.run(
+          `feed-instruction:${String(post.id)}`,
+          String(post.agent_id),
+          String(post.session_id),
+          String(post.run_id),
+          String(post.created_at),
+          JSON.stringify(sanitizeEventPayload({ prompt: String(post.body), migratedFromFeed: true })),
+        );
+      }
+      this.database.prepare("DELETE FROM feed_posts WHERE source = 'user' AND session_id IS NOT NULL").run();
+
+      const legacyPosts = this.database.prepare(`
+        SELECT id, kind, title, body, action_required FROM feed_posts
+        WHERE source = 'agent' AND content_json IS NULL
+      `).all() as Array<Record<string, unknown>>;
+      const updateContent = this.database.prepare("UPDATE feed_posts SET content_json = ? WHERE id = ?");
+      for (const post of legacyPosts) {
+        const content: StoredFeedContentV2 = {
+          template: defaultTemplate(String(post.kind)),
+          headline: String(post.title).slice(0, 72),
+          takeaway: String(post.body).slice(0, 320),
+          highlights: [],
+          ...(Number(post.action_required) === 1 ? { actionPrompt: "需要你处理这项任务。" } : {}),
+        };
+        updateContent.run(JSON.stringify(content), String(post.id));
+      }
+      this.database.prepare(`
+        INSERT INTO metadata(key, value) VALUES (?, '1')
+        ON CONFLICT(key) DO UPDATE SET value = excluded.value
+      `).run(migrationKey);
+      this.database.exec("COMMIT");
+    } catch (error) {
+      this.database.exec("ROLLBACK");
+      throw error;
+    }
   }
 
   private scrubStoredContent(): void {
     const key = "content_scrub_version";
     const current = this.database.prepare("SELECT value FROM metadata WHERE key = ?").get(key) as { value: string } | undefined;
-    if (Number(current?.value ?? 0) >= 2) return;
+    if (Number(current?.value ?? 0) >= 3) return;
     this.database.exec("BEGIN IMMEDIATE");
     try {
       const events = this.database.prepare("SELECT sequence, payload_json FROM events").all() as Array<{ sequence: number; payload_json: string }>;
@@ -217,6 +325,26 @@ export class ZimloStore {
       const cards = this.database.prepare("SELECT id, summary FROM cards").all() as Array<{ id: string; summary: string }>;
       const updateCard = this.database.prepare("UPDATE cards SET summary = ? WHERE id = ?");
       for (const card of cards) updateCard.run(redactText(card.summary, 520), card.id);
+
+      const posts = this.database.prepare("SELECT id, kind, content_json FROM feed_posts WHERE content_json IS NOT NULL").all() as Array<{ id: string; kind: string; content_json: string }>;
+      const updatePost = this.database.prepare("UPDATE feed_posts SET content_json = ?, title = ?, body = ? WHERE id = ?");
+      for (const post of posts) {
+        try {
+          const content = json<StoredFeedContentV2>(post.content_json);
+          const sanitized: StoredFeedContentV2 = {
+            template: normalizeTemplate(content.template, post.kind),
+            headline: redactText(content.headline, 72),
+            takeaway: redactText(content.takeaway, 320),
+            highlights: (content.highlights ?? []).slice(0, 3).map((highlight) => redactText(highlight, 100)),
+            ...(content.proof ? { proof: redactText(content.proof, 160) } : {}),
+            ...(content.actionPrompt ? { actionPrompt: redactText(content.actionPrompt, 240) } : {}),
+          };
+          updatePost.run(JSON.stringify(sanitized), sanitized.headline, sanitized.takeaway, post.id);
+        } catch {
+          const fallback: StoredFeedContentV2 = { template: "paper", headline: "历史帖子", takeaway: "历史内容无法安全读取。", highlights: [] };
+          updatePost.run(JSON.stringify(fallback), fallback.headline, fallback.takeaway, post.id);
+        }
+      }
 
       const actions = this.database.prepare("SELECT action_id, detail, decisions_json FROM actions").all() as Array<{ action_id: string; detail: string; decisions_json: string }>;
       const updateAction = this.database.prepare("UPDATE actions SET detail = ?, decisions_json = ? WHERE action_id = ?");
@@ -240,7 +368,7 @@ export class ZimloStore {
         }
       }
 
-      this.database.prepare("INSERT OR REPLACE INTO metadata(key, value) VALUES (?, ?)").run(key, "2");
+      this.database.prepare("INSERT OR REPLACE INTO metadata(key, value) VALUES (?, ?)").run(key, "3");
       this.database.exec("COMMIT");
     } catch (error) {
       this.database.exec("ROLLBACK");
@@ -408,8 +536,8 @@ export class ZimloStore {
       INSERT OR IGNORE INTO feed_posts (
         id, task_id, run_id, agent_id, session_id, kind, title, body,
         action_required, actions_json, pending_action_ids_json, dedupe_key,
-        source, created_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        source, created_at, content_json
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
       post.id,
       post.taskId,
@@ -417,14 +545,22 @@ export class ZimloStore {
       post.agentId,
       post.sessionId,
       post.kind,
-      post.title,
-      post.body,
+      post.headline,
+      post.takeaway,
       post.actionRequired ? 1 : 0,
       JSON.stringify(post.actions),
       JSON.stringify(post.pendingActionIds),
       post.dedupeKey,
       post.source,
       post.createdAt,
+      JSON.stringify({
+        template: post.template,
+        headline: post.headline,
+        takeaway: post.takeaway,
+        highlights: post.highlights,
+        ...(post.proof ? { proof: post.proof } : {}),
+        ...(post.actionPrompt ? { actionPrompt: post.actionPrompt } : {}),
+      } satisfies StoredFeedContentV2),
     );
     if (result.changes > 0) return { post, inserted: true };
     const existing = this.database.prepare(`
@@ -437,6 +573,7 @@ export class ZimloStore {
   listFeedPosts(): FeedPost[] {
     return (this.database.prepare(`
       SELECT * FROM feed_posts
+      WHERE source = 'agent' AND kind <> 'instruction'
       ORDER BY action_required DESC, created_at DESC
       LIMIT 200
     `).all() as Record<string, unknown>[]).map((row) => this.feedPostFromRow(row));
@@ -454,7 +591,7 @@ export class ZimloStore {
   linkPendingAction(sessionId: string, actionId: string): FeedPost | null {
     const row = this.database.prepare(`
       SELECT * FROM feed_posts
-      WHERE session_id = ? AND action_required = 1
+      WHERE session_id = ? AND action_required = 1 AND kind = 'attention' AND source = 'agent'
       ORDER BY created_at DESC LIMIT 1
     `).get(sessionId) as Record<string, unknown> | undefined;
     if (!row) return null;
@@ -464,6 +601,23 @@ export class ZimloStore {
     this.database.prepare("UPDATE feed_posts SET pending_action_ids_json = ? WHERE id = ?")
       .run(JSON.stringify(next), post.id);
     return { ...post, pendingActionIds: next };
+  }
+
+  unlinkPendingAction(actionId: string): FeedPost[] {
+    const rows = this.database.prepare(`
+      SELECT * FROM feed_posts WHERE pending_action_ids_json LIKE ?
+    `).all(`%${actionId}%`) as Record<string, unknown>[];
+    const updated: FeedPost[] = [];
+    for (const row of rows) {
+      const post = this.feedPostFromRow(row);
+      if (!post.pendingActionIds.includes(actionId)) continue;
+      const pendingActionIds = post.pendingActionIds.filter((id) => id !== actionId);
+      this.database.prepare(`
+        UPDATE feed_posts SET pending_action_ids_json = ?, action_required = ? WHERE id = ?
+      `).run(JSON.stringify(pendingActionIds), pendingActionIds.length > 0 ? 1 : 0, post.id);
+      updated.push({ ...post, pendingActionIds, actionRequired: pendingActionIds.length > 0 });
+    }
+    return updated;
   }
 
   upsertTask(task: TaskRecord): TaskRecord {
@@ -734,6 +888,24 @@ export class ZimloStore {
   }
 
   private feedPostFromRow(row: Record<string, unknown>): FeedPost {
+    let content: StoredFeedContentV2;
+    try {
+      content = row.content_json
+        ? json<StoredFeedContentV2>(String(row.content_json))
+        : {
+            template: defaultTemplate(String(row.kind)),
+            headline: String(row.title).slice(0, 72),
+            takeaway: String(row.body).slice(0, 320),
+            highlights: [],
+          };
+    } catch {
+      content = {
+        template: defaultTemplate(String(row.kind)),
+        headline: String(row.title).slice(0, 72),
+        takeaway: String(row.body).slice(0, 320),
+        highlights: [],
+      };
+    }
     return {
       id: String(row.id),
       taskId: String(row.task_id),
@@ -741,13 +913,17 @@ export class ZimloStore {
       agentId: String(row.agent_id),
       sessionId: row.session_id === null ? null : String(row.session_id),
       kind: row.kind as FeedPost["kind"],
-      title: String(row.title),
-      body: String(row.body),
+      template: normalizeTemplate(content.template, String(row.kind)),
+      headline: content.headline,
+      takeaway: content.takeaway,
+      highlights: content.highlights,
+      ...(content.proof ? { proof: content.proof } : {}),
       actionRequired: Number(row.action_required) === 1,
+      ...(Number(row.action_required) === 1 && content.actionPrompt ? { actionPrompt: content.actionPrompt } : {}),
       actions: json<FeedPost["actions"]>(String(row.actions_json)),
       pendingActionIds: json<string[]>(String(row.pending_action_ids_json)),
       dedupeKey: String(row.dedupe_key),
-      source: row.source as FeedPost["source"],
+      source: "agent",
       createdAt: String(row.created_at),
     };
   }

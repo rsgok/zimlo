@@ -187,7 +187,7 @@ export class CodexAppServer {
     child.once("error", (error) => this.handleExit(-1, error.message));
 
     await this.request("initialize", {
-      clientInfo: { name: "zimlo", title: "Zimlo", version: "0.1.0" },
+      clientInfo: { name: "zimlo", title: "Zimlo", version: "0.2.0" },
       capabilities: { experimentalApi: true },
     });
     this.notify("initialized", {});

@@ -1,6 +1,6 @@
 {
   "name": "@zimlo/adapters",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Codex and Claude Code discovery adapters for Zimlo",
   "license": "UNLICENSED",
   "files": ["dist"],

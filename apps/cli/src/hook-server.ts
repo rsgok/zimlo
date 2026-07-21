@@ -9,7 +9,7 @@ import {
   stableSessionId,
   uuidV7,
 } from "@zimlo/adapters";
-import { EMPTY_CAPABILITIES, type Decision, type FeedPost, type Provider, type Session, type UnifiedEvent } from "@zimlo/protocol";
+import { EMPTY_CAPABILITIES, type Decision, type Provider, type Session, type UnifiedEvent } from "@zimlo/protocol";
 import { ActionBroker, type DecisionResolution } from "./action-broker.js";
 import { AgentToolService, type AgentToolRequest, type AgentToolResult } from "./agent-tools.js";
 import { RuntimeHub } from "./runtime.js";
@@ -121,6 +121,28 @@ export function finalizeStopFeedDecision(runtime: RuntimeHub, provider: Provider
   });
 }
 
+export function ingestUserInstruction(
+  runtime: RuntimeHub,
+  provider: Provider,
+  session: Session,
+  prompt: string,
+  turnId?: string,
+): UnifiedEvent {
+  return runtime.ingestEvent({
+    id: uuidV7(),
+    sequence: 0,
+    provider,
+    sessionId: session.id,
+    providerSessionId: session.providerSessionId,
+    ...(turnId ? { turnId } : {}),
+    kind: "user_instruction",
+    source: "hook",
+    occurredAt: new Date().toISOString(),
+    payload: { prompt: redactText(prompt.trim(), 4_000) },
+    provenance: "verified",
+  });
+}
+
 export class HookServer {
   private readonly runtime: RuntimeHub;
   private readonly broker: ActionBroker;
@@ -217,23 +239,7 @@ export class HookServer {
     if (hookName === "UserPromptSubmit") {
       const prompt = payload.prompt ?? payload.message;
       if (typeof prompt === "string" && prompt.trim() && prompt.trim() !== LEGACY_FEED_DECISION_REASON) {
-        const post: FeedPost = {
-          id: uuidV7(),
-          taskId: `run:${session.providerSessionId}`,
-          runId: session.providerSessionId,
-          agentId: request.provider,
-          sessionId: session.id,
-          kind: "instruction",
-          title: "你交给 Agent 的任务",
-          body: redactText(prompt.trim(), 4_000),
-          actionRequired: false,
-          actions: [],
-          pendingActionIds: [],
-          dedupeKey: `instruction:${String(payload.turn_id ?? request.id)}`,
-          source: "user",
-          createdAt: new Date().toISOString(),
-        };
-        this.runtime.postFeed(post);
+        ingestUserInstruction(this.runtime, request.provider, session, prompt, typeof payload.turn_id === "string" ? payload.turn_id : undefined);
       }
       return { id: request.id, output: null };
     }
