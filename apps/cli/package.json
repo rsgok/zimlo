@@ -1,0 +1,40 @@
+{
+  "name": "@zimlo/cli",
+  "version": "0.1.0",
+  "description": "Trusted-LAN local feed and action bridge for coding agents",
+  "license": "UNLICENSED",
+  "engines": { "node": ">=24.0.0" },
+  "publishConfig": { "access": "public" },
+  "type": "module",
+  "bin": {
+    "zimlo": "dist/index.js"
+  },
+  "main": "dist/index.js",
+  "files": [
+    "dist",
+    "public"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.json && node scripts/copy-web.mjs",
+    "dev": "tsx src/index.ts start",
+    "start": "node dist/index.js start",
+    "smoke": "node scripts/smoke-client.mjs",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@fastify/static": "^10.1.0",
+    "@fastify/websocket": "^11.3.0",
+    "@zimlo/adapters": "workspace:*",
+    "@zimlo/protocol": "workspace:*",
+    "commander": "^15.0.0",
+    "fastify": "^5.10.0",
+    "open": "^11.0.0",
+    "qrcode": "^1.5.4",
+    "ws": "^8.21.1"
+  },
+  "devDependencies": {
+    "@types/qrcode": "^1.5.6",
+    "@types/ws": "^8.18.1"
+  }
+}

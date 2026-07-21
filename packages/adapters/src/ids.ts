@@ -1,0 +1,35 @@
+import { createHash, randomBytes } from "node:crypto";
+import type { Provider } from "@zimlo/protocol";
+
+export function stableSessionId(provider: Provider, providerSessionId: string): string {
+  const digest = createHash("sha256").update(`${provider}\0${providerSessionId}`).digest("hex");
+  return `zim_${digest.slice(0, 24)}`;
+}
+
+export function stableEventId(path: string, offset: number, index: number, line: string): string {
+  const digest = createHash("sha256")
+    .update(path)
+    .update("\0")
+    .update(String(offset))
+    .update("\0")
+    .update(String(index))
+    .update("\0")
+    .update(line)
+    .digest("hex");
+  return `evt_${digest.slice(0, 32)}`;
+}
+
+export function uuidV7(now = Date.now()): string {
+  const bytes = randomBytes(16);
+  const timestamp = BigInt(now);
+  bytes[0] = Number((timestamp >> 40n) & 0xffn);
+  bytes[1] = Number((timestamp >> 32n) & 0xffn);
+  bytes[2] = Number((timestamp >> 24n) & 0xffn);
+  bytes[3] = Number((timestamp >> 16n) & 0xffn);
+  bytes[4] = Number((timestamp >> 8n) & 0xffn);
+  bytes[5] = Number(timestamp & 0xffn);
+  bytes[6] = (bytes[6]! & 0x0f) | 0x70;
+  bytes[8] = (bytes[8]! & 0x3f) | 0x80;
+  const hex = bytes.toString("hex");
+  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
+}

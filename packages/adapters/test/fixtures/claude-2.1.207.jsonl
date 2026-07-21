@@ -1,0 +1,4 @@
+{"type":"system","subtype":"init","sessionId":"claude-fixture-session","cwd":"/tmp/zimlo-fixture","model":"claude","timestamp":"2026-07-20T11:00:00.000Z","uuid":"turn-a"}
+{"type":"assistant","sessionId":"claude-fixture-session","timestamp":"2026-07-20T11:00:01.000Z","uuid":"turn-a","message":{"content":[{"type":"tool_use","id":"tool-1","name":"Bash","input":{"command":"swift test"}}]}}
+{"type":"user","sessionId":"claude-fixture-session","timestamp":"2026-07-20T11:00:02.000Z","uuid":"turn-a","message":{"content":[{"type":"tool_result","tool_use_id":"tool-1","content":{"exitCode":1,"output":"failed"},"is_error":true}]}}
+{"type":"assistant","sessionId":"claude-fixture-session","timestamp":"2026-07-20T11:00:03.000Z","uuid":"turn-a","message":{"stop_reason":"end_turn","content":[{"type":"text","text":"I found the failure."}]}}

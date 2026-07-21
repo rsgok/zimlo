@@ -1,0 +1,362 @@
+import { chmod, mkdir, unlink } from "node:fs/promises";
+import { createServer, createConnection, type Server, type Socket } from "node:net";
+import { dirname } from "node:path";
+import {
+  findExitCode,
+  isTestCommand,
+  readCommand,
+  redactText,
+  stableSessionId,
+  uuidV7,
+} from "@zimlo/adapters";
+import { EMPTY_CAPABILITIES, type Decision, type FeedPost, type Provider, type Session, type UnifiedEvent } from "@zimlo/protocol";
+import { ActionBroker, type DecisionResolution } from "./action-broker.js";
+import { AgentToolService, type AgentToolRequest, type AgentToolResult } from "./agent-tools.js";
+import { RuntimeHub } from "./runtime.js";
+
+interface HookRequest {
+  type?: "hook";
+  id: string;
+  provider: Provider;
+  payload: Record<string, unknown>;
+}
+
+interface HookResponse {
+  id: string;
+  output: unknown | null;
+}
+
+function record(value: unknown): Record<string, unknown> {
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : {};
+}
+
+function detailFor(payload: Record<string, unknown>): string {
+  const input = record(payload.tool_input);
+  if (payload.tool_name === "AskUserQuestion" && Array.isArray(input.questions)) {
+    const questions = input.questions.map((question) => {
+      const value = record(question);
+      return [value.header, value.question].filter((part) => typeof part === "string").join(": ");
+    }).filter(Boolean);
+    if (questions.length > 0) return redactText(questions.join("\n"), 800);
+  }
+  const value = input.command ?? input.description ?? input.file_path ?? payload.message ?? payload.tool_name;
+  return redactText(typeof value === "string" ? value : JSON.stringify(value), 800);
+}
+
+function riskFor(payload: Record<string, unknown>): Decision["risk"] {
+  const detail = detailFor(payload);
+  if (/\b(?:rm\s+-rf|deploy|production|git\s+push|git\s+reset|drop\s+(?:table|database)|sudo)\b/iu.test(detail)) return "high";
+  if (/\b(?:write|edit|apply_patch|install|delete|remove)\b/iu.test(detail)) return "medium";
+  return "low";
+}
+
+function decisionsFor(provider: Provider, payload: Record<string, unknown>): Decision[] {
+  const risk = riskFor(payload);
+  const confirm = risk === "high" ? "确认执行" : undefined;
+  const base: Decision[] = [
+    {
+      id: "allow-once",
+      label: "允许一次",
+      scope: "once",
+      value: { behavior: "allow" },
+      risk,
+      ...(confirm ? { confirmationPhrase: confirm } : {}),
+    },
+    { id: "deny", label: "拒绝", scope: "deny", value: { behavior: "deny" }, risk: "low" },
+  ];
+  if (provider !== "claude") return base;
+  const suggestions = Array.isArray(payload.permission_suggestions) ? payload.permission_suggestions : [];
+  suggestions.forEach((suggestion, index) => {
+    const value = record(suggestion);
+    const destination = value.destination;
+    const scope: Decision["scope"] = destination === "session" ? "session" : "persistent";
+    base.splice(base.length - 1, 0, {
+      id: `upstream-${index}`,
+      label: scope === "session" ? "本 Session 允许" : "永久允许此规则",
+      scope,
+      value: { behavior: "allow", updatedPermissions: [suggestion] },
+      risk: scope === "persistent" ? "high" : "medium",
+      confirmationPhrase: scope === "persistent" ? "永久允许" : "本次会话允许",
+    });
+  });
+  return base;
+}
+
+function eventKind(payload: Record<string, unknown>): UnifiedEvent["kind"] | null {
+  const hook = String(payload.hook_event_name ?? "");
+  const tool = String(payload.tool_name ?? "");
+  if (hook === "SessionStart") return "session_started";
+  if (hook === "SessionEnd") return "session_ended";
+  if (hook === "PermissionRequest") return "needs_approval";
+  if (hook === "Stop") return "completed";
+  if (hook === "PostToolUseFailure") return "failed";
+  if (hook === "PreToolUse" && tool === "AskUserQuestion") return "needs_input";
+  if (hook === "PreToolUse" && tool === "Bash") return "command_started";
+  if (hook === "PreToolUse" && /Edit|Write|apply_patch/u.test(tool)) return "files_changed";
+  if (hook === "PostToolUse" && tool === "Bash") {
+    const command = readCommand(record(payload.tool_input));
+    const exitCode = findExitCode(payload.tool_response);
+    if (command && isTestCommand(command) && exitCode !== null) return exitCode === 0 ? "tests_passed" : "tests_failed";
+    return "command_completed";
+  }
+  if (hook === "PostToolUse" && /Edit|Write|apply_patch/u.test(tool)) return "files_changed";
+  return null;
+}
+
+const FEED_DECISION_REASON = "本轮尚未做 Feed 编辑决策。请调用 Zimlo 的 feed.post 发布值得说的内容，或调用 feed.skip 明确保持沉默，然后再结束。";
+
+export function stopFeedDecisionOutput(runtime: RuntimeHub, provider: Provider, runId: string): { decision: "block"; reason: string } | null {
+  const checkpoint = runtime.store.getFeedCheckpoint(provider, runId);
+  if (checkpoint?.decisionKind) return null;
+  return {
+    decision: "block",
+    reason: FEED_DECISION_REASON,
+  };
+}
+
+export class HookServer {
+  private readonly runtime: RuntimeHub;
+  private readonly broker: ActionBroker;
+  private readonly socketPath: string;
+  private readonly agentTools: AgentToolService;
+  private server: Server | null = null;
+
+  constructor(runtime: RuntimeHub, broker: ActionBroker, socketPath: string, agentTools: AgentToolService) {
+    this.runtime = runtime;
+    this.broker = broker;
+    this.socketPath = socketPath;
+    this.agentTools = agentTools;
+  }
+
+  async start(): Promise<void> {
+    await mkdir(dirname(this.socketPath), { recursive: true, mode: 0o700 });
+    await unlink(this.socketPath).catch(() => undefined);
+    this.server = createServer((socket) => this.handleSocket(socket));
+    await new Promise<void>((resolve, reject) => {
+      this.server!.once("error", reject);
+      this.server!.listen(this.socketPath, () => resolve());
+    });
+    await chmod(this.socketPath, 0o600);
+  }
+
+  async stop(): Promise<void> {
+    if (this.server) await new Promise<void>((resolve) => this.server!.close(() => resolve()));
+    await unlink(this.socketPath).catch(() => undefined);
+  }
+
+  private handleSocket(socket: Socket): void {
+    socket.setEncoding("utf8");
+    let buffer = "";
+    socket.on("data", (chunk: string) => {
+      buffer += chunk;
+      const newline = buffer.indexOf("\n");
+      if (newline < 0) return;
+      const line = buffer.slice(0, newline);
+      buffer = buffer.slice(newline + 1);
+      const request = JSON.parse(line) as HookRequest | AgentToolRequest;
+      if (request.type === "agent_tool") {
+        const response: AgentToolResult = this.agentTools.handle(request);
+        socket.end(`${JSON.stringify(response)}\n`);
+        return;
+      }
+      void this.handleRequest(request).then((response) => {
+        socket.end(`${JSON.stringify(response)}\n`);
+      }).catch(() => socket.end(`${JSON.stringify({ id: "unknown", output: null })}\n`));
+    });
+  }
+
+  private async handleRequest(request: HookRequest): Promise<HookResponse> {
+    const payload = request.payload;
+    const providerSessionId = String(payload.session_id ?? payload.thread_id ?? `hook-${request.id}`);
+    const sessionId = stableSessionId(request.provider, providerSessionId);
+    const existing = this.runtime.store.getSession(sessionId);
+    const hookName = String(payload.hook_event_name ?? "");
+    const isApproval = hookName === "PermissionRequest";
+    const isInput = hookName === "PreToolUse" && payload.tool_name === "AskUserQuestion";
+    const session: Session = {
+      id: sessionId,
+      provider: request.provider,
+      providerSessionId,
+      title: existing?.title ?? `${request.provider === "codex" ? "Codex" : "Claude"} · ${providerSessionId.slice(0, 8)}`,
+      cwd: typeof payload.cwd === "string" ? payload.cwd : (existing?.cwd ?? null),
+      transcriptPath: typeof payload.transcript_path === "string" ? payload.transcript_path : (existing?.transcriptPath ?? null),
+      status: isApproval || isInput ? "waiting" : (existing?.status ?? "running"),
+      lastActivityAt: new Date().toISOString(),
+      createdAt: existing?.createdAt ?? new Date().toISOString(),
+      activePid: existing?.activePid ?? null,
+      processStartedAt: existing?.processStartedAt ?? null,
+      tty: existing?.tty ?? null,
+      correlationUncertain: false,
+      capabilities: {
+        ...(existing?.capabilities ?? EMPTY_CAPABILITIES),
+        liveObserved: true,
+        approvableOnce: true,
+        approvableSession: request.provider === "claude" && Array.isArray(payload.permission_suggestions),
+        approvablePersistent: request.provider === "claude" && Array.isArray(payload.permission_suggestions),
+      },
+    };
+    this.runtime.upsertSession(session);
+
+    if (hookName === "SessionStart" || hookName === "UserPromptSubmit") {
+      this.runtime.store.beginFeedCheckpoint({
+        agentId: request.provider,
+        runId: session.providerSessionId,
+        taskId: `run:${session.providerSessionId}`,
+        sessionId: session.id,
+        startedAt: new Date().toISOString(),
+      });
+    }
+
+    if (hookName === "UserPromptSubmit") {
+      const prompt = payload.prompt ?? payload.message;
+      if (typeof prompt === "string" && prompt.trim() && prompt.trim() !== FEED_DECISION_REASON) {
+        const post: FeedPost = {
+          id: uuidV7(),
+          taskId: `run:${session.providerSessionId}`,
+          runId: session.providerSessionId,
+          agentId: request.provider,
+          sessionId: session.id,
+          kind: "instruction",
+          title: "你交给 Agent 的任务",
+          body: redactText(prompt.trim(), 4_000),
+          actionRequired: false,
+          actions: [],
+          pendingActionIds: [],
+          dedupeKey: `instruction:${String(payload.turn_id ?? request.id)}`,
+          source: "user",
+          createdAt: new Date().toISOString(),
+        };
+        this.runtime.postFeed(post);
+      }
+      return { id: request.id, output: null };
+    }
+
+    if (hookName === "Stop") {
+      const output = stopFeedDecisionOutput(this.runtime, request.provider, session.providerSessionId);
+      if (output) return { id: request.id, output };
+    }
+
+    const kind = eventKind(payload);
+    if (!kind) return { id: request.id, output: null };
+
+    if (isApproval || isInput) {
+      const availableDecisions: Decision[] = isInput
+        ? [{ id: "submit-input", label: "提交回复", scope: "input", value: {}, risk: "low" }]
+        : decisionsFor(request.provider, payload);
+      const pending = this.broker.create({
+        sessionId,
+        upstreamRequestId: String(payload.tool_use_id ?? request.id),
+        kind: isInput ? "input" : "approval",
+        title: isInput ? "Agent 正在等待输入" : "需要批准操作",
+        detail: detailFor(payload),
+        availableDecisions,
+      });
+      this.ingestHookEvent(request, session, kind, pending.action);
+      const resolution = await pending.result;
+      return { id: request.id, output: this.formatDecision(request.provider, payload, resolution) };
+    }
+
+    this.ingestHookEvent(request, session, kind);
+    return { id: request.id, output: null };
+  }
+
+  private ingestHookEvent(
+    request: HookRequest,
+    session: Session,
+    kind: UnifiedEvent["kind"],
+    action?: ReturnType<ActionBroker["create"]>["action"],
+  ): void {
+    this.runtime.ingestEvent({
+      id: uuidV7(),
+      sequence: 0,
+      provider: request.provider,
+      sessionId: session.id,
+      providerSessionId: session.providerSessionId,
+      ...(typeof request.payload.turn_id === "string" ? { turnId: request.payload.turn_id } : {}),
+      ...(typeof request.payload.tool_use_id === "string" ? { itemId: request.payload.tool_use_id } : {}),
+      kind,
+      source: "hook",
+      occurredAt: new Date().toISOString(),
+      payload: request.payload,
+      provenance: "verified",
+    }, action);
+  }
+
+  private formatDecision(provider: Provider, payload: Record<string, unknown>, resolution: DecisionResolution | null): unknown | null {
+    if (!resolution) return null;
+    const hookEventName = String(payload.hook_event_name ?? "PermissionRequest");
+    if (hookEventName === "PreToolUse" && payload.tool_name === "AskUserQuestion") {
+      const toolInput = record(payload.tool_input);
+      const answer = resolution.input?.answer;
+      const answers = answer && Array.isArray(toolInput.questions)
+        ? Object.fromEntries(toolInput.questions.map((question, index) => {
+          const value = record(question);
+          const key = typeof value.question === "string" ? value.question : `question-${index + 1}`;
+          return [key, answer];
+        }))
+        : (resolution.input ?? {});
+      return {
+        hookSpecificOutput: {
+          hookEventName: "PreToolUse",
+          permissionDecision: "allow",
+          updatedInput: { ...toolInput, answers },
+        },
+      };
+    }
+    const value = record(resolution.decision.value);
+    if (value.behavior === "deny") {
+      value.message = "Denied from Zimlo";
+    }
+    return {
+      hookSpecificOutput: {
+        hookEventName: "PermissionRequest",
+        decision: value,
+      },
+      ...(provider === "codex" ? {} : {}),
+    };
+  }
+}
+
+export async function runHookClient(provider: Provider, socketPath: string): Promise<void> {
+  const chunks: Buffer[] = [];
+  for await (const chunk of process.stdin) chunks.push(Buffer.from(chunk));
+  let payload: Record<string, unknown>;
+  try {
+    payload = JSON.parse(Buffer.concat(chunks).toString("utf8")) as Record<string, unknown>;
+  } catch {
+    return;
+  }
+  const request: HookRequest = { type: "hook", id: uuidV7(), provider, payload };
+  const response = await new Promise<HookResponse | null>((resolve) => {
+    const socket = createConnection(socketPath);
+    let responseBuffer = "";
+    const timer = setTimeout(() => {
+      socket.destroy();
+      resolve(null);
+    }, 481_000);
+    timer.unref();
+    socket.setEncoding("utf8");
+    socket.on("connect", () => socket.write(`${JSON.stringify(request)}\n`));
+    socket.on("data", (chunk: string) => {
+      responseBuffer += chunk;
+      const newline = responseBuffer.indexOf("\n");
+      if (newline < 0) return;
+      clearTimeout(timer);
+      try {
+        resolve(JSON.parse(responseBuffer.slice(0, newline)) as HookResponse);
+      } catch {
+        resolve(null);
+      }
+      socket.end();
+    });
+    socket.on("error", () => {
+      clearTimeout(timer);
+      resolve(null);
+    });
+  });
+  if (response?.output !== null && response?.output !== undefined) {
+    process.stdout.write(`${JSON.stringify(response.output)}\n`);
+  }
+}

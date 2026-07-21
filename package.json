@@ -1,0 +1,28 @@
+{
+  "name": "zimlo",
+  "version": "0.1.0",
+  "private": true,
+  "packageManager": "pnpm@10.33.0",
+  "engines": {
+    "node": ">=24.0.0"
+  },
+  "scripts": {
+    "build": "pnpm --filter @zimlo/protocol build && pnpm --filter @zimlo/adapters build && pnpm --filter @zimlo/web build && pnpm --filter @zimlo/cli build",
+    "dev": "pnpm --filter @zimlo/cli dev",
+    "start": "pnpm --filter @zimlo/cli start",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "typecheck": "pnpm --filter @zimlo/protocol build && pnpm --filter @zimlo/adapters build && pnpm -r --if-present typecheck"
+  },
+  "devDependencies": {
+    "@types/node": "^26.1.1",
+    "tsx": "^4.23.1",
+    "typescript": "^7.0.2",
+    "vitest": "^4.1.10"
+  },
+  "pnpm": {
+    "onlyBuiltDependencies": [
+      "esbuild"
+    ]
+  }
+}

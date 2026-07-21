@@ -1,0 +1,5 @@
+{"timestamp":"2026-07-20T10:00:00.000Z","type":"session_meta","payload":{"id":"codex-fixture-session","timestamp":"2026-07-20T10:00:00.000Z","cwd":"/tmp/zimlo-fixture","source":"cli"}}
+{"timestamp":"2026-07-20T10:00:01.000Z","type":"turn_context","payload":{"turn_id":"turn-1","cwd":"/tmp/zimlo-fixture"}}
+{"timestamp":"2026-07-20T10:00:02.000Z","type":"response_item","payload":{"type":"function_call","name":"exec_command","call_id":"call-1","arguments":"{\"cmd\":\"pnpm test\"}"}}
+{"timestamp":"2026-07-20T10:00:03.000Z","type":"response_item","payload":{"type":"function_call_output","call_id":"call-1","output":{"exit_code":0,"output":"2 tests passed"}}}
+{"timestamp":"2026-07-20T10:00:04.000Z","type":"response_item","payload":{"type":"message","role":"assistant","phase":"final_answer","content":[{"type":"output_text","text":"Done"}]}}
