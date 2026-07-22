@@ -1,9 +1,14 @@
 import { existsSync } from "node:fs";
 import { basename, dirname, join, resolve } from "node:path";
 
-const projectCache = new Map<string, string | null>();
+interface ProjectContext {
+  name: string;
+  root: string;
+}
 
-export function projectNameForCwd(cwd: string | null): string | null {
+const projectCache = new Map<string, ProjectContext | null>();
+
+export function projectContextForCwd(cwd: string | null): ProjectContext | null {
   if (!cwd) return null;
   const cached = projectCache.get(cwd);
   if (cached !== undefined) return cached;
@@ -11,9 +16,9 @@ export function projectNameForCwd(cwd: string | null): string | null {
   let current = resolve(cwd);
   while (true) {
     if (existsSync(join(current, ".git"))) {
-      const projectName = basename(current);
-      projectCache.set(cwd, projectName);
-      return projectName;
+      const context = { name: basename(current), root: current };
+      projectCache.set(cwd, context);
+      return context;
     }
     const parent = dirname(current);
     if (parent === current) break;
@@ -22,4 +27,8 @@ export function projectNameForCwd(cwd: string | null): string | null {
 
   projectCache.set(cwd, null);
   return null;
+}
+
+export function projectNameForCwd(cwd: string | null): string | null {
+  return projectContextForCwd(cwd)?.name ?? null;
 }

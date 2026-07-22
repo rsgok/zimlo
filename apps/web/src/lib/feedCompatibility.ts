@@ -77,6 +77,9 @@ export function normalizeSnapshot(value: Snapshot): Snapshot {
       ? snapshot.posts.map(normalizeFeedPost).filter((post): post is FeedPost => post !== null)
       : [],
     tasks: Array.isArray(snapshot.tasks) ? snapshot.tasks : [],
+    commands: Array.isArray(snapshot.commands) ? snapshot.commands : [],
+    workspaces: Array.isArray(snapshot.workspaces) ? snapshot.workspaces : [],
+    seenPostIds: Array.isArray(snapshot.seenPostIds) ? snapshot.seenPostIds : [],
     actions: Array.isArray(snapshot.actions) ? snapshot.actions.filter((action) => !isInternalZimloAction(action)) : [],
     sequence: typeof snapshot.sequence === "number" ? snapshot.sequence : 0,
     lanApprovalsEnabled: snapshot.lanApprovalsEnabled === true,

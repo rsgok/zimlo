@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import type { FeedPost, PendingAction } from "@zimlo/protocol";
+import type { FeedPost, PendingAction, TaskCommand } from "@zimlo/protocol";
 import { buildFeedItems } from "./feedItems";
 
 const post: FeedPost = {
@@ -40,5 +40,32 @@ describe("Feed item composition", () => {
   it("keeps linked actions inside their Agent post and creates standalone cards for unmatched actions", () => {
     const items = buildFeedItems([post], [action("linked"), action("standalone")]);
     expect(items.map((item) => `${item.type}:${item.id}`)).toEqual(["action:standalone", "post:post-a"]);
+  });
+
+  it("sorts pending attention first, then unread posts, then seen history", () => {
+    const result = { ...post, id: "result", kind: "result" as const, actionRequired: false, actionPrompt: undefined, pendingActionIds: [], createdAt: "2026-07-21T00:03:00.000Z" };
+    const seen = { ...result, id: "seen", createdAt: "2026-07-21T00:04:00.000Z" };
+    const items = buildFeedItems([seen, result, post], [], ["seen"]);
+    expect(items.map((item) => item.id)).toEqual(["post-a", "result", "seen"]);
+  });
+
+  it("surfaces a failed create command with no session as retryable attention", () => {
+    const failed: TaskCommand = {
+      id: "command-failed",
+      idempotencyKey: "device:failed",
+      kind: "create",
+      provider: "codex",
+      sessionId: null,
+      workspaceId: "workspace-a",
+      cwd: "/Users/kai/Code/zimlo",
+      text: "启动新任务",
+      state: "failed",
+      createdAt: "2026-07-23T01:00:00.000Z",
+      updatedAt: "2026-07-23T01:00:00.000Z",
+      error: "app-server unavailable",
+    };
+    const items = buildFeedItems([], [], [], [failed]);
+    expect(items).toHaveLength(1);
+    expect(items[0]).toMatchObject({ type: "command", id: "command-failed", needsAction: true });
   });
 });

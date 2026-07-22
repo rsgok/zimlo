@@ -8,6 +8,7 @@ interface FeedPostViewProps {
   actions: PendingAction[];
   send: (command: ClientCommand) => void;
   onOpen: (sessionId: string) => void;
+  onOpenDiff: (sessionId: string) => void;
   position: number;
   total: number;
 }
@@ -35,7 +36,7 @@ function relativeTime(value: string): string {
   return new Intl.DateTimeFormat("zh-CN", { month: "short", day: "numeric" }).format(new Date(value));
 }
 
-export function FeedPostView({ post, session, actions, send, onOpen, position, total }: FeedPostViewProps) {
+export function FeedPostView({ post, session, actions, send, onOpen, onOpenDiff, position, total }: FeedPostViewProps) {
   const location = session ? sessionLocation(session) : null;
   const lightweightActions = post.actions.filter((action) => action === "open_diff" || (action === "reply" && actions.length === 0));
   const unboundDecisions = post.actionRequired
@@ -76,7 +77,7 @@ export function FeedPostView({ post, session, actions, send, onOpen, position, t
         {(lightweightActions.length > 0 || unboundDecisions.length > 0) && (
           <div className="post-actions">
             {lightweightActions.map((action) => (
-              <button key={action} className={action === "open_diff" ? "secondary-button" : "primary-button"} onClick={() => post.sessionId && onOpen(post.sessionId)}>
+              <button key={action} className={action === "open_diff" ? "secondary-button" : "primary-button"} onClick={() => post.sessionId && (action === "open_diff" ? onOpenDiff(post.sessionId) : onOpen(post.sessionId))}>
                 {ACTION_LABELS[action]}
               </button>
             ))}

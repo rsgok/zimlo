@@ -1,6 +1,6 @@
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it, vi } from "vitest";
-import { EMPTY_CAPABILITIES, type FeedPost, type Session, type UnifiedEvent } from "@zimlo/protocol";
+import { EMPTY_CAPABILITIES, type FeedPost, type Session, type TaskCommand, type UnifiedEvent } from "@zimlo/protocol";
 import { SessionDetail } from "./SessionDetail";
 
 const session: Session = {
@@ -31,7 +31,7 @@ const events: UnifiedEvent[] = [
     kind: "user_instruction",
     source: "hook",
     occurredAt: "2026-07-22T09:00:00.000Z",
-    payload: { prompt: "左滑进入当前任务详情" },
+    payload: { prompt: "右滑进入当前任务详情" },
     provenance: "verified",
   },
   {
@@ -46,7 +46,33 @@ const events: UnifiedEvent[] = [
     payload: { command: "SECRET_TOOL_COMMAND" },
     provenance: "verified",
   },
+  {
+    id: "diff-event",
+    sequence: 3,
+    provider: "claude",
+    sessionId: session.id,
+    providerSessionId: session.providerSessionId,
+    kind: "files_changed",
+    source: "app_server",
+    occurredAt: "2026-07-22T09:20:00.000Z",
+    payload: { summary: "更新 Feed", diff: "- old\n+ new" },
+    provenance: "verified",
+  },
 ];
+
+const command: TaskCommand = {
+  id: "command-a",
+  idempotencyKey: "device-a:command-a",
+  kind: "follow_up",
+  provider: "claude",
+  sessionId: session.id,
+  workspaceId: null,
+  cwd: session.cwd!,
+  text: "继续补充移动端验证",
+  state: "queued",
+  createdAt: "2026-07-22T09:30:00.000Z",
+  updatedAt: "2026-07-22T09:30:00.000Z",
+};
 
 const post: FeedPost = {
   id: "post-a",
@@ -71,20 +97,35 @@ const post: FeedPost = {
 describe("SessionDetail", () => {
   it("shows task input and curated timeline without tool events", () => {
     const markup = renderToStaticMarkup(
-      <SessionDetail session={session} events={events} actions={[]} posts={[post]} send={vi.fn()} onClose={vi.fn()} />,
+      <SessionDetail session={session} events={events} actions={[]} posts={[post]} commands={[command]} send={vi.fn()} onClose={vi.fn()} />,
     );
 
-    expect(markup).toContain("左滑进入当前任务详情");
+    expect(markup).toContain("右滑进入当前任务详情");
     expect(markup).toContain("详情页已经重构");
     expect(markup).toContain("Claude Code");
     expect(markup).toContain("项目 · zimlo");
+    expect(markup).toContain("继续补充移动端验证");
+    expect(markup).toContain("查看任务 Diff");
+    expect(markup).toContain("- old");
     expect(markup).not.toContain("SECRET_TOOL_COMMAND");
     expect(markup).not.toContain("command started");
   });
 
+  it("opens a real task review area for open_diff", () => {
+    const markup = renderToStaticMarkup(
+      <SessionDetail session={session} events={events} actions={[]} posts={[post]} commands={[]} initialSection="diff" send={vi.fn()} onClose={vi.fn()} />,
+    );
+
+    expect(markup).toContain("TASK REVIEW");
+    expect(markup).toContain("Diff 与验证");
+    expect(markup).toContain("- old");
+    expect(markup).toContain("+ new");
+    expect(markup).not.toContain("SECRET_TOOL_COMMAND");
+  });
+
   it("falls back to the session title when a discovered task has no instruction event", () => {
     const markup = renderToStaticMarkup(
-      <SessionDetail session={session} events={[]} actions={[]} posts={[]} send={vi.fn()} onClose={vi.fn()} />,
+      <SessionDetail session={session} events={[]} actions={[]} posts={[]} commands={[]} send={vi.fn()} onClose={vi.fn()} />,
     );
 
     expect(markup).toContain("修复 Feed 交互");
@@ -98,11 +139,12 @@ describe("SessionDetail", () => {
         events={events}
         actions={[]}
         posts={[]}
+        commands={[]}
         send={vi.fn()}
         onClose={vi.fn()}
       />,
     );
-    expect(markup).toContain("继续任务");
-    expect(markup).toContain("可继续");
+    expect(markup).toContain("继续当前任务");
+    expect(markup).toContain("加入队列");
   });
 });

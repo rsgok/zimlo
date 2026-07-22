@@ -26,6 +26,9 @@ const EMPTY_SNAPSHOT: Snapshot = {
   cards: [],
   posts: [],
   tasks: [],
+  commands: [],
+  workspaces: [],
+  seenPostIds: [],
   actions: [],
   sequence: 0,
   lanApprovalsEnabled: false,
@@ -38,6 +41,7 @@ export interface DeviceInfo {
   lastSeenAt: string;
   revokedAt: string | null;
   isLocalAdmin: boolean;
+  canApprove: boolean;
 }
 
 export interface PairingInfo {
@@ -167,6 +171,12 @@ export function useBridge() {
           }
           case "task.updated":
             return { ...current, snapshot: { ...current.snapshot, tasks: upsertById(current.snapshot.tasks, message.task) } };
+          case "task.command.updated":
+            return { ...current, snapshot: { ...current.snapshot, commands: upsertById(current.snapshot.commands, message.command) } };
+          case "feed.seen.updated":
+            return current.snapshot.seenPostIds.includes(message.postId)
+              ? current
+              : { ...current, snapshot: { ...current.snapshot, seenPostIds: [...current.snapshot.seenPostIds, message.postId] } };
           case "action.upsert": {
             if (isInternalZimloAction(message.action)) {
               return {
@@ -177,9 +187,10 @@ export function useBridge() {
                 },
               };
             }
-            const actions = message.action.state === "pending"
-              ? upsertById(current.snapshot.actions.map((action) => ({ ...action, id: action.actionId })), { ...message.action, id: message.action.actionId }).map(({ id: _id, ...action }) => action)
-              : current.snapshot.actions.filter((action) => action.actionId !== message.action.actionId);
+            const actions = upsertById(
+              current.snapshot.actions.map((action) => ({ ...action, id: action.actionId })),
+              { ...message.action, id: message.action.actionId },
+            ).map(({ id: _id, ...action }) => action);
             return { ...current, snapshot: { ...current.snapshot, actions } };
           }
           case "event.upsert": {

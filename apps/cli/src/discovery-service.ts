@@ -293,22 +293,9 @@ export class DiscoveryService {
       }
       for (const sessionId of cleared.removed) this.runtime.send({ type: "session.removed", sessionId });
 
-      for (const session of this.runtime.store.listSessions()) {
-        if (!session.transcriptPath || session.activePid !== null || !session.cwd) continue;
-        const possiblyOccupied = processes.some((process) => process.provider === session.provider && process.cwd === session.cwd);
-        const nextCapabilities = {
-          ...session.capabilities,
-          replyable: !possiblyOccupied,
-          resumable: !possiblyOccupied,
-        };
-        if (
-          session.correlationUncertain !== possiblyOccupied
-          || session.capabilities.replyable !== nextCapabilities.replyable
-          || session.capabilities.resumable !== nextCapabilities.resumable
-        ) {
-          this.runtime.upsertSession({ ...session, correlationUncertain: possiblyOccupied, capabilities: nextCapabilities });
-        }
-      }
+      // A different process in the same cwd is not evidence that this exact
+      // provider session is occupied. Strong hook/transcript identities stay
+      // replyable; ResumeService re-checks the provider thread before sending.
     } finally {
       this.scanningProcesses = false;
     }

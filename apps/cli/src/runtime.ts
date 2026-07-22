@@ -1,17 +1,21 @@
 import { EventEmitter } from "node:events";
-import type { FeedPost, PendingAction, ServerMessage, Session, TaskRecord, UnifiedEvent } from "@zimlo/protocol";
-import { projectNameForCwd } from "./project-context.js";
+import { createHash } from "node:crypto";
+import { homedir } from "node:os";
+import { dirname, resolve } from "node:path";
+import type { FeedPost, PendingAction, ServerMessage, Session, TaskCommand, TaskRecord, TrustedWorkspace, UnifiedEvent } from "@zimlo/protocol";
+import { projectContextForCwd, projectNameForCwd } from "./project-context.js";
 import { sanitizeEventPayload } from "./sanitization.js";
 import { ZimloStore } from "./store.js";
 import { titleSessionFromInput } from "./task-title.js";
 
 export class RuntimeHub extends EventEmitter {
   readonly store: ZimloStore;
-  lanApprovalsEnabled = false;
+  lanApprovalsEnabled: boolean;
 
   constructor(store: ZimloStore) {
     super();
     this.store = store;
+    this.lanApprovalsEnabled = store.lanApprovalsEnabled();
   }
 
   send(message: ServerMessage): void {
@@ -78,6 +82,12 @@ export class RuntimeHub extends EventEmitter {
     return stored;
   }
 
+  updateTaskCommand(command: TaskCommand): TaskCommand {
+    const stored = this.store.updateTaskCommand(command);
+    this.send({ type: "task.command.updated", command: stored });
+    return stored;
+  }
+
   upsertAction(action: PendingAction): PendingAction {
     const stored = this.store.upsertAction(action);
     this.send({ type: "action.upsert", action: stored });
@@ -98,11 +108,33 @@ export class RuntimeHub extends EventEmitter {
 
   setLanApprovals(enabled: boolean): void {
     this.lanApprovalsEnabled = enabled;
+    this.store.setLanApprovalsEnabled(enabled);
     this.send({ type: "lan.approvals.changed", enabled });
   }
 
-  snapshot() {
-    const snapshot = this.store.snapshot(this.lanApprovalsEnabled);
+  workspaces(): TrustedWorkspace[] {
+    const byRoot = new Map<string, TrustedWorkspace>();
+    for (const session of this.store.listSessions()) {
+      if (!session.cwd) continue;
+      const project = projectContextForCwd(session.cwd);
+      const path = resolve(project?.root ?? session.cwd);
+      if (["/", homedir(), dirname(homedir())].includes(path)) continue;
+      const existing = byRoot.get(path);
+      const providers = existing ? new Set(existing.providers) : new Set<Session["provider"]>();
+      providers.add(session.provider);
+      byRoot.set(path, {
+        id: `workspace:${createHash("sha256").update(path).digest("hex").slice(0, 20)}`,
+        label: project?.name ?? path.split("/").filter(Boolean).at(-1) ?? path,
+        path,
+        providers: [...providers],
+        lastUsedAt: existing && existing.lastUsedAt > session.lastActivityAt ? existing.lastUsedAt : session.lastActivityAt,
+      });
+    }
+    return [...byRoot.values()].sort((left, right) => right.lastUsedAt.localeCompare(left.lastUsedAt)).slice(0, 50);
+  }
+
+  snapshot(deviceId = "") {
+    const snapshot = this.store.snapshot(this.lanApprovalsEnabled, deviceId, this.workspaces());
     return { ...snapshot, sessions: snapshot.sessions.map((session) => this.withProject(session)) };
   }
 

@@ -17,6 +17,7 @@ import { ZIMLO_PATHS } from "./paths.js";
 import { ResumeService } from "./resume-service.js";
 import { RuntimeHub } from "./runtime.js";
 import { ZimloStore } from "./store.js";
+import { TaskCommandService } from "./task-command-service.js";
 
 const entrypoint = fileURLToPath(import.meta.url);
 const program = new Command();
@@ -40,24 +41,27 @@ program.command("start")
     const devices = new DeviceManager(store);
     devices.localAdmin();
     const resume = new ResumeService(runtime, broker);
+    const taskCommands = new TaskCommandService(runtime, resume);
     const hooks = new HookServer(runtime, broker, ZIMLO_PATHS.socket, agentTools);
     const discovery = new DiscoveryService(runtime);
-    const bridge = new BridgeServer({ runtime, broker, devices, resume, entrypoint, options: { port, lan: Boolean(options.lan) } });
+    const bridge = new BridgeServer({ runtime, broker, devices, taskCommands, entrypoint, options: { port, lan: Boolean(options.lan) } });
 
     const urls = await bridge.start();
     await hooks.start();
+    taskCommands.start();
     const discoveryStarted = Date.now();
     await discovery.start();
     console.log(`Zimlo 已启动：${urls.localUrl}`);
     if (urls.lanUrl) console.log(`可信局域网：${urls.lanUrl}`);
     console.log(`已发现 ${store.listSessions().length} 个 Session（${Date.now() - discoveryStarted} ms）`);
-    console.log("按 Ctrl-C 停止。LAN 审批默认关闭。");
+    console.log("按 Ctrl-C 停止。手机审批权限由 Mac 在 Profile 中按设备管理。");
 
     let stopping = false;
     const stop = async () => {
       if (stopping) return;
       stopping = true;
       discovery.stop();
+      taskCommands.stop();
       broker.cancelAll();
       await hooks.stop();
       await bridge.stop();

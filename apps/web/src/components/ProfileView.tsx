@@ -70,18 +70,6 @@ export function ProfileView({ localAdmin, devices, pairing, lanApprovalsEnabled,
               )}
             </div>
           </div>
-          <div className="settings-card settings-toggle">
-            <div>
-              <h3>允许本次运行接受 LAN 审批</h3>
-              <p>Bridge 每次重启都会恢复为关闭。高风险、Session 和永久决策仍要求确认短语。</p>
-            </div>
-            <button
-              role="switch"
-              aria-checked={lanApprovalsEnabled}
-              className={`switch ${lanApprovalsEnabled ? "switch-on" : ""}`}
-              onClick={() => send({ type: "lan.approvals.set", enabled: !lanApprovalsEnabled })}
-            ><span /></button>
-          </div>
           <div className="settings-card pairing-card">
             <div>
               <h3>配对手机 Safari</h3>
@@ -106,12 +94,29 @@ export function ProfileView({ localAdmin, devices, pairing, lanApprovalsEnabled,
                   <li key={device.id}>
                     <span><strong>{device.name}</strong><small>{device.isLocalAdmin ? "本机管理" : device.revokedAt ? "已撤销" : "已配对"}</small></span>
                     <time>{new Date(device.lastSeenAt).toLocaleString("zh-CN")}</time>
+                    {!device.isLocalAdmin && !device.revokedAt && (
+                      <button
+                        role="switch"
+                        aria-label={`${device.name} 手机审批`}
+                        aria-checked={device.canApprove}
+                        className={`switch ${device.canApprove ? "switch-on" : ""}`}
+                        onClick={() => send({ type: "device.approvals.set", deviceId: device.id, enabled: !device.canApprove })}
+                      ><span /></button>
+                    )}
                   </li>
                 ))}
               </ul>
             )}
           </div>
         </>
+      )}
+      {!localAdmin && (
+        <div className="settings-card">
+          <div>
+            <h3>手机审批权限</h3>
+            <p>{lanApprovalsEnabled ? "已由 Mac 持久授权；高风险操作仍要求确认短语。" : "尚未授权。请在 Mac 的 Zimlo Profile 中为这台设备开启。"}</p>
+          </div>
+        </div>
       )}
     </section>
   );

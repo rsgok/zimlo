@@ -1,7 +1,7 @@
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { createInterface, type Interface } from "node:readline";
-import { isTestCommand, redactText, uuidV7 } from "@zimlo/adapters";
-import type { Decision, Session, UnifiedEvent } from "@zimlo/protocol";
+import { isTestCommand, redactText, stableSessionId, uuidV7 } from "@zimlo/adapters";
+import { EMPTY_CAPABILITIES, type Decision, type Session, type UnifiedEvent } from "@zimlo/protocol";
 import { ActionBroker } from "./action-broker.js";
 import { RuntimeHub } from "./runtime.js";
 
@@ -152,7 +152,7 @@ function permissionApprovalDecisions(params: JsonRecord): Decision[] {
 export class CodexAppServer {
   private readonly runtime: RuntimeHub;
   private readonly broker: ActionBroker;
-  private readonly session: Session;
+  private session: Session;
   private child: ChildProcessWithoutNullStreams | null = null;
   private lines: Interface | null = null;
   private nextId = 1;
@@ -221,6 +221,66 @@ export class CodexAppServer {
     if (!turnId) throw new Error("Codex app-server 未返回 turn id。" );
     this.activeTurnId = turnId;
     return this.waitForTurn(turnId);
+  }
+
+  async runNewThread(text: string, onSession?: (sessionId: string) => void): Promise<{ session: Session; turn: JsonRecord }> {
+    await this.start();
+    const response = record(await this.request("thread/start", {
+      model: null,
+      modelProvider: null,
+      profile: null,
+      cwd: this.session.cwd,
+      approvalPolicy: null,
+      sandbox: null,
+      config: null,
+      baseInstructions: null,
+      developerInstructions: null,
+      compactPrompt: null,
+      includeApplyPatchTool: null,
+      experimentalRawEvents: false,
+      persistExtendedHistory: true,
+    }));
+    const thread = record(response.thread);
+    const threadId = stringValue(thread.id) ?? stringValue(response.threadId);
+    if (!threadId) throw new Error("Codex app-server 未返回新 thread id。");
+
+    const now = new Date().toISOString();
+    this.session = this.runtime.upsertSession({
+      ...this.session,
+      id: stableSessionId("codex", threadId),
+      providerSessionId: threadId,
+      title: text.replace(/\s+/gu, " ").trim().slice(0, 72) || "Codex 新任务",
+      status: "running",
+      lastActivityAt: now,
+      createdAt: now,
+      activePid: null,
+      processStartedAt: now,
+      correlationUncertain: false,
+      capabilities: { ...EMPTY_CAPABILITIES, liveObserved: true, replyable: false, resumable: false },
+    });
+    this.runtime.ingestEvent({
+      id: uuidV7(),
+      sequence: 0,
+      provider: "codex",
+      sessionId: this.session.id,
+      providerSessionId: threadId,
+      kind: "user_instruction",
+      source: "app_server",
+      occurredAt: now,
+      payload: { prompt: text, source: "zimlo" },
+      provenance: "verified",
+    });
+    onSession?.(this.session.id);
+    const turnResponse = record(await this.request("turn/start", {
+      threadId,
+      input: [{ type: "text", text }],
+      ...(this.session.cwd ? { cwd: this.session.cwd } : {}),
+    }));
+    const turn = record(turnResponse.turn);
+    const turnId = stringValue(turn.id);
+    if (!turnId) throw new Error("Codex app-server 未返回 turn id。");
+    this.activeTurnId = turnId;
+    return { session: this.session, turn: await this.waitForTurn(turnId) };
   }
 
   async close(): Promise<void> {

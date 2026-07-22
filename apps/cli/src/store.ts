@@ -11,7 +11,9 @@ import type {
   Session,
   SessionCapabilities,
   Snapshot,
+  TaskCommand,
   TaskRecord,
+  TrustedWorkspace,
   UnifiedEvent,
 } from "@zimlo/protocol";
 import { sanitizeEventPayload } from "./sanitization.js";
@@ -24,6 +26,7 @@ interface DeviceRow {
   last_seen_at: string;
   revoked_at: string | null;
   is_local_admin: number;
+  can_approve: number;
 }
 
 export interface DeviceRecord {
@@ -34,6 +37,7 @@ export interface DeviceRecord {
   lastSeenAt: string;
   revokedAt: string | null;
   isLocalAdmin: boolean;
+  canApprove: boolean;
 }
 
 export type FeedDecisionKind = "post" | "skip" | "implicit_skip";
@@ -167,6 +171,29 @@ export class ZimloStore {
       );
       CREATE INDEX IF NOT EXISTS tasks_updated_idx ON tasks(updated_at DESC);
 
+      CREATE TABLE IF NOT EXISTS task_commands (
+        id TEXT PRIMARY KEY,
+        idempotency_key TEXT NOT NULL UNIQUE,
+        kind TEXT NOT NULL,
+        provider TEXT NOT NULL,
+        session_id TEXT REFERENCES sessions(id) ON DELETE SET NULL,
+        workspace_id TEXT,
+        cwd TEXT NOT NULL,
+        text TEXT NOT NULL,
+        state TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        error TEXT
+      );
+      CREATE INDEX IF NOT EXISTS task_commands_state_idx ON task_commands(state, created_at);
+
+      CREATE TABLE IF NOT EXISTS feed_seen (
+        device_id TEXT NOT NULL REFERENCES devices(id) ON DELETE CASCADE,
+        post_id TEXT NOT NULL REFERENCES feed_posts(id) ON DELETE CASCADE,
+        seen_at TEXT NOT NULL,
+        PRIMARY KEY(device_id, post_id)
+      );
+
       CREATE TABLE IF NOT EXISTS feed_checkpoints (
         agent_id TEXT NOT NULL,
         run_id TEXT NOT NULL,
@@ -208,7 +235,8 @@ export class ZimloStore {
         created_at TEXT NOT NULL,
         last_seen_at TEXT NOT NULL,
         revoked_at TEXT,
-        is_local_admin INTEGER NOT NULL DEFAULT 0
+        is_local_admin INTEGER NOT NULL DEFAULT 0,
+        can_approve INTEGER NOT NULL DEFAULT 0
       );
 
       CREATE TABLE IF NOT EXISTS idempotency (
@@ -227,7 +255,13 @@ export class ZimloStore {
     if (!feedColumns.some((column) => column.name === "content_json")) {
       this.database.exec("ALTER TABLE feed_posts ADD COLUMN content_json TEXT");
     }
+    const deviceColumns = this.database.prepare("PRAGMA table_info(devices)").all() as Array<{ name: string }>;
+    if (!deviceColumns.some((column) => column.name === "can_approve")) {
+      this.database.exec("ALTER TABLE devices ADD COLUMN can_approve INTEGER NOT NULL DEFAULT 0");
+    }
     this.migrateFeedV2();
+    this.database.prepare("UPDATE task_commands SET state = 'queued', updated_at = ?, error = NULL WHERE state IN ('dispatching', 'running')")
+      .run(new Date().toISOString());
     this.database.prepare("UPDATE actions SET state = 'expired' WHERE state IN ('pending', 'submitted')").run();
     this.clearInactiveActionLinks();
     this.scrubStoredContent();
@@ -255,9 +289,10 @@ export class ZimloStore {
   private migrateFeedV2(): void {
     const migrationKey = "feed_v2_migration";
     const current = this.database.prepare("SELECT value FROM metadata WHERE key = ?").get(migrationKey) as { value: string } | undefined;
-    if (Number(current?.value ?? 0) >= 1) return;
     this.database.exec("BEGIN IMMEDIATE");
     try {
+      // Run this sweep on every startup. An older Bridge may continue writing
+      // V1 instruction posts after the original one-shot migration completed.
       const userPosts = this.database.prepare(`
         SELECT id, run_id, agent_id, session_id, body, created_at
         FROM feed_posts WHERE source = 'user' AND session_id IS NOT NULL
@@ -280,20 +315,22 @@ export class ZimloStore {
       }
       this.database.prepare("DELETE FROM feed_posts WHERE source = 'user' AND session_id IS NOT NULL").run();
 
-      const legacyPosts = this.database.prepare(`
-        SELECT id, kind, title, body, action_required FROM feed_posts
-        WHERE source = 'agent' AND content_json IS NULL
-      `).all() as Array<Record<string, unknown>>;
-      const updateContent = this.database.prepare("UPDATE feed_posts SET content_json = ? WHERE id = ?");
-      for (const post of legacyPosts) {
-        const content: StoredFeedContentV2 = {
-          template: defaultTemplate(String(post.kind)),
-          headline: String(post.title).slice(0, 72),
-          takeaway: String(post.body).slice(0, 320),
-          highlights: [],
-          ...(Number(post.action_required) === 1 ? { actionPrompt: "需要你处理这项任务。" } : {}),
-        };
-        updateContent.run(JSON.stringify(content), String(post.id));
+      if (Number(current?.value ?? 0) < 1) {
+        const legacyPosts = this.database.prepare(`
+          SELECT id, kind, title, body, action_required FROM feed_posts
+          WHERE source = 'agent' AND content_json IS NULL
+        `).all() as Array<Record<string, unknown>>;
+        const updateContent = this.database.prepare("UPDATE feed_posts SET content_json = ? WHERE id = ?");
+        for (const post of legacyPosts) {
+          const content: StoredFeedContentV2 = {
+            template: defaultTemplate(String(post.kind)),
+            headline: String(post.title).slice(0, 72),
+            takeaway: String(post.body).slice(0, 320),
+            highlights: [],
+            ...(Number(post.action_required) === 1 ? { actionPrompt: "需要你处理这项任务。" } : {}),
+          };
+          updateContent.run(JSON.stringify(content), String(post.id));
+        }
       }
       this.database.prepare(`
         INSERT INTO metadata(key, value) VALUES (?, '1')
@@ -665,6 +702,94 @@ export class ZimloStore {
       .map((row) => this.taskFromRow(row));
   }
 
+  insertTaskCommand(command: TaskCommand): { command: TaskCommand; inserted: boolean } {
+    const result = this.database.prepare(`
+      INSERT OR IGNORE INTO task_commands (
+        id, idempotency_key, kind, provider, session_id, workspace_id, cwd,
+        text, state, created_at, updated_at, error
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(
+      command.id,
+      command.idempotencyKey,
+      command.kind,
+      command.provider,
+      command.sessionId,
+      command.workspaceId,
+      command.cwd,
+      command.text,
+      command.state,
+      command.createdAt,
+      command.updatedAt,
+      command.error ?? null,
+    );
+    const stored = this.getTaskCommandByIdempotencyKey(command.idempotencyKey);
+    if (!stored) throw new Error("任务指令未能持久化。");
+    return { command: stored, inserted: result.changes > 0 };
+  }
+
+  updateTaskCommand(command: TaskCommand): TaskCommand {
+    this.database.prepare(`
+      UPDATE task_commands SET
+        session_id = ?, workspace_id = ?, cwd = ?, text = ?, state = ?,
+        updated_at = ?, error = ?
+      WHERE id = ?
+    `).run(
+      command.sessionId,
+      command.workspaceId,
+      command.cwd,
+      command.text,
+      command.state,
+      command.updatedAt,
+      command.error ?? null,
+      command.id,
+    );
+    return this.getTaskCommand(command.id) ?? command;
+  }
+
+  getTaskCommand(id: string): TaskCommand | null {
+    const row = this.database.prepare("SELECT * FROM task_commands WHERE id = ?").get(id) as Record<string, unknown> | undefined;
+    return row ? this.taskCommandFromRow(row) : null;
+  }
+
+  getTaskCommandByIdempotencyKey(key: string): TaskCommand | null {
+    const row = this.database.prepare("SELECT * FROM task_commands WHERE idempotency_key = ?").get(key) as Record<string, unknown> | undefined;
+    return row ? this.taskCommandFromRow(row) : null;
+  }
+
+  listTaskCommands(): TaskCommand[] {
+    return (this.database.prepare("SELECT * FROM task_commands ORDER BY created_at DESC LIMIT 200").all() as Record<string, unknown>[])
+      .map((row) => this.taskCommandFromRow(row));
+  }
+
+  listQueuedTaskCommands(): TaskCommand[] {
+    return (this.database.prepare("SELECT * FROM task_commands WHERE state = 'queued' ORDER BY created_at ASC").all() as Record<string, unknown>[])
+      .map((row) => this.taskCommandFromRow(row));
+  }
+
+  markFeedSeen(deviceId: string, postId: string): boolean {
+    return this.database.prepare(`
+      INSERT OR IGNORE INTO feed_seen(device_id, post_id, seen_at) VALUES (?, ?, ?)
+    `).run(deviceId, postId, new Date().toISOString()).changes > 0;
+  }
+
+  listSeenPostIds(deviceId: string): string[] {
+    if (!deviceId) return [];
+    return (this.database.prepare("SELECT post_id FROM feed_seen WHERE device_id = ?").all(deviceId) as Array<{ post_id: string }>)
+      .map((row) => row.post_id);
+  }
+
+  lanApprovalsEnabled(): boolean {
+    const row = this.database.prepare("SELECT value FROM metadata WHERE key = 'lan_approvals_enabled'").get() as { value: string } | undefined;
+    return row?.value === "1";
+  }
+
+  setLanApprovalsEnabled(enabled: boolean): void {
+    this.database.prepare(`
+      INSERT INTO metadata(key, value) VALUES ('lan_approvals_enabled', ?)
+      ON CONFLICT(key) DO UPDATE SET value = excluded.value
+    `).run(enabled ? "1" : "0");
+  }
+
   beginFeedCheckpoint(input: { agentId: string; runId: string; taskId?: string; sessionId: string | null; startedAt: string }): void {
     this.database.prepare(`
       INSERT INTO feed_checkpoints (agent_id, run_id, task_id, session_id, started_at, decision_kind, decision_at, decision_ref)
@@ -781,6 +906,12 @@ export class ZimloStore {
       .all(new Date().toISOString()) as Record<string, unknown>[]).map((row) => this.actionFromRow(row));
   }
 
+  listActions(): PendingAction[] {
+    return (this.database
+      .prepare("SELECT * FROM actions ORDER BY created_at DESC LIMIT 200")
+      .all() as Record<string, unknown>[]).map((row) => this.actionFromRow(row));
+  }
+
   getOffset(path: string): number | null {
     const row = this.database.prepare("SELECT offset FROM file_offsets WHERE path = ?").get(path) as { offset: number } | undefined;
     return row ? Number(row.offset) : null;
@@ -805,10 +936,11 @@ export class ZimloStore {
 
   upsertDevice(device: DeviceRecord): DeviceRecord {
     this.database.prepare(`
-      INSERT INTO devices(id, name, key_base64, created_at, last_seen_at, revoked_at, is_local_admin)
-      VALUES (?, ?, ?, ?, ?, ?, ?)
+      INSERT INTO devices(id, name, key_base64, created_at, last_seen_at, revoked_at, is_local_admin, can_approve)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
       ON CONFLICT(id) DO UPDATE SET name = excluded.name, key_base64 = excluded.key_base64,
-        last_seen_at = excluded.last_seen_at, revoked_at = excluded.revoked_at, is_local_admin = excluded.is_local_admin
+        last_seen_at = excluded.last_seen_at, revoked_at = excluded.revoked_at, is_local_admin = excluded.is_local_admin,
+        can_approve = excluded.can_approve
     `).run(
       device.id,
       device.name,
@@ -817,6 +949,7 @@ export class ZimloStore {
       device.lastSeenAt,
       device.revokedAt,
       device.isLocalAdmin ? 1 : 0,
+      device.canApprove ? 1 : 0,
     );
     return device;
   }
@@ -836,15 +969,25 @@ export class ZimloStore {
       .run(new Date().toISOString(), id).changes > 0;
   }
 
-  snapshot(lanApprovalsEnabled: boolean): Snapshot {
+  setDeviceApproval(id: string, enabled: boolean): DeviceRecord | null {
+    this.database.prepare("UPDATE devices SET can_approve = ? WHERE id = ? AND revoked_at IS NULL AND is_local_admin = 0")
+      .run(enabled ? 1 : 0, id);
+    return this.getDevice(id);
+  }
+
+  snapshot(_lanApprovalsEnabled: boolean, deviceId: string, workspaces: TrustedWorkspace[]): Snapshot {
+    const device = deviceId ? this.getDevice(deviceId) : null;
     return {
       sessions: this.listSessions(),
       cards: [],
       posts: this.listFeedPosts(),
       tasks: this.listTasks(),
-      actions: this.listPendingActions(),
+      commands: this.listTaskCommands(),
+      workspaces,
+      seenPostIds: this.listSeenPostIds(deviceId),
+      actions: this.listActions(),
       sequence: this.latestSequence(),
-      lanApprovalsEnabled,
+      lanApprovalsEnabled: device?.isLocalAdmin === true || device?.canApprove === true,
     };
   }
 
@@ -854,6 +997,7 @@ export class ZimloStore {
     this.database.prepare("DELETE FROM cards WHERE updated_at < ?").run(cutoff);
     this.database.prepare("DELETE FROM feed_posts WHERE created_at < ?").run(cutoff);
     this.database.prepare("DELETE FROM tasks WHERE updated_at < ?").run(cutoff);
+    this.database.prepare("DELETE FROM task_commands WHERE updated_at < ? AND state IN ('completed', 'failed', 'canceled')").run(cutoff);
     this.database.prepare("DELETE FROM feed_checkpoints WHERE started_at < ?").run(cutoff);
     this.database.prepare("DELETE FROM actions WHERE created_at < ?").run(cutoff);
     this.database.prepare("DELETE FROM idempotency WHERE created_at < ?").run(cutoff);
@@ -965,6 +1109,23 @@ export class ZimloStore {
     };
   }
 
+  private taskCommandFromRow(row: Record<string, unknown>): TaskCommand {
+    return {
+      id: String(row.id),
+      idempotencyKey: String(row.idempotency_key),
+      kind: row.kind as TaskCommand["kind"],
+      provider: row.provider as TaskCommand["provider"],
+      sessionId: row.session_id === null ? null : String(row.session_id),
+      workspaceId: row.workspace_id === null ? null : String(row.workspace_id),
+      cwd: String(row.cwd),
+      text: String(row.text),
+      state: row.state as TaskCommand["state"],
+      createdAt: String(row.created_at),
+      updatedAt: String(row.updated_at),
+      ...(row.error === null ? {} : { error: String(row.error) }),
+    };
+  }
+
   private actionFromRow(row: Record<string, unknown>): PendingAction {
     return {
       actionId: String(row.action_id),
@@ -990,6 +1151,7 @@ export class ZimloStore {
       lastSeenAt: row.last_seen_at,
       revokedAt: row.revoked_at,
       isLocalAdmin: row.is_local_admin === 1,
+      canApprove: row.can_approve === 1,
     };
   }
 }

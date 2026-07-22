@@ -4,6 +4,7 @@ import { PairingRequired } from "./components/PairingRequired";
 import { ProfileView } from "./components/ProfileView";
 import { SessionDetail } from "./components/SessionDetail";
 import { TasksView } from "./components/TasksView";
+import { TaskComposer } from "./components/TaskComposer";
 import { useBridge } from "./hooks/useBridge";
 
 type Tab = "feed" | "tasks" | "profile";
@@ -12,6 +13,8 @@ export function App() {
   const bridge = useBridge();
   const [tab, setTab] = useState<Tab>("feed");
   const [selectedSessionId, setSelectedSessionId] = useState<string | null>(null);
+  const [selectedSection, setSelectedSection] = useState<"timeline" | "diff">("timeline");
+  const [newTaskOpen, setNewTaskOpen] = useState(false);
   const selectedSession = useMemo(
     () => bridge.snapshot.sessions.find((session) => session.id === selectedSessionId) ?? null,
     [bridge.snapshot.sessions, selectedSessionId],
@@ -26,6 +29,13 @@ export function App() {
   if (bridge.pairingRequired) return <PairingRequired error={bridge.error} />;
 
   const openSession = (sessionId: string) => {
+    setSelectedSection("timeline");
+    setSelectedSessionId(sessionId);
+    bridge.send({ type: "session.events.request", sessionId });
+  };
+
+  const openSessionDiff = (sessionId: string) => {
+    setSelectedSection("diff");
     setSelectedSessionId(sessionId);
     bridge.send({ type: "session.events.request", sessionId });
   };
@@ -44,7 +54,7 @@ export function App() {
 
       <main className={`main-content ${tab === "feed" ? "feed-main" : ""}`}>
         {bridge.error && <div className="error-banner">{bridge.error}</div>}
-        {tab === "feed" && <FeedView posts={bridge.snapshot.posts} sessions={bridge.snapshot.sessions} actions={bridge.snapshot.actions} send={bridge.send} onOpen={openSession} />}
+        {tab === "feed" && <FeedView posts={bridge.snapshot.posts} sessions={bridge.snapshot.sessions} actions={bridge.snapshot.actions} commands={bridge.snapshot.commands} seenPostIds={bridge.snapshot.seenPostIds} send={bridge.send} onOpen={openSession} onOpenDiff={openSessionDiff} />}
         {tab === "tasks" && <TasksView sessions={bridge.snapshot.sessions} tasks={bridge.snapshot.tasks} onOpen={openSession} />}
         {tab === "profile" && (
           <ProfileView
@@ -63,6 +73,7 @@ export function App() {
       <nav className="bottom-nav" aria-label="主导航">
         <button aria-current={tab === "feed" ? "page" : undefined} className={tab === "feed" ? "active" : ""} onClick={() => setTab("feed")}><span>◫</span>Feed</button>
         <button aria-current={tab === "tasks" ? "page" : undefined} className={tab === "tasks" ? "active" : ""} onClick={() => setTab("tasks")}><span>◎</span>Tasks</button>
+        <button className="new-task-nav" onClick={() => setNewTaskOpen(true)} aria-label="布置新任务"><span>＋</span><strong>新任务</strong></button>
         <button aria-current={tab === "profile" ? "page" : undefined} className={tab === "profile" ? "active" : ""} onClick={() => {
           setTab("profile");
           if (bridge.localAdmin) bridge.send({ type: "devices.request" });
@@ -77,10 +88,13 @@ export function App() {
           events={bridge.events[selectedSession.id] ?? []}
           actions={bridge.snapshot.actions.filter((action) => action.sessionId === selectedSession.id)}
           posts={bridge.snapshot.posts.filter((post) => post.sessionId === selectedSession.id)}
+          commands={bridge.snapshot.commands.filter((command) => command.sessionId === selectedSession.id)}
+          initialSection={selectedSection}
           send={bridge.send}
           onClose={() => setSelectedSessionId(null)}
         />
       )}
+      {newTaskOpen && <TaskComposer workspaces={bridge.snapshot.workspaces} send={bridge.send} onClose={() => setNewTaskOpen(false)} />}
     </div>
   );
 }

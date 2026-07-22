@@ -212,6 +212,41 @@ export const TaskRecordSchema = z.object({
 });
 export type TaskRecord = z.infer<typeof TaskRecordSchema>;
 
+export const TaskCommandStateSchema = z.enum([
+  "queued",
+  "dispatching",
+  "running",
+  "completed",
+  "failed",
+  "canceled",
+]);
+export type TaskCommandState = z.infer<typeof TaskCommandStateSchema>;
+
+export const TaskCommandSchema = z.object({
+  id: z.string(),
+  idempotencyKey: z.string(),
+  kind: z.enum(["create", "follow_up"]),
+  provider: ProviderSchema,
+  sessionId: z.string().nullable(),
+  workspaceId: z.string().nullable(),
+  cwd: z.string(),
+  text: z.string(),
+  state: TaskCommandStateSchema,
+  createdAt: z.string(),
+  updatedAt: z.string(),
+  error: z.string().optional(),
+});
+export type TaskCommand = z.infer<typeof TaskCommandSchema>;
+
+export const TrustedWorkspaceSchema = z.object({
+  id: z.string(),
+  label: z.string(),
+  path: z.string(),
+  providers: z.array(ProviderSchema),
+  lastUsedAt: z.string(),
+});
+export type TrustedWorkspace = z.infer<typeof TrustedWorkspaceSchema>;
+
 export const FeedCardSchema = z.object({
   id: z.string(),
   sessionId: z.string(),
@@ -232,6 +267,9 @@ export const SnapshotSchema = z.object({
   cards: z.array(FeedCardSchema),
   posts: z.array(FeedPostSchema),
   tasks: z.array(TaskRecordSchema),
+  commands: z.array(TaskCommandSchema),
+  workspaces: z.array(TrustedWorkspaceSchema),
+  seenPostIds: z.array(z.string()),
   actions: z.array(PendingActionSchema),
   sequence: z.number().int().nonnegative(),
   lanApprovalsEnabled: z.boolean(),
@@ -255,8 +293,28 @@ export const ClientCommandSchema = z.discriminatedUnion("type", [
     text: z.string().min(1).max(20_000),
     idempotencyKey: z.string(),
   }),
+  z.object({
+    type: z.literal("task.create"),
+    provider: ProviderSchema,
+    workspaceId: z.string(),
+    text: z.string().min(1).max(20_000),
+    idempotencyKey: z.string(),
+  }),
+  z.object({
+    type: z.literal("task.follow_up"),
+    sessionId: z.string(),
+    text: z.string().min(1).max(20_000),
+    idempotencyKey: z.string(),
+  }),
+  z.object({
+    type: z.literal("task.command.retry"),
+    commandId: z.string(),
+    idempotencyKey: z.string(),
+  }),
+  z.object({ type: z.literal("feed.seen"), postId: z.string() }),
   z.object({ type: z.literal("session.events.request"), sessionId: z.string() }),
   z.object({ type: z.literal("devices.request") }),
+  z.object({ type: z.literal("device.approvals.set"), deviceId: z.string(), enabled: z.boolean() }),
   z.object({ type: z.literal("codex.plugin.request") }),
   z.object({ type: z.literal("codex.plugin.install") }),
   z.object({ type: z.literal("pairing.create") }),
@@ -272,6 +330,8 @@ export type ServerMessage =
   | { type: "card.upsert"; card: FeedCard }
   | { type: "feed.posted"; post: FeedPost }
   | { type: "task.updated"; task: TaskRecord }
+  | { type: "task.command.updated"; command: TaskCommand }
+  | { type: "feed.seen.updated"; postId: string }
   | { type: "action.upsert"; action: PendingAction }
   | { type: "action.result"; actionId: string; ok: boolean; message: string }
   | { type: "session.message.result"; sessionId: string; ok: boolean; message: string }
@@ -286,6 +346,7 @@ export type ServerMessage =
         lastSeenAt: string;
         revokedAt: string | null;
         isLocalAdmin: boolean;
+        canApprove: boolean;
       }>;
     }
   | { type: "pairing.created"; pairUrl: string; qrDataUrl: string; expiresAt: string }

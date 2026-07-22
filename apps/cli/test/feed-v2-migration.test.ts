@@ -2,6 +2,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
+import { DatabaseSync } from "node:sqlite";
 import { EMPTY_CAPABILITIES } from "@zimlo/protocol";
 import { ZimloStore } from "../src/store.js";
 
@@ -59,8 +60,21 @@ describe("Feed V2 storage migration", () => {
     expect(migrated.database.prepare("SELECT COUNT(*) AS count FROM feed_posts WHERE source = 'user'").get()).toEqual({ count: 0 });
     migrated.close();
 
+    const oldBridge = new DatabaseSync(path);
+    oldBridge.prepare(`
+      INSERT INTO feed_posts (
+        id, task_id, run_id, agent_id, session_id, kind, title, body,
+        action_required, actions_json, pending_action_ids_json, dedupe_key,
+        source, created_at, content_json
+      ) VALUES ('late-user-post', 'task-a', 'run-a', 'codex', 'session-a', 'instruction',
+        '你交给 Agent 的任务', '迁移完成后由旧 Bridge 写入', 0, '[]', '[]', 'instruction:late',
+        'user', '2026-07-21T00:02:00.000Z', NULL)
+    `).run();
+    oldBridge.close();
+
     const reopened = new ZimloStore(path);
-    expect(reopened.listEvents("session-a").filter((event) => event.kind === "user_instruction")).toHaveLength(1);
+    expect(reopened.listEvents("session-a").filter((event) => event.kind === "user_instruction")).toHaveLength(2);
+    expect(reopened.database.prepare("SELECT COUNT(*) AS count FROM feed_posts WHERE source = 'user'").get()).toEqual({ count: 0 });
     reopened.close();
   });
 });

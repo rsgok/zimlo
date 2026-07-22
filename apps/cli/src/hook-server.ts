@@ -26,6 +26,10 @@ interface HookResponse {
   output: unknown | null;
 }
 
+interface BridgeInfoRequest {
+  type: "bridge_info";
+}
+
 function record(value: unknown): Record<string, unknown> {
   return value && typeof value === "object" && !Array.isArray(value)
     ? (value as Record<string, unknown>)
@@ -220,7 +224,12 @@ export class HookServer {
       if (newline < 0) return;
       const line = buffer.slice(0, newline);
       buffer = buffer.slice(newline + 1);
-      const request = JSON.parse(line) as HookRequest | AgentToolRequest;
+      const request = JSON.parse(line) as HookRequest | AgentToolRequest | BridgeInfoRequest;
+      if (request.type === "bridge_info") {
+        responseStarted = true;
+        socket.end(`${JSON.stringify({ type: "bridge_info", version: "0.2.0", protocolVersion: 2 })}\n`);
+        return;
+      }
       if (request.type === "agent_tool") {
         const response: AgentToolResult = this.agentTools.handle(request);
         responseStarted = true;

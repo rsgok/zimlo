@@ -10,9 +10,9 @@ import { ActionBroker } from "./action-broker.js";
 import { codexPluginDeepLink, inspectCodexPlugin, installCodexPlugin } from "./codex-plugin.js";
 import { DeviceManager } from "./device-manager.js";
 import { isLoopbackAddress, isTrustedLanAddress, preferredLanAddress } from "./network.js";
-import { ResumeService } from "./resume-service.js";
 import { RuntimeHub } from "./runtime.js";
 import { SecureSocket } from "./secure-socket.js";
+import { TaskCommandService } from "./task-command-service.js";
 
 interface PairBody {
   pairingId?: string;
@@ -30,11 +30,10 @@ export class BridgeServer {
   private readonly runtime: RuntimeHub;
   private readonly broker: ActionBroker;
   private readonly devices: DeviceManager;
-  private readonly resume: ResumeService;
+  private readonly taskCommands: TaskCommandService;
   private readonly options: BridgeOptions;
   private readonly entrypoint: string;
   private readonly connections = new Set<SecureSocket>();
-  private readonly messageRuns = new Map<string, Promise<{ ok: boolean; message: string }>>();
   private app: FastifyInstance | null = null;
   private unsubscribe: (() => void) | null = null;
 
@@ -42,14 +41,14 @@ export class BridgeServer {
     runtime: RuntimeHub;
     broker: ActionBroker;
     devices: DeviceManager;
-    resume: ResumeService;
+    taskCommands: TaskCommandService;
     entrypoint: string;
     options: BridgeOptions;
   }) {
     this.runtime = input.runtime;
     this.broker = input.broker;
     this.devices = input.devices;
-    this.resume = input.resume;
+    this.taskCommands = input.taskCommands;
     this.entrypoint = input.entrypoint;
     this.options = input.options;
   }
@@ -65,7 +64,7 @@ export class BridgeServer {
       }
     });
 
-    app.get("/healthz", async () => ({ ok: true, version: "0.2.0" }));
+    app.get("/healthz", async () => ({ ok: true, version: "0.2.0", protocolVersion: 2 }));
     app.get("/api/local-bootstrap", async (request, reply) => {
       if (!isLoopbackAddress(request.ip)) return reply.code(403).send({ error: "Loopback only" });
       const device = this.devices.localAdmin();
@@ -92,7 +91,7 @@ export class BridgeServer {
         devices: this.devices,
         onAuthenticated: (authenticated) => {
           this.connections.add(authenticated);
-          authenticated.send({ type: "session.snapshot", snapshot: this.runtime.snapshot() });
+          authenticated.send({ type: "session.snapshot", snapshot: this.runtime.snapshot(authenticated.deviceId!) });
         },
         onCommand: (authenticated, command) => void this.handleCommand(authenticated, command),
       });
@@ -135,7 +134,7 @@ export class BridgeServer {
     if (!deviceId) return;
     switch (command.type) {
       case "snapshot.request":
-        connection.send({ type: "session.snapshot", snapshot: this.runtime.snapshot() });
+        connection.send({ type: "session.snapshot", snapshot: this.runtime.snapshot(deviceId) });
         return;
       case "session.events.request":
         connection.send({
@@ -151,6 +150,13 @@ export class BridgeServer {
           devices: this.devicesList(),
         });
         return;
+      case "device.approvals.set": {
+        if (!connection.isLocalAdmin) return connection.send({ type: "error", code: "forbidden", message: "仅 Mac 本机管理页可授权手机审批。" });
+        const device = this.runtime.store.setDeviceApproval(command.deviceId, command.enabled);
+        if (!device) return connection.send({ type: "error", code: "device_not_found", message: "设备不存在或已撤销。" });
+        connection.send({ type: "devices.list", devices: this.devicesList() });
+        return;
+      }
       case "codex.plugin.request": {
         if (!connection.isLocalAdmin) return connection.send({ type: "error", code: "forbidden", message: "仅 Mac 本机管理页可查看 Codex 插件。" });
         const status = await inspectCodexPlugin(this.entrypoint);
@@ -180,8 +186,9 @@ export class BridgeServer {
         return;
       }
       case "action.decide": {
-        if (!connection.isLocalAdmin && !this.runtime.lanApprovalsEnabled) {
-          return connection.send({ type: "action.result", actionId: command.actionId, ok: false, message: "本次运行尚未在 Mac 上开启 LAN 审批。" });
+        const device = this.runtime.store.getDevice(deviceId);
+        if (!connection.isLocalAdmin && !device?.canApprove) {
+          return connection.send({ type: "action.result", actionId: command.actionId, ok: false, message: "这台手机尚未获得 Mac 的审批授权。" });
         }
         this.broker.decide({
           deviceId,
@@ -195,21 +202,46 @@ export class BridgeServer {
         return;
       }
       case "session.message": {
-        const key = `${deviceId}:${command.idempotencyKey}`;
-        const prior = this.runtime.store.getIdempotentResult(key);
-        if (prior && typeof prior === "object") {
-          const result = prior as { ok: boolean; message: string };
-          return connection.send({ type: "session.message.result", sessionId: command.sessionId, ...result });
-        }
-        let run = this.messageRuns.get(key);
-        if (!run) {
-          run = this.resume.sendMessage(command.sessionId, command.text);
-          this.messageRuns.set(key, run);
-        }
-        const result = await run;
-        this.messageRuns.delete(key);
-        this.runtime.store.saveIdempotentResult(key, `message:${command.sessionId}`, result);
-        connection.send({ type: "session.message.result", sessionId: command.sessionId, ...result });
+        const queued = this.taskCommands.followUp({
+          deviceId,
+          sessionId: command.sessionId,
+          text: command.text,
+          idempotencyKey: command.idempotencyKey,
+        });
+        connection.send({
+          type: "session.message.result",
+          sessionId: command.sessionId,
+          ok: queued.state !== "failed",
+          message: queued.state === "failed" ? queued.error ?? "任务无法继续。" : "指令已进入任务队列。",
+        });
+        return;
+      }
+      case "task.create": {
+        this.taskCommands.create({
+          deviceId,
+          provider: command.provider,
+          workspaceId: command.workspaceId,
+          text: command.text,
+          idempotencyKey: command.idempotencyKey,
+        });
+        return;
+      }
+      case "task.follow_up": {
+        this.taskCommands.followUp({
+          deviceId,
+          sessionId: command.sessionId,
+          text: command.text,
+          idempotencyKey: command.idempotencyKey,
+        });
+        return;
+      }
+      case "task.command.retry": {
+        this.taskCommands.retry(command.commandId);
+        return;
+      }
+      case "feed.seen": {
+        this.runtime.store.markFeedSeen(deviceId, command.postId);
+        connection.send({ type: "feed.seen.updated", postId: command.postId });
         return;
       }
       case "pairing.create": {
@@ -228,6 +260,11 @@ export class BridgeServer {
       case "lan.approvals.set":
         if (!connection.isLocalAdmin) return connection.send({ type: "error", code: "forbidden", message: "仅 Mac 本机管理页可开启 LAN 审批。" });
         this.runtime.setLanApprovals(command.enabled);
+        for (const device of this.runtime.store.listDevices()) {
+          if (!device.isLocalAdmin && !device.revokedAt) this.runtime.store.setDeviceApproval(device.id, command.enabled);
+        }
+        connection.send({ type: "devices.list", devices: this.devicesList() });
+        return;
     }
   }
 

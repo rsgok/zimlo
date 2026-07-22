@@ -33,8 +33,43 @@ export async function isBridgeSocketReachable(socketPath: string | NetConnectOpt
   });
 }
 
+export async function bridgeProtocolVersion(socketPath: string | NetConnectOpts, timeoutMs = 400): Promise<number | null> {
+  return new Promise<number | null>((resolve) => {
+    const socket = typeof socketPath === "string" ? createConnection(socketPath) : createConnection(socketPath);
+    let buffer = "";
+    let settled = false;
+    const finish = (version: number | null) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      socket.destroy();
+      resolve(version);
+    };
+    const timer = setTimeout(() => finish(null), timeoutMs);
+    timer.unref();
+    socket.setEncoding("utf8");
+    socket.once("connect", () => socket.write(`${JSON.stringify({ type: "bridge_info" })}\n`));
+    socket.on("data", (chunk: string) => {
+      buffer += chunk;
+      const newline = buffer.indexOf("\n");
+      if (newline < 0) return;
+      try {
+        const value = JSON.parse(buffer.slice(0, newline)) as { protocolVersion?: unknown };
+        finish(typeof value.protocolVersion === "number" ? value.protocolVersion : null);
+      } catch {
+        finish(null);
+      }
+    });
+    socket.once("error", () => finish(null));
+  });
+}
+
 export async function ensureBridgeRunning(options: BridgeSupervisorOptions): Promise<boolean> {
-  if (await isBridgeSocketReachable(options.socketPath)) return true;
+  if (await isBridgeSocketReachable(options.socketPath)) {
+    const protocolVersion = await bridgeProtocolVersion(options.socketPath);
+    if (protocolVersion === 2) return true;
+    throw new Error("Zimlo Bridge 版本过旧，请停止旧进程并重新打开 Zimlo。");
+  }
 
   await mkdir(dirname(options.logPath), { recursive: true, mode: 0o700 });
   const logFd = openSync(options.logPath, "a", 0o600);

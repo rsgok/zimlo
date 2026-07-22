@@ -9,11 +9,13 @@ Zimlo 是 Codex 与 Claude Code 的本地移动状态层。它自动发现 Mac �
 - 用户原始指令只保留在 Task 详情；Feed 只接收 Agent 主动编辑的结构化阅读卡和真实待处理操作，平台不 scrape 输出，也不二次生成摘要。
 - `signal.transition` 单独维护机器任务状态；Feed 不是状态 source of truth。
 - 普通轮次可以静默结束；Stop hook 只幂等记录 `implicit_skip`，不会打断或把内部协议提示发进对话。关键状态仍会校验匹配的帖子种类。
-- Timeline 一屏显示一张文字卡，`action_required` 帖子优先，并可直接完成真实输入/审批请求。
+- 主 Feed 使用全屏纵向 scroll-snap，一屏一张卡；排序固定为待处理、未读、已读，稳定停留一秒后按设备记录已读。
+- 右滑 Feed 卡进入所属 Task Profile；Profile 以最新在上的紧凑 Timeline 展示指令、Agent 动态、审批、任务 Diff、测试与持久队列状态。
+- 底部 `+` 可从 Mac 已发现的可信项目中创建 Codex/Claude Code 任务；运行中 follow-up 会先持久化，再等待精确 session 空闲后执行。
 - 只有真实测试命令与真实退出码才能生成 `tests_passed` / `tests_failed`。
 - 闲置 Codex session 通过 app-server 的 `thread/read`、`thread/resume` 和 `turn/start` 安全继续；闲置 Claude session 使用 stream-json runner。
 - 活跃外部终端 session 禁止 TTY 注入；精确 hook 审批仍可按原请求闭环。
-- SQLite WAL 分开保存规范事件、任务状态、Agent 帖子、设备和操作审计，原始 transcript 不复制入库，默认保留 7 天。
+- SQLite WAL 分开保存规范事件、任务状态、任务指令队列、Agent 帖子、每设备已读游标、设备和操作审计，原始 transcript 不复制入库，默认保留 7 天。
 - 本机 loopback 管理页与 X25519 配对；后续 WebSocket 帧使用 XChaCha20-Poly1305、单调计数器与防重放校验。
 
 详细实现见 [架构说明](docs/ARCHITECTURE.md) 与 [验证手册](docs/TESTING.md)。
@@ -40,7 +42,7 @@ node apps/cli/dist/index.js start
 node apps/cli/dist/index.js start --lan
 ```
 
-然后在 Mac 本机 Profile 页面生成 2 分钟、单次使用的二维码。LAN 审批每次 Bridge 启动后默认关闭，必须在 loopback 管理页显式开启。
+然后在 Mac 本机 Profile 页面生成 2 分钟、单次使用的二维码。手机审批必须由 Mac 在已知设备列表中逐台授权，授权会跨 Bridge 重启持久保留；高风险操作仍要求确认短语。
 
 ## npm CLI
 

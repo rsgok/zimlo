@@ -1,7 +1,7 @@
 import { spawn } from "node:child_process";
 import { createInterface } from "node:readline";
-import { parseClaudeLine, redactText, uuidV7, type ParserState } from "@zimlo/adapters";
-import type { Session, UnifiedEvent } from "@zimlo/protocol";
+import { parseClaudeLine, redactText, stableSessionId, uuidV7, type ParserState } from "@zimlo/adapters";
+import { EMPTY_CAPABILITIES, type Provider, type Session, type UnifiedEvent } from "@zimlo/protocol";
 import { ActionBroker } from "./action-broker.js";
 import { CodexAppServer } from "./codex-app-server.js";
 import { RuntimeHub } from "./runtime.js";
@@ -34,6 +34,130 @@ export class ResumeService {
     } finally {
       this.leases.delete(sessionId);
     }
+  }
+
+  async createTask(
+    provider: Provider,
+    cwd: string,
+    text: string,
+    onSession?: (sessionId: string) => void,
+  ): Promise<{ ok: boolean; message: string; sessionId?: string }> {
+    return provider === "codex"
+      ? this.createCodexTask(cwd, text, onSession)
+      : this.createClaudeTask(cwd, text, onSession);
+  }
+
+  private async createCodexTask(cwd: string, text: string, onSession?: (sessionId: string) => void): Promise<{ ok: boolean; message: string; sessionId?: string }> {
+    const now = new Date().toISOString();
+    const provisional: Session = {
+      id: `pending:${uuidV7()}`,
+      provider: "codex",
+      providerSessionId: `pending:${uuidV7()}`,
+      title: text.replace(/\s+/gu, " ").trim().slice(0, 72) || "Codex 新任务",
+      cwd,
+      transcriptPath: null,
+      status: "running",
+      lastActivityAt: now,
+      createdAt: now,
+      activePid: null,
+      processStartedAt: now,
+      tty: null,
+      correlationUncertain: false,
+      capabilities: { ...EMPTY_CAPABILITIES, liveObserved: true, replyable: false, resumable: false },
+    };
+    const appServer = new CodexAppServer(this.runtime, this.broker, provisional);
+    try {
+      const result = await appServer.runNewThread(text, onSession);
+      const ok = result.turn.status === "completed";
+      this.finishSession(result.session, ok);
+      return {
+        ok,
+        sessionId: result.session.id,
+        message: ok ? "Codex 新任务已完成首轮执行。" : `Codex turn 状态：${String(result.turn.status)}`,
+      };
+    } catch (error) {
+      return { ok: false, message: redactText(error instanceof Error ? error.message : String(error), 800) };
+    } finally {
+      await appServer.close();
+    }
+  }
+
+  private async createClaudeTask(cwd: string, text: string, onSession?: (sessionId: string) => void): Promise<{ ok: boolean; message: string; sessionId?: string }> {
+    const args = ["-p", text, "--output-format", "stream-json", "--verbose", "--include-hook-events"];
+    const child = spawn("claude", args, { cwd, stdio: ["ignore", "pipe", "pipe"], env: process.env });
+    const parser: ParserState = { provider: "claude", providerSessionId: `pending:${uuidV7()}`, toolCalls: new Map() };
+    let session: Session | null = null;
+    const stderr: string[] = [];
+    child.stderr.setEncoding("utf8");
+    child.stderr.on("data", (chunk: string) => stderr.push(chunk));
+    const lines = createInterface({ input: child.stdout, crlfDelay: Infinity });
+    lines.on("line", (line) => {
+      const parsed = parseClaudeLine(line, parser);
+      const providerSessionId = parsed.metadata?.providerSessionId;
+      if (providerSessionId && (!session || session.providerSessionId !== providerSessionId)) {
+        parser.providerSessionId = providerSessionId;
+        const now = new Date().toISOString();
+        session = this.runtime.upsertSession({
+          id: stableSessionId("claude", providerSessionId),
+          provider: "claude",
+          providerSessionId,
+          title: text.replace(/\s+/gu, " ").trim().slice(0, 72) || "Claude 新任务",
+          cwd,
+          transcriptPath: null,
+          status: "running",
+          lastActivityAt: now,
+          createdAt: now,
+          activePid: child.pid ?? null,
+          processStartedAt: now,
+          tty: null,
+          correlationUncertain: false,
+          capabilities: { ...EMPTY_CAPABILITIES, liveObserved: true, replyable: false, resumable: false },
+        });
+        this.runtime.ingestEvent({
+          id: uuidV7(),
+          sequence: 0,
+          provider: "claude",
+          sessionId: session.id,
+          providerSessionId,
+          kind: "user_instruction",
+          source: "managed_runner",
+          occurredAt: now,
+          payload: { prompt: text, source: "zimlo" },
+          provenance: "verified",
+        });
+        onSession?.(session.id);
+      }
+      if (!session) return;
+      for (const draft of parsed.events) {
+        this.runtime.ingestEvent({
+          id: uuidV7(),
+          sequence: 0,
+          provider: "claude",
+          sessionId: session.id,
+          providerSessionId: session.providerSessionId,
+          ...(draft.turnId ? { turnId: draft.turnId } : {}),
+          ...(draft.itemId ? { itemId: draft.itemId } : {}),
+          kind: draft.kind,
+          source: "managed_runner",
+          occurredAt: draft.occurredAt,
+          payload: draft.payload,
+          provenance: draft.provenance,
+        });
+      }
+    });
+    const code = await new Promise<number | null>((resolve) => {
+      child.once("error", () => resolve(-1));
+      child.once("exit", resolve);
+    });
+    const completedSession = session as Session | null;
+    if (!completedSession) return { ok: false, message: redactText(stderr.join("").trim(), 800) || "Claude 未返回 session id。" };
+    const ok = code === 0;
+    this.finishSession(completedSession, ok);
+    return {
+      ok,
+      sessionId: completedSession.id,
+      message: ok ? "Claude 新任务已完成首轮执行。" : redactText(stderr.join("").trim(), 800) || `Agent 退出码：${String(code)}`,
+    };
   }
 
   private async runCodex(session: Session, text: string): Promise<{ ok: boolean; message: string }> {
