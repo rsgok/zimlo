@@ -156,7 +156,7 @@ export function useBridge() {
     pendingOutboxCount: outboxRef.current.length,
     pendingCommandEntries: outboxRef.current,
   });
-  const sendRef = useRef<(command: ClientCommand) => void>(() => undefined);
+  const sendRef = useRef<(command: ClientCommand) => boolean>(() => false);
 
   useEffect(() => {
     let disposed = false;
@@ -199,13 +199,14 @@ export function useBridge() {
 
     sendRef.current = (command) => {
       if (!isDurableCommand(command)) {
-        if (!rawSendRef.current(command)) setState((current) => ({ ...current, notice: "Bridge 尚未连接，请稍后重试。" }));
-        return;
+        const sent = rawSendRef.current(command);
+        if (!sent) setState((current) => ({ ...current, notice: "Bridge 尚未连接，请稍后重试。" }));
+        return sent;
       }
       const queued = enqueueCommand(outboxRef.current, command);
       if (!saveCommandOutbox(queued.entries)) {
         setState((current) => ({ ...current, error: "无法在本机保存这条指令，请保留当前页面后重试。" }));
-        return;
+        return false;
       }
       outboxRef.current = queued.entries;
       const sent = rawSendRef.current(queued.entry.command);
@@ -217,6 +218,7 @@ export function useBridge() {
           ? (queued.added ? "指令已发送，等待 Bridge 确认。" : "这条指令已在队列中，不会重复发送。")
           : "指令已保存在本机，将在重连后自动发送。",
       }));
+      return true;
     };
 
     const applyMessage = (message: ServerMessage) => {

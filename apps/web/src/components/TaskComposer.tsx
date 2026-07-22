@@ -6,18 +6,25 @@ interface TaskComposerProps {
   workspaces: TrustedWorkspace[];
   projects: Project[];
   initialProjectId?: string | null;
-  send: (command: ClientCommand) => void;
+  send: (command: ClientCommand) => boolean;
   onClose: () => void;
+  onSubmitted?: () => void;
 }
 
-export function TaskComposer({ workspaces, projects, initialProjectId = null, send, onClose }: TaskComposerProps) {
+export function defaultWorkspaceId(workspaces: TrustedWorkspace[], preferredId?: string, savedId?: string | null): string {
+  if (preferredId && workspaces.some((workspace) => workspace.id === preferredId)) return preferredId;
+  if (savedId && workspaces.some((workspace) => workspace.id === savedId)) return savedId;
+  return [...workspaces].sort((left, right) => right.lastUsedAt.localeCompare(left.lastUsedAt) || left.id.localeCompare(right.id))[0]?.id ?? "";
+}
+
+export function TaskComposer({ workspaces, projects, initialProjectId = null, send, onClose, onSubmitted }: TaskComposerProps) {
   const initialProject = projects.find((project) => project.id === initialProjectId);
   const preferredWorkspace = workspaces.find((workspace) => initialProject?.paths.includes(workspace.path));
   const savedWorkspace = typeof localStorage === "undefined" ? null : localStorage.getItem("zimlo:last-workspace");
   const savedProvider = typeof localStorage === "undefined" ? null : localStorage.getItem("zimlo:last-provider");
   const savedDraft = typeof localStorage === "undefined" ? "" : localStorage.getItem("zimlo:new-task-draft") ?? "";
   const [provider, setProvider] = useState<Provider>(initialProject?.agentProfile.defaultProvider ?? (savedProvider === "claude" ? "claude" : "codex"));
-  const [workspaceId, setWorkspaceId] = useState(preferredWorkspace?.id ?? workspaces.find((workspace) => workspace.id === savedWorkspace)?.id ?? workspaces[0]?.id ?? "");
+  const [workspaceId, setWorkspaceId] = useState(() => defaultWorkspaceId(workspaces, preferredWorkspace?.id, savedWorkspace));
   const [text, setText] = useState(savedDraft);
   const [projectQuery, setProjectQuery] = useState("");
   const projectByPath = useMemo(() => new Map(projects.flatMap((project) => project.paths.map((path) => [path, project] as const))), [projects]);
@@ -78,10 +85,12 @@ export function TaskComposer({ workspaces, projects, initialProjectId = null, se
           className="new-task-submit"
           disabled={!workspaceId || !text.trim()}
           onClick={() => {
+            const accepted = send({ type: "task.create", provider, workspaceId, text: text.trim(), idempotencyKey: crypto.randomUUID() });
+            if (!accepted) return;
             localStorage.setItem("zimlo:last-workspace", workspaceId);
             localStorage.setItem("zimlo:last-provider", provider);
             localStorage.removeItem("zimlo:new-task-draft");
-            send({ type: "task.create", provider, workspaceId, text: text.trim(), idempotencyKey: crypto.randomUUID() });
+            onSubmitted?.();
             onClose();
           }}
         >开始任务</button>

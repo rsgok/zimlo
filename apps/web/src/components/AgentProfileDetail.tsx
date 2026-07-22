@@ -9,7 +9,7 @@ interface AgentProfileDetailProps {
   sessions: Session[];
   posts: FeedPost[];
   commands: TaskCommand[];
-  send: (command: ClientCommand) => void;
+  send: (command: ClientCommand) => boolean;
   onOpenTask: (sessionId: string) => void;
   onNewTask: (projectId: string) => void;
   onClose: () => void;
@@ -62,8 +62,7 @@ export function AgentProfileDetail({ project, sessions, posts, commands, send, o
           {editing && (
             <form className="agent-profile-editor" onSubmit={(event) => {
               event.preventDefault();
-              send({ type: "agent.profile.update", projectId: project.id, displayName: displayName.trim(), avatar: avatar.trim(), bio: bio.trim(), defaultProvider: defaultProvider || null });
-              setEditing(false);
+              if (send({ type: "agent.profile.update", projectId: project.id, displayName: displayName.trim(), avatar: avatar.trim(), bio: bio.trim(), defaultProvider: defaultProvider || null })) setEditing(false);
             }}>
               <label><span>头像（Emoji 或文字）</span><input value={avatar} maxLength={16} onChange={(event) => setAvatar(event.target.value)} /></label>
               <label><span>Agent 名称</span><input value={displayName} maxLength={80} onChange={(event) => setDisplayName(event.target.value)} /></label>

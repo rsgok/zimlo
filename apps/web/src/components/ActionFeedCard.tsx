@@ -5,7 +5,7 @@ import { runtimeLabel, sessionLocation, sessionRuntimeLabel } from "./sessionPre
 interface ActionFeedCardProps {
   action: PendingAction;
   session: Session | undefined;
-  send: (command: ClientCommand) => void;
+  send: (command: ClientCommand) => boolean;
   position: number;
   total: number;
 }

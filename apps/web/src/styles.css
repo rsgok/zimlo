@@ -201,6 +201,10 @@ code, pre { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
 .post-highlights { display: grid; gap: 7px; margin: 16px 0 0; padding: 0; list-style: none; }
 .post-highlights li { display: -webkit-box; overflow: hidden; padding-left: 20px; color: #342f2a; font-size: 13px; line-height: 1.45; -webkit-box-orient: vertical; -webkit-line-clamp: 2; }
 .post-highlights li::before { position: absolute; margin-left: -20px; content: "✓"; color: var(--post-accent); font-weight: 900; }
+.feed-reply-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: stretch; gap: 8px; margin-top: 10px; }
+.feed-reply-row textarea { min-height: 42px; max-height: 92px; }
+.feed-reply-row .action-submit { min-width: 76px; }
+.action-sync-state { margin: 9px 0 0; padding: 10px 12px; color: #405a36; background: #eaf4dc; border-radius: 10px; font-size: 10px; font-weight: 750; }
 .post-proof, .post-action-prompt { margin: 14px 0 0; padding: 10px 12px; border-radius: 12px; background: rgba(255,255,255,.72); font-size: 12px; line-height: 1.45; }
 .post-proof { display: -webkit-box; overflow: hidden; -webkit-box-orient: vertical; -webkit-line-clamp: 2; }
 .post-proof span { margin-right: 8px; color: var(--post-accent); font-weight: 800; }
@@ -386,7 +390,7 @@ code, pre { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
 .task-row:hover { background: #fff; }
 .task-row-main { display: grid; grid-template-columns: 10px minmax(0, 1fr) auto; align-items: center; gap: 14px; min-width: 0; padding: 16px 10px 16px 17px; color: inherit; text-align: left; border: 0; background: transparent; cursor: pointer; }
 .task-row-actions { display: grid; align-content: center; gap: 4px; padding: 8px 10px 8px 0; }
-.task-row-actions button { display: grid; width: 30px; height: 30px; padding: 0; place-items: center; color: var(--muted); background: transparent; border: 1px solid transparent; border-radius: 9px; cursor: pointer; }
+.task-row-actions button { display: grid; min-width: 40px; height: 30px; padding: 0 5px; place-items: center; color: var(--muted); background: transparent; border: 1px solid transparent; border-radius: 9px; cursor: pointer; font-size: 9px; font-weight: 750; }
 .task-row-actions button:hover, .task-row-actions button.active { color: var(--ink); background: #eef9c7; border-color: #c9d88c; }
 .status-dot { width: 8px; height: 8px; border-radius: 50%; background: #aaa; }
 .status-running, .status-waiting { background: #64b64f; box-shadow: 0 0 0 4px rgba(100,182,79,.14); }
@@ -645,6 +649,9 @@ code, pre { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
   .action-feed-card .post-copy { align-self: start; }
   .card-body-button h2 { font-size: 30px; }
   .task-row-main { grid-template-columns: 9px minmax(0, 1fr); gap: 11px; padding-left: 13px; }
+  .task-heading { align-items: flex-start; }
+  .task-heading h2 { font-size: 32px; }
+  .task-heading > span { max-width: 245px; text-align: right; line-height: 1.35; }
   .task-side { grid-column: 2; justify-items: start; }
   .detail-panel { width: 100%; border-inline: 0; }
   .task-profile-header { padding-inline: 18px; }

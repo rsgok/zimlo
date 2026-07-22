@@ -51,8 +51,8 @@ describe("TasksView", () => {
     expect(taskTitle(session, task)).toBe("优化任务搜索与语义标题");
     expect(taskTitle({ ...session, correlationUncertain: true }, task)).toBe("Codex · zimlo");
     const markup = renderToStaticMarkup(<TasksView projects={[project]} sessions={[session]} tasks={[task]} preferences={[]} send={vi.fn()} onOpen={vi.fn()} />);
-    expect(markup).toContain("1 个项目");
-    expect(markup).toContain("1 个任务 · 1 个进行中");
+    expect(markup).toContain("<h2>任务</h2>");
+    expect(markup).toContain("1 项目 · 1 任务 · 1 进行中");
     expect(markup).toContain("1 个任务 · 3 张卡");
     expect(markup).toContain("优化任务搜索与语义标题");
     expect(markup).toContain("项目 · zimlo");

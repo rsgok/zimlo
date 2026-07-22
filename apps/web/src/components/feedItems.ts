@@ -1,4 +1,4 @@
-import type { FeedPost, PendingAction, TaskCommand } from "@zimlo/protocol";
+import type { FeedPost, PendingAction, TaskCommand, TaskRecord } from "@zimlo/protocol";
 
 export type FeedItem =
   | { type: "post"; id: string; createdAt: string; needsAction: boolean; unread: boolean; priority: number; post: FeedPost }
@@ -39,9 +39,17 @@ export function buildFeedItems(
   seenPostIds: string[] = [],
   commands: TaskCommand[] = [],
   dismissedFeedItemIds: string[] = [],
+  tasks: TaskRecord[] = [],
 ): FeedItem[] {
   const linkedActionIds = new Set(posts.flatMap((post) => post.pendingActionIds));
   const pendingActionIds = new Set(actions.filter((action) => action.state === "pending").map((action) => action.actionId));
+  const taskById = new Map(tasks.map((task) => [task.id, task]));
+  const taskBySession = new Map<string, TaskRecord>();
+  for (const task of tasks) {
+    if (!task.sessionId) continue;
+    const current = taskBySession.get(task.sessionId);
+    if (!current || task.updatedAt > current.updatedAt) taskBySession.set(task.sessionId, task);
+  }
   const latestOutcomeByTask = new Map<string, string>();
   for (const post of posts) {
     if (!(post.kind === "result" || post.kind === "failure")) continue;
@@ -54,7 +62,11 @@ export function buildFeedItems(
   return [
     ...mergeRoutinePosts(posts).map((post): FeedItem => {
       const unread = !seen.has(post.id);
-      const needsAction = post.actionRequired && post.pendingActionIds.some((id) => pendingActionIds.has(id));
+      const task = taskById.get(post.taskId) ?? (post.sessionId ? taskBySession.get(post.sessionId) : undefined);
+      const hasLinkedPendingAction = post.pendingActionIds.some((id) => pendingActionIds.has(id));
+      const directReplyIsCurrent = post.pendingActionIds.length === 0
+        && (!task || ["waiting_input", "user_review"].includes(task.state));
+      const needsAction = post.actionRequired && (hasLinkedPendingAction || directReplyIsCurrent);
       const covered = ["progress", "decision", "attention"].includes(post.kind)
         && (latestOutcomeByTask.get(post.sessionId ?? post.taskId) ?? "") > post.createdAt;
       return {

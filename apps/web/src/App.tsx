@@ -106,7 +106,7 @@ export function App() {
 
       <main className={`main-content ${tab === "feed" ? "feed-main" : ""}`}>
         {bridge.error && <div className="error-banner">{bridge.error}</div>}
-        {tab === "feed" && <FeedView projects={bridge.snapshot.projects} posts={bridge.snapshot.posts} sessions={bridge.snapshot.sessions} actions={bridge.snapshot.actions} commands={commands} seenPostIds={bridge.snapshot.seenPostIds} dismissedFeedItemIds={bridge.snapshot.dismissedFeedItemIds} send={bridge.send} onOpen={openSession} onOpenProject={openAgent} onNewTask={() => openNewTask()} />}
+        {tab === "feed" && <FeedView projects={bridge.snapshot.projects} posts={bridge.snapshot.posts} sessions={bridge.snapshot.sessions} actions={bridge.snapshot.actions} commands={commands} tasks={bridge.snapshot.tasks} seenPostIds={bridge.snapshot.seenPostIds} dismissedFeedItemIds={bridge.snapshot.dismissedFeedItemIds} send={bridge.send} onOpen={openSession} onOpenProject={openAgent} onNewTask={() => openNewTask()} />}
         {tab === "tasks" && <TasksView projects={bridge.snapshot.projects} sessions={bridge.snapshot.sessions} tasks={bridge.snapshot.tasks} preferences={bridge.snapshot.taskPreferences} send={bridge.send} onOpen={openSession} />}
         {tab === "agents" && <AgentsView projects={bridge.snapshot.projects} sessions={bridge.snapshot.sessions} onOpen={openAgent} onNewTask={openNewTask} />}
         {tab === "settings" && (
@@ -157,12 +157,13 @@ export function App() {
           actions={bridge.snapshot.actions.filter((action) => action.sessionId === selectedSession.id)}
           posts={bridge.snapshot.posts.filter((post) => post.sessionId === selectedSession.id)}
           commands={commands.filter((command) => command.sessionId === selectedSession.id)}
+          task={[...bridge.snapshot.tasks].filter((task) => task.sessionId === selectedSession.id).sort((left, right) => right.updatedAt.localeCompare(left.updatedAt))[0]}
           timelineCursor={bridge.snapshot.taskTimelineCursors[selectedSession.id]}
           send={bridge.send}
           onClose={() => setSelectedSessionId(null)}
         />
       )}
-      {newTaskOpen && <TaskComposer workspaces={bridge.snapshot.workspaces} projects={bridge.snapshot.projects} initialProjectId={newTaskProjectId} send={bridge.send} onClose={() => { setNewTaskOpen(false); setNewTaskProjectId(null); }} />}
+      {newTaskOpen && <TaskComposer workspaces={bridge.snapshot.workspaces} projects={bridge.snapshot.projects} initialProjectId={newTaskProjectId} send={bridge.send} onSubmitted={() => setTab("feed")} onClose={() => { setNewTaskOpen(false); setNewTaskProjectId(null); }} />}
     </div>
   );
 }

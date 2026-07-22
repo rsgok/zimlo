@@ -1,29 +1,41 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import type { ClientCommand, Decision, PendingAction } from "@zimlo/protocol";
 import { FormattedText } from "./FormattedText";
 import { VoiceInput } from "./VoiceInput";
 
 interface ActionPanelProps {
   action: PendingAction;
-  send: (command: ClientCommand) => void;
+  send: (command: ClientCommand) => boolean;
   compact?: boolean;
 }
 
 export function ActionPanel({ action, send, compact = false }: ActionPanelProps) {
-  const [answer, setAnswer] = useState("");
+  const draftKey = `zimlo:action-draft:${action.actionId}`;
+  const [answer, setAnswer] = useState(() => typeof localStorage === "undefined" ? "" : localStorage.getItem(draftKey) ?? "");
   const [expanded, setExpanded] = useState(false);
   const [selected, setSelected] = useState<Decision | null>(null);
   const [confirmation, setConfirmation] = useState("");
+  const [submitted, setSubmitted] = useState(false);
   const hasLongDetail = compact && action.detail.length > 140;
 
-  const decide = (decision: Decision, confirmationPhrase?: string) => send({
-    type: "action.decide",
-    actionId: action.actionId,
-    sessionId: action.sessionId,
-    decisionId: decision.id,
-    idempotencyKey: crypto.randomUUID(),
-    ...(confirmationPhrase ? { confirmationPhrase } : {}),
-  });
+  useEffect(() => {
+    if (answer) localStorage.setItem(draftKey, answer);
+    else localStorage.removeItem(draftKey);
+  }, [answer, draftKey]);
+
+  const decide = (decision: Decision, confirmationPhrase?: string) => {
+    const accepted = send({
+      type: "action.decide",
+      actionId: action.actionId,
+      sessionId: action.sessionId,
+      decisionId: decision.id,
+      idempotencyKey: crypto.randomUUID(),
+      ...(confirmationPhrase ? { confirmationPhrase } : {}),
+    });
+    if (!accepted) return;
+    localStorage.removeItem(draftKey);
+    setSubmitted(true);
+  };
 
   return (
     <section className="action-panel" aria-label={action.kind === "input" ? "等待输入" : "等待审批"}>
@@ -38,20 +50,27 @@ export function ActionPanel({ action, send, compact = false }: ActionPanelProps)
         </button>
       )}
 
-      {action.kind === "input" ? (
+      {submitted ? (
+        <p className="action-sync-state">已保存在本机，等待 Agent 确认</p>
+      ) : action.kind === "input" ? (
         <div className="action-input-row">
           <VoiceInput compact ariaLabel="回复 Agent" value={answer} onChange={setAnswer} placeholder="说出或输入回答…" rows={1} />
           <button
             className="action-submit"
             disabled={!answer.trim()}
-            onClick={() => send({
-              type: "action.decide",
-              actionId: action.actionId,
-              sessionId: action.sessionId,
-              decisionId: "submit-input",
-              idempotencyKey: crypto.randomUUID(),
-              input: { answer: answer.trim() },
-            })}
+            onClick={() => {
+              const accepted = send({
+                type: "action.decide",
+                actionId: action.actionId,
+                sessionId: action.sessionId,
+                decisionId: "submit-input",
+                idempotencyKey: crypto.randomUUID(),
+                input: { answer: answer.trim() },
+              });
+              if (!accepted) return;
+              localStorage.removeItem(draftKey);
+              setSubmitted(true);
+            }}
           >提交回复</button>
         </div>
       ) : selected?.confirmationPhrase ? (

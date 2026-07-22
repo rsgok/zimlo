@@ -123,6 +123,19 @@ describe("SessionDetail", () => {
     expect(markup).not.toContain("SECRET_TOOL_COMMAND");
   });
 
+  it("hides a raw completion message when an Agent result already covers it", () => {
+    const completed: UnifiedEvent = {
+      id: "completed", sequence: 4, provider: "claude", sessionId: session.id, providerSessionId: session.providerSessionId,
+      kind: "completed", source: "hook", occurredAt: "2026-07-22T10:01:00.000Z",
+      payload: { message: "RAW_DUPLICATE_COMPLETION" }, provenance: "verified",
+    };
+    const markup = renderToStaticMarkup(
+      <SessionDetail session={session} events={[...events, completed]} actions={[]} posts={[post]} commands={[]} send={vi.fn()} onClose={vi.fn()} />,
+    );
+    expect(markup).toContain("详情页已经重构");
+    expect(markup).not.toContain("RAW_DUPLICATE_COMPLETION");
+  });
+
   it("falls back to the session title when a discovered task has no instruction event", () => {
     const markup = renderToStaticMarkup(
       <SessionDetail session={session} events={[]} actions={[]} posts={[]} commands={[]} send={vi.fn()} onClose={vi.fn()} />,

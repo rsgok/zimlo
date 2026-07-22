@@ -120,7 +120,6 @@ export function TasksView({ projects, sessions, tasks, preferences, send, onOpen
   );
   const collapsed = useMemo(() => collapseProcessSessions(sessions), [sessions]);
   const managedSessions = collapsed.sessions;
-  const groupedProcessCount = sessions.length - managedSessions.length;
   const activeCount = managedSessions.filter((session) => {
     const state = effectiveState(session, taskBySession.get(session.id));
     return ["running", "waiting", "waiting_input", "reviewing", "user_review"].includes(state);
@@ -166,10 +165,10 @@ export function TasksView({ projects, sessions, tasks, preferences, send, onOpen
     <section className="tasks-view">
       <div className="section-heading task-heading">
         <div>
-          <p className="eyebrow">任务管理</p>
-          <h2>{projects.length} 个项目</h2>
+          <p className="eyebrow">TASKS</p>
+          <h2>任务</h2>
         </div>
-        <span>{managedSessions.length} 个任务 · {activeCount} 个进行中{groupedProcessCount > 0 ? ` · ${groupedProcessCount} 个同目录进程已归组` : ""}</span>
+        <span>{projects.length} 项目 · {managedSessions.length} 任务 · {activeCount} 进行中</span>
       </div>
 
       <div className="project-directory" aria-label="项目目录">
@@ -225,11 +224,11 @@ export function TasksView({ projects, sessions, tasks, preferences, send, onOpen
                       className={preferenceBySession.get(session.id)?.pinnedAt ? "active" : ""}
                       onClick={() => send({ type: "task.pin", sessionId: session.id, pinned: !preferenceBySession.get(session.id)?.pinnedAt })}
                       aria-label={preferenceBySession.get(session.id)?.pinnedAt ? "取消置顶" : "置顶任务"}
-                    >⌃</button>
+                    >{preferenceBySession.get(session.id)?.pinnedAt ? "已置顶" : "置顶"}</button>
                     <button
                       onClick={() => send({ type: "task.archive", sessionId: session.id, archived: !preferenceBySession.get(session.id)?.archivedAt })}
                       aria-label={preferenceBySession.get(session.id)?.archivedAt ? "恢复任务" : "归档任务"}
-                    >{preferenceBySession.get(session.id)?.archivedAt ? "↩" : "—"}</button>
+                    >{preferenceBySession.get(session.id)?.archivedAt ? "恢复" : "归档"}</button>
                   </div>
                 </article>
               );

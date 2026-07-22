@@ -1,6 +1,8 @@
+import { useEffect, useState } from "react";
 import type { ClientCommand, FeedPost, PendingAction, Project, Session } from "@zimlo/protocol";
 import { ActionPanel } from "./ActionPanel";
 import { FormattedText } from "./FormattedText";
+import { VoiceInput } from "./VoiceInput";
 import { sessionLocation, sessionRuntimeLabel } from "./sessionPresentation";
 
 interface FeedPostViewProps {
@@ -8,8 +10,9 @@ interface FeedPostViewProps {
   session: Session | undefined;
   project: Project | undefined;
   actions: PendingAction[];
-  send: (command: ClientCommand) => void;
+  send: (command: ClientCommand) => boolean;
   onOpenProject: (projectId: string) => void;
+  needsAction: boolean;
   position: number;
   total: number;
 }
@@ -30,12 +33,29 @@ function relativeTime(value: string): string {
   return new Intl.DateTimeFormat("zh-CN", { month: "short", day: "numeric" }).format(new Date(value));
 }
 
-export function FeedPostView({ post, session, project, actions, send, onOpenProject, position, total }: FeedPostViewProps) {
+export function FeedPostView({ post, session, project, actions, send, onOpenProject, needsAction, position, total }: FeedPostViewProps) {
   const location = session ? sessionLocation(session) : null;
   const pendingActions = actions.filter((action) => action.state === "pending");
-  const needsAction = pendingActions.length > 0;
-  const nextStep = post.actionPrompt
+  const draftKey = `zimlo:feed-reply:${post.id}`;
+  const [reply, setReply] = useState(() => typeof localStorage === "undefined" ? "" : localStorage.getItem(draftKey) ?? "");
+  const [submitted, setSubmitted] = useState(false);
+  const canReply = Boolean(session?.cwd && !session.correlationUncertain);
+  const directReply = needsAction && pendingActions.length === 0 && post.actions.includes("reply");
+  const nextStep = (needsAction ? post.actionPrompt : null)
     ?? (post.kind === "failure" ? "右滑查看原因并决定下一步" : post.kind === "result" ? "右滑查看完整结果" : session?.status === "running" ? "Agent 继续执行，重要变化会再次出现" : "等待下一条重要更新");
+
+  useEffect(() => {
+    if (reply) localStorage.setItem(draftKey, reply);
+    else localStorage.removeItem(draftKey);
+  }, [draftKey, reply]);
+
+  useEffect(() => {
+    if (!needsAction) {
+      localStorage.removeItem(draftKey);
+      setReply("");
+      setSubmitted(false);
+    }
+  }, [draftKey, needsAction]);
   return (
     <article className={`feed-post post-${post.kind} template-${post.template} ${needsAction ? "is-attention" : ""}`}>
       <div className="post-topline">
@@ -68,6 +88,20 @@ export function FeedPostView({ post, session, project, actions, send, onOpenProj
         </div>
 
         {pendingActions.map((action) => <ActionPanel key={action.actionId} action={action} send={send} compact />)}
+        {directReply && (
+          <div className="feed-reply-row">
+            <VoiceInput compact value={reply} onChange={setReply} rows={1} ariaLabel="直接回复 Agent" placeholder="说出或输入回复…" disabled={!canReply || submitted} />
+            <button
+              className="action-submit"
+              disabled={!canReply || !reply.trim() || submitted}
+              onClick={() => {
+                const accepted = send({ type: "task.follow_up", sessionId: session!.id, text: reply.trim(), idempotencyKey: crypto.randomUUID() });
+                if (!accepted) return;
+                setSubmitted(true);
+              }}
+            >{submitted ? "已保存待同步" : canReply ? "回复" : "请进入任务回复"}</button>
+          </div>
+        )}
 
       </div>
     </article>

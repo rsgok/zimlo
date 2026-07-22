@@ -1,5 +1,5 @@
 import { useEffect, useRef, type ReactNode } from "react";
-import type { ClientCommand, FeedPost, PendingAction, Project, Session, TaskCommand } from "@zimlo/protocol";
+import type { ClientCommand, FeedPost, PendingAction, Project, Session, TaskCommand, TaskRecord } from "@zimlo/protocol";
 import { FeedPostView } from "./FeedPostView";
 import { ActionFeedCard } from "./ActionFeedCard";
 import { buildFeedItems, feedItemId, type FeedItem } from "./feedItems";
@@ -12,12 +12,26 @@ interface FeedViewProps {
   sessions: Session[];
   actions: PendingAction[];
   commands: TaskCommand[];
+  tasks: TaskRecord[];
   seenPostIds: string[];
   dismissedFeedItemIds: string[];
-  send: (command: ClientCommand) => void;
+  send: (command: ClientCommand) => boolean;
   onOpen: (sessionId: string) => void;
   onOpenProject: (projectId: string) => void;
   onNewTask: () => void;
+}
+
+export function currentSessionPriority(item: FeedItem): number {
+  return item.priority - (item.unread ? 0 : 10);
+}
+
+export function updateCurrentCohort(cohort: Map<string, boolean>, items: FeedItem[]): void {
+  for (const item of items) {
+    const key = feedItemId(item);
+    const current = cohort.get(key);
+    if (current === undefined) cohort.set(key, item.unread || item.needsAction);
+    else if (!current && item.needsAction) cohort.set(key, true);
+  }
 }
 
 function SeenFeedPage({ children, postId, seen, onSeen, pageRef, historical = false }: {
@@ -52,23 +66,31 @@ function SeenFeedPage({ children, postId, seen, onSeen, pageRef, historical = fa
   }} className={`feed-page ${historical ? "feed-history-page" : ""}`} aria-label={historical ? "历史 Feed 卡片" : "Feed 卡片"}>{children}</section>;
 }
 
-export function FeedView({ projects, posts, sessions, actions, commands, seenPostIds, dismissedFeedItemIds, send, onOpen, onOpenProject, onNewTask }: FeedViewProps) {
+export function FeedView({ projects, posts, sessions, actions, commands, tasks, seenPostIds, dismissedFeedItemIds, send, onOpen, onOpenProject, onNewTask }: FeedViewProps) {
   const sessionById = new Map(sessions.map((session) => [session.id, session]));
   const projectById = new Map(projects.map((project) => [project.id, project]));
-  const items = buildFeedItems(posts, actions, seenPostIds, commands, dismissedFeedItemIds);
+  const items = buildFeedItems(posts, actions, seenPostIds, commands, dismissedFeedItemIds, tasks);
   const currentCohort = useRef(new Map<string, boolean>());
   const historyPage = useRef<HTMLElement>(null);
-  for (const item of items) {
-    const key = feedItemId(item);
-    if (!currentCohort.current.has(key)) currentCohort.current.set(key, item.unread);
-  }
+  const timelineRef = useRef<HTMLDivElement>(null);
+  const positionedOnFirstCard = useRef(false);
+  updateCurrentCohort(currentCohort.current, items);
   const currentItems = items
     .filter((item) => currentCohort.current.get(feedItemId(item)))
-    .sort((left, right) => left.priority - right.priority || right.createdAt.localeCompare(left.createdAt));
+    .sort((left, right) => currentSessionPriority(left) - currentSessionPriority(right) || right.createdAt.localeCompare(left.createdAt));
   const historyItems = items
     .filter((item) => !currentCohort.current.get(feedItemId(item)))
     .sort((left, right) => right.createdAt.localeCompare(left.createdAt));
   const orderedItems = [...currentItems, ...historyItems];
+
+  useEffect(() => {
+    if (positionedOnFirstCard.current || currentItems.length === 0 || !timelineRef.current) return;
+    positionedOnFirstCard.current = true;
+    const frame = window.requestAnimationFrame(() => {
+      if (timelineRef.current) timelineRef.current.scrollTop = 0;
+    });
+    return () => window.cancelAnimationFrame(frame);
+  }, [currentItems.length]);
 
   const renderItem = (item: FeedItem, historical = false, index = -1) => {
     const position = orderedItems.findIndex((candidate) => feedItemId(candidate) === feedItemId(item)) + 1;
@@ -94,6 +116,7 @@ export function FeedView({ projects, posts, sessions, actions, commands, seenPos
             actions={actions.filter((action) => item.post.pendingActionIds.includes(action.actionId))}
             send={send}
             onOpenProject={onOpenProject}
+            needsAction={item.needsAction}
             position={position}
             total={orderedItems.length}
           /> : item.type === "action" ? <ActionFeedCard
@@ -110,7 +133,7 @@ export function FeedView({ projects, posts, sessions, actions, commands, seenPos
 
   return (
     <div className="feed-stage">
-      <div className="feed-timeline" aria-label="Agent Feed">
+      <div ref={timelineRef} className="feed-timeline" aria-label="Agent Feed">
         {currentItems.map((item) => renderItem(item))}
         <section className="feed-page feed-finished-page" aria-label="当前 Feed 已看完">
           <div className="feed-finished-card">

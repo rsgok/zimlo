@@ -6,7 +6,7 @@ interface FeedCardViewProps {
   card: FeedCard;
   session: Session | undefined;
   actions: PendingAction[];
-  send: (command: ClientCommand) => void;
+  send: (command: ClientCommand) => boolean;
   onOpen: (sessionId: string) => void;
 }
 

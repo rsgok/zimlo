@@ -93,4 +93,11 @@ describe("Feed item composition", () => {
     expect(merged[0]?.highlights).toEqual(["新事实", "旧事实"]);
     expect(buildFeedItems([newer, result], []).map((item) => item.id)).toEqual(["result", "progress-new"]);
   });
+
+  it("keeps direct reply posts urgent only while the task is waiting for the user", () => {
+    const direct = { ...post, pendingActionIds: [], actions: ["reply" as const] };
+    const waiting = { id: "task-a", runId: "run-a", agentId: "codex", sessionId: "session-a", state: "waiting_input" as const, reason: "等待回复", updatedAt: "2026-07-23T01:00:00.000Z" };
+    expect(buildFeedItems([direct], [], [], [], [], [waiting])[0]).toMatchObject({ needsAction: true, priority: 0 });
+    expect(buildFeedItems([direct], [], [], [], [], [{ ...waiting, state: "running" as const }])[0]).toMatchObject({ needsAction: false });
+  });
 });

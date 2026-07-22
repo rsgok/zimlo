@@ -46,4 +46,9 @@ describe("persistent command outbox", () => {
     const right: ClientCommand = { ...left, idempotencyKey: "2", input: { a: "1", z: "2" } };
     expect(commandSemanticKey(left)).toBe(commandSemanticKey(right));
   });
+
+  it("reports a persistence failure so the composer can keep the original draft", () => {
+    const failingStorage = { getItem: () => null, setItem: () => { throw new Error("quota exceeded"); } };
+    expect(saveCommandOutbox(enqueueCommand([], followUp("retryable")).entries, failingStorage)).toBe(false);
+  });
 });

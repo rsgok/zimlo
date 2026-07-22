@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import type { ClientCommand, FeedPost, PendingAction, Project, Session, TaskCommand, UnifiedEvent } from "@zimlo/protocol";
+import type { ClientCommand, FeedPost, PendingAction, Project, Session, TaskCommand, TaskRecord, UnifiedEvent } from "@zimlo/protocol";
 import { ActionPanel } from "./ActionPanel";
 import { FormattedText } from "./FormattedText";
 import { VoiceInput } from "./VoiceInput";
@@ -13,8 +13,9 @@ interface SessionDetailProps {
   actions: PendingAction[];
   posts: FeedPost[];
   commands: TaskCommand[];
+  task?: TaskRecord | undefined;
   timelineCursor?: string | undefined;
-  send: (command: ClientCommand) => void;
+  send: (command: ClientCommand) => boolean;
   onClose: () => void;
 }
 
@@ -37,7 +38,7 @@ const EVENT_LABELS: Partial<Record<UnifiedEvent["kind"], string>> = {
   failed: "执行失败",
 };
 
-const STATUS_LABELS: Record<Session["status"], string> = {
+const STATUS_LABELS: Record<string, string> = {
   running: "进行中",
   waiting: "等待中",
   idle: "可继续",
@@ -45,6 +46,9 @@ const STATUS_LABELS: Record<Session["status"], string> = {
   failed: "失败",
   ended: "已结束",
   unknown: "状态未知",
+  waiting_input: "等你回复",
+  reviewing: "检查中",
+  user_review: "待你审阅",
 };
 
 const COMMAND_LABELS: Record<TaskCommand["state"], string> = {
@@ -112,12 +116,19 @@ function attributedDiff(payload: unknown): string {
   return "";
 }
 
+function eventCoveredByAgentPost(event: UnifiedEvent, posts: FeedPost[]): boolean {
+  if (!(event.kind === "completed" || event.kind === "failed")) return false;
+  const matchingKinds = event.kind === "completed" ? new Set<FeedPost["kind"]>(["result"]) : new Set<FeedPost["kind"]>(["failure"]);
+  const occurredAt = new Date(event.occurredAt).getTime();
+  return posts.some((post) => matchingKinds.has(post.kind) && Math.abs(new Date(post.createdAt).getTime() - occurredAt) <= 15 * 60 * 1_000);
+}
+
 type TimelineItem =
   | { type: "post"; id: string; at: string; post: FeedPost }
   | { type: "event"; id: string; at: string; event: UnifiedEvent }
   | { type: "command"; id: string; at: string; command: TaskCommand };
 
-export function SessionDetail({ session, project, events, actions, posts, commands, timelineCursor, send, onClose }: SessionDetailProps) {
+export function SessionDetail({ session, project, events, actions, posts, commands, task, timelineCursor, send, onClose }: SessionDetailProps) {
   const draftKey = `zimlo:task-draft:${session.id}`;
   const [message, setMessage] = useState(() => typeof localStorage === "undefined" ? "" : localStorage.getItem(draftKey) ?? "");
   const instructions = [...events]
@@ -130,13 +141,25 @@ export function SessionDetail({ session, project, events, actions, posts, comman
   const pendingAction = actions.find((action) => action.state === "pending");
   const pendingActions = actions.filter((action) => action.state === "pending");
   const queuedCommand = commands.find((command) => ["queued", "dispatching", "running"].includes(command.state));
-  const latestActionPrompt = [...posts].sort((left, right) => right.createdAt.localeCompare(left.createdAt)).find((post) => post.actionPrompt)?.actionPrompt;
+  const currentState = task?.state ?? session.status;
+  const latestActionPrompt = [...posts].sort((left, right) => right.createdAt.localeCompare(left.createdAt))
+    .find((post) => post.actionPrompt && (post.pendingActionIds.some((id) => pendingActions.some((action) => action.actionId === id)) || (post.pendingActionIds.length === 0 && ["waiting_input", "user_review"].includes(currentState))))?.actionPrompt;
   const nextAction = pendingAction?.title
     ?? (queuedCommand ? COMMAND_LABELS[queuedCommand.state] : null)
     ?? latestActionPrompt
-    ?? (session.status === "running" ? "Agent 正在执行，无需操作" : session.status === "failed" ? "查看失败原因并决定是否重试" : "可以继续布置任务");
+    ?? (currentState === "waiting_input"
+      ? "回复 Agent，让任务继续"
+      : currentState === "user_review"
+        ? "审阅最新结果；需要调整时直接追加指令"
+        : currentState === "reviewing"
+          ? "Agent 正在检查结果，无需操作"
+          : currentState === "running"
+            ? "Agent 正在执行，无需操作"
+            : currentState === "failed"
+              ? "查看失败原因并决定是否重试"
+              : "可以继续布置任务");
   const canContinue = Boolean(session.cwd && !session.correlationUncertain);
-  const willQueue = session.activePid !== null || session.status === "running" || session.status === "waiting";
+  const willQueue = session.activePid !== null || ["running", "waiting", "reviewing"].includes(currentState);
   const activeQueue = commands.filter((command) => ["queued", "dispatching", "running"].includes(command.state)).sort((left, right) => left.createdAt.localeCompare(right.createdAt));
   const duplicateActive = activeQueue.some((command) => command.text.trim() === message.trim());
   const latestPost = [...posts].sort((left, right) => right.createdAt.localeCompare(left.createdAt))[0];
@@ -146,6 +169,7 @@ export function SessionDetail({ session, project, events, actions, posts, comman
     ...commands.map((command): TimelineItem => ({ type: "command", id: command.id, at: command.createdAt, command })),
     ...events
       .filter((event) => EVENT_LABELS[event.kind])
+      .filter((event) => !eventCoveredByAgentPost(event, posts))
       .filter((event) => event.kind !== "user_instruction" || !commands.some((command) => command.text === instructionText(event)))
       .filter((event) => event.kind !== "completed" || readablePayload(event.payload))
       .map((event): TimelineItem => ({ type: "event", id: event.id, at: event.occurredAt, event })),
@@ -196,7 +220,7 @@ export function SessionDetail({ session, project, events, actions, posts, comman
           <div className="task-profile-meta" aria-label="任务信息">
             <span className={`provider provider-${session.provider}`}>{sessionRuntimeLabel(session)}</span>
             <span>{location.kind === "project" ? "项目" : "目录"} · {location.label}</span>
-            <span className={`task-status task-status-${session.status}`}>{STATUS_LABELS[session.status]}</span>
+            <span className={`task-status task-status-${currentState}`}>{STATUS_LABELS[currentState] ?? currentState}</span>
             <span>开始 · {readableDate(session.createdAt)}</span>
           </div>
           <div className="task-next-action"><span>现在需要你</span><strong>{nextAction}</strong></div>
