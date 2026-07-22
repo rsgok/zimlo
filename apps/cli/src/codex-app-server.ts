@@ -249,6 +249,7 @@ export class CodexAppServer {
       ...this.session,
       id: stableSessionId("codex", threadId),
       providerSessionId: threadId,
+      surface: "managed",
       title: text.replace(/\s+/gu, " ").trim().slice(0, 72) || "Codex 新任务",
       status: "running",
       lastActivityAt: now,

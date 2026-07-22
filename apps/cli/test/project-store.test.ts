@@ -1,0 +1,138 @@
+import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { afterEach, describe, expect, it } from "vitest";
+import { EMPTY_CAPABILITIES, type FeedPost, type Session } from "@zimlo/protocol";
+import { ZimloStore } from "../src/store.js";
+
+const roots: string[] = [];
+
+function fixture() {
+  const root = mkdtempSync(join(tmpdir(), "zimlo-project-store-"));
+  roots.push(root);
+  const projectRoot = join(root, "product");
+  mkdirSync(join(projectRoot, ".git"), { recursive: true });
+  return { root, projectRoot, database: join(root, "zimlo.db") };
+}
+
+function session(id: string, cwd: string, at: string): Session {
+  return {
+    id,
+    provider: "codex",
+    surface: "cli",
+    providerSessionId: `provider-${id}`,
+    title: `Task ${id}`,
+    cwd,
+    transcriptPath: null,
+    status: "idle",
+    lastActivityAt: at,
+    createdAt: at,
+    activePid: null,
+    processStartedAt: null,
+    tty: null,
+    correlationUncertain: false,
+    capabilities: EMPTY_CAPABILITIES,
+  };
+}
+
+afterEach(() => {
+  for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true });
+});
+
+describe("persistent project model", () => {
+  it("groups sessions by Git root and makes Feed posts inherit the project", () => {
+    const { projectRoot, database } = fixture();
+    const store = new ZimloStore(database);
+    const first = store.upsertSession(session("a", join(projectRoot, "apps/web"), "2026-07-23T00:00:00.000Z"));
+    const second = store.upsertSession(session("b", join(projectRoot, "packages/core"), "2026-07-23T01:00:00.000Z"));
+    expect(first.projectId).toBeTruthy();
+    expect(second.projectId).toBe(first.projectId);
+
+    const post: FeedPost = {
+      id: "post-a",
+      taskId: "task-a",
+      runId: first.providerSessionId,
+      agentId: "codex",
+      sessionId: first.id,
+      kind: "result",
+      template: "paper",
+      headline: "完成",
+      takeaway: "任务完成",
+      highlights: [],
+      actionRequired: false,
+      actions: [],
+      pendingActionIds: [],
+      dedupeKey: "project-post",
+      source: "agent",
+      createdAt: "2026-07-23T02:00:00.000Z",
+    };
+    const storedPost = store.insertFeedPost(post).post;
+    expect(storedPost.projectId).toBe(first.projectId);
+    expect(store.listProjects()).toEqual([
+      expect.objectContaining({ name: "product", primaryPath: projectRoot, sessionCount: 2, postCount: 1 }),
+    ]);
+    expect(store.snapshot(false, "", []).projects).toHaveLength(1);
+    store.close();
+  });
+
+  it("idempotently restores project links on startup without guessing broad roots", () => {
+    const { projectRoot, database } = fixture();
+    const store = new ZimloStore(database);
+    const stored = store.upsertSession(session("a", projectRoot, "2026-07-23T00:00:00.000Z"));
+    expect(stored.projectId).toBeTruthy();
+    store.database.prepare("UPDATE sessions SET project_id = NULL").run();
+    store.database.prepare("DELETE FROM projects").run();
+    store.upsertSession(session("root", "/", "2026-07-23T00:00:00.000Z"));
+    store.close();
+
+    const reopened = new ZimloStore(database);
+    expect(reopened.getSession("a")?.projectId).toBeTruthy();
+    expect(reopened.getSession("root")?.projectId).toBeNull();
+    expect(reopened.listProjects()).toHaveLength(1);
+    reopened.close();
+  });
+
+  it("backfills existing cards when a Session later gains a strong project", () => {
+    const { projectRoot, database } = fixture();
+    const store = new ZimloStore(database);
+    const unresolved = store.upsertSession(session("late", "/", "2026-07-23T00:00:00.000Z"));
+    store.insertFeedPost({
+      id: "post-late",
+      taskId: "task-late",
+      runId: unresolved.providerSessionId,
+      agentId: "codex",
+      sessionId: unresolved.id,
+      kind: "result",
+      template: "paper",
+      headline: "等待归属",
+      takeaway: "Session 还没有可信项目。",
+      highlights: [],
+      actionRequired: false,
+      actions: [],
+      pendingActionIds: [],
+      dedupeKey: "post-late",
+      source: "agent",
+      createdAt: "2026-07-23T00:01:00.000Z",
+    });
+    expect(store.listFeedPosts()[0]?.projectId).toBeNull();
+    const assigned = store.upsertSession({ ...unresolved, cwd: projectRoot, lastActivityAt: "2026-07-23T00:02:00.000Z" });
+    expect(assigned.projectId).toBeTruthy();
+    expect(store.listFeedPosts()[0]?.projectId).toBe(assigned.projectId);
+    store.close();
+  });
+
+  it("keeps stable project ordering and never downgrades a known surface", () => {
+    const { root, database } = fixture();
+    const alpha = join(root, "alpha");
+    const zeta = join(root, "zeta");
+    mkdirSync(join(alpha, ".git"), { recursive: true });
+    mkdirSync(join(zeta, ".git"), { recursive: true });
+    const store = new ZimloStore(database);
+    store.upsertSession(session("zeta", zeta, "2026-07-23T02:00:00.000Z"));
+    const cli = store.upsertSession(session("alpha", alpha, "2026-07-23T01:00:00.000Z"));
+    store.upsertSession({ ...cli, surface: "unknown", lastActivityAt: "2026-07-23T03:00:00.000Z" });
+    expect(store.getSession(cli.id)?.surface).toBe("cli");
+    expect(store.listProjects().map((project) => project.name)).toEqual(["alpha", "zeta"]);
+    store.close();
+  });
+});

@@ -48,6 +48,7 @@ export function normalizeFeedPost(value: unknown): FeedPost | null {
 
   return {
     id,
+    projectId: typeof post.projectId === "string" ? post.projectId : null,
     taskId: text(post.taskId, id),
     runId: text(post.runId, id),
     agentId: text(post.agentId, "agent"),
@@ -71,7 +72,10 @@ export function normalizeFeedPost(value: unknown): FeedPost | null {
 export function normalizeSnapshot(value: Snapshot): Snapshot {
   const snapshot = value as Partial<Snapshot>;
   return {
-    sessions: Array.isArray(snapshot.sessions) ? snapshot.sessions : [],
+    projects: Array.isArray(snapshot.projects) ? snapshot.projects : [],
+    sessions: Array.isArray(snapshot.sessions)
+      ? snapshot.sessions.map((session) => ({ ...session, surface: session.surface ?? "unknown" }))
+      : [],
     cards: Array.isArray(snapshot.cards) ? snapshot.cards : [],
     posts: Array.isArray(snapshot.posts)
       ? snapshot.posts.map(normalizeFeedPost).filter((post): post is FeedPost => post !== null)
@@ -80,6 +84,7 @@ export function normalizeSnapshot(value: Snapshot): Snapshot {
     commands: Array.isArray(snapshot.commands) ? snapshot.commands : [],
     workspaces: Array.isArray(snapshot.workspaces) ? snapshot.workspaces : [],
     seenPostIds: Array.isArray(snapshot.seenPostIds) ? snapshot.seenPostIds : [],
+    dismissedFeedItemIds: Array.isArray(snapshot.dismissedFeedItemIds) ? snapshot.dismissedFeedItemIds : [],
     actions: Array.isArray(snapshot.actions) ? snapshot.actions.filter((action) => !isInternalZimloAction(action)) : [],
     sequence: typeof snapshot.sequence === "number" ? snapshot.sequence : 0,
     lanApprovalsEnabled: snapshot.lanApprovalsEnabled === true,

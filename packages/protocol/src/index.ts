@@ -3,6 +3,9 @@ import { z } from "zod";
 export const ProviderSchema = z.enum(["codex", "claude"]);
 export type Provider = z.infer<typeof ProviderSchema>;
 
+export const SessionSurfaceSchema = z.enum(["gui", "cli", "managed", "unknown"]);
+export type SessionSurface = z.infer<typeof SessionSurfaceSchema>;
+
 export const EventKindSchema = z.enum([
   "session_started",
   "user_instruction",
@@ -74,7 +77,9 @@ export type SessionStatus = z.infer<typeof SessionStatusSchema>;
 
 export const SessionSchema = z.object({
   id: z.string(),
+  projectId: z.string().nullable().optional(),
   provider: ProviderSchema,
+  surface: SessionSurfaceSchema,
   providerSessionId: z.string(),
   title: z.string(),
   projectName: z.string().nullable().optional(),
@@ -181,6 +186,7 @@ export type SignalTransitionInput = z.infer<typeof SignalTransitionInputSchema>;
 
 export const FeedPostSchema = z.object({
   id: z.string(),
+  projectId: z.string().nullable().optional(),
   taskId: z.string(),
   runId: z.string(),
   agentId: z.string(),
@@ -200,6 +206,29 @@ export const FeedPostSchema = z.object({
   createdAt: z.string(),
 });
 export type FeedPost = z.infer<typeof FeedPostSchema>;
+
+export const ProjectSchema = z.object({
+  id: z.string(),
+  name: z.string(),
+  primaryPath: z.string(),
+  paths: z.array(z.string()),
+  providers: z.array(ProviderSchema),
+  sessionCount: z.number().int().nonnegative(),
+  postCount: z.number().int().nonnegative(),
+  createdAt: z.string(),
+  lastUsedAt: z.string(),
+});
+export type Project = z.infer<typeof ProjectSchema>;
+
+export const IntegrationStatusSchema = z.object({
+  id: z.enum(["codex_gui", "codex_cli", "claude_gui", "claude_cli"]),
+  provider: ProviderSchema,
+  surface: z.enum(["gui", "cli"]),
+  state: z.enum(["ready", "partial", "shared", "unavailable"]),
+  label: z.string(),
+  detail: z.string(),
+});
+export type IntegrationStatus = z.infer<typeof IntegrationStatusSchema>;
 
 export const TaskRecordSchema = z.object({
   id: z.string(),
@@ -263,6 +292,7 @@ export const FeedCardSchema = z.object({
 export type FeedCard = z.infer<typeof FeedCardSchema>;
 
 export const SnapshotSchema = z.object({
+  projects: z.array(ProjectSchema),
   sessions: z.array(SessionSchema),
   cards: z.array(FeedCardSchema),
   posts: z.array(FeedPostSchema),
@@ -270,6 +300,7 @@ export const SnapshotSchema = z.object({
   commands: z.array(TaskCommandSchema),
   workspaces: z.array(TrustedWorkspaceSchema),
   seenPostIds: z.array(z.string()),
+  dismissedFeedItemIds: z.array(z.string()),
   actions: z.array(PendingActionSchema),
   sequence: z.number().int().nonnegative(),
   lanApprovalsEnabled: z.boolean(),
@@ -312,8 +343,11 @@ export const ClientCommandSchema = z.discriminatedUnion("type", [
     idempotencyKey: z.string(),
   }),
   z.object({ type: z.literal("feed.seen"), postId: z.string() }),
+  z.object({ type: z.literal("feed.dismiss"), itemId: z.string().min(1).max(240) }),
   z.object({ type: z.literal("session.events.request"), sessionId: z.string() }),
   z.object({ type: z.literal("devices.request") }),
+  z.object({ type: z.literal("integrations.request") }),
+  z.object({ type: z.literal("integrations.cli.install") }),
   z.object({ type: z.literal("device.approvals.set"), deviceId: z.string(), enabled: z.boolean() }),
   z.object({ type: z.literal("codex.plugin.request") }),
   z.object({ type: z.literal("codex.plugin.install") }),
@@ -324,6 +358,7 @@ export type ClientCommand = z.infer<typeof ClientCommandSchema>;
 
 export type ServerMessage =
   | { type: "session.snapshot"; snapshot: Snapshot }
+  | { type: "project.updated"; project: Project }
   | { type: "session.updated"; session: Session }
   | { type: "session.removed"; sessionId: string }
   | { type: "event.upsert"; event: UnifiedEvent }
@@ -332,6 +367,7 @@ export type ServerMessage =
   | { type: "task.updated"; task: TaskRecord }
   | { type: "task.command.updated"; command: TaskCommand }
   | { type: "feed.seen.updated"; postId: string }
+  | { type: "feed.dismissed.updated"; itemId: string }
   | { type: "action.upsert"; action: PendingAction }
   | { type: "action.result"; actionId: string; ok: boolean; message: string }
   | { type: "session.message.result"; sessionId: string; ok: boolean; message: string }
@@ -351,6 +387,7 @@ export type ServerMessage =
     }
   | { type: "pairing.created"; pairUrl: string; qrDataUrl: string; expiresAt: string }
   | { type: "lan.approvals.changed"; enabled: boolean }
+  | { type: "integrations.status"; integrations: IntegrationStatus[] }
   | {
       type: "codex.plugin.status";
       installed: boolean;

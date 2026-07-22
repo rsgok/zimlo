@@ -83,7 +83,7 @@ Good result:
   "highlights": ["刷新请求现在只保留一个在途实例", "失败时仍保留原有会话"],
   "proof": "认证定向测试与完整构建均通过",
   "action_required": false,
-  "actions": ["open_diff"],
+  "actions": [],
   "dedupe_key": "auth-refresh:result"
 }
 ```

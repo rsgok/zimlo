@@ -68,4 +68,10 @@ describe("Feed item composition", () => {
     expect(items).toHaveLength(1);
     expect(items[0]).toMatchObject({ type: "command", id: "command-failed", needsAction: true });
   });
+
+  it("removes dismissed cards from both current and historical composition", () => {
+    const history = { ...post, id: "history", actionRequired: false, pendingActionIds: [], createdAt: "2026-07-20T00:00:00.000Z" };
+    const items = buildFeedItems([post, history], [], ["history"], [], ["post:post-a", "post:history"]);
+    expect(items).toEqual([]);
+  });
 });

@@ -1,6 +1,6 @@
 import type { ClientCommand, FeedCard, PendingAction, Session } from "@zimlo/protocol";
 import { ActionPanel } from "./ActionPanel";
-import { runtimeLabel, sessionLocation } from "./sessionPresentation";
+import { sessionLocation, sessionRuntimeLabel } from "./sessionPresentation";
 
 interface FeedCardViewProps {
   card: FeedCard;
@@ -38,7 +38,7 @@ export function FeedCardView({ card, session, actions, send, onOpen }: FeedCardV
         <h2>{card.title}</h2>
         <p className="card-summary">{card.summary}</p>
         <div className="session-meta">
-          <span className={`provider provider-${session?.provider ?? "unknown"}`}>{session ? runtimeLabel(session.provider) : "未知 runtime"}</span>
+          <span className={`provider provider-${session?.provider ?? "unknown"}`}>{session ? sessionRuntimeLabel(session) : "未知 runtime"}</span>
           <span>{location ? `${location.kind === "project" ? "项目" : "目录"} · ${location.label}` : "工作目录未知"}</span>
           {session?.correlationUncertain && <span title="Zimlo 没有把这个进程与 transcript 强行合并">关联待确认</span>}
         </div>

@@ -1,8 +1,9 @@
 import { useMemo, useState } from "react";
-import type { Session, TaskRecord } from "@zimlo/protocol";
-import { runtimeLabel, sessionLocation } from "./sessionPresentation";
+import type { Project, Session, TaskRecord } from "@zimlo/protocol";
+import { runtimeLabel, sessionLocation, sessionRuntimeLabel } from "./sessionPresentation";
 
 interface TasksViewProps {
+  projects: Project[];
   sessions: Session[];
   tasks: TaskRecord[];
   onOpen: (sessionId: string) => void;
@@ -44,7 +45,8 @@ export function collapseProcessSessions(sessions: Session[]): { sessions: Sessio
   const representatives: Session[] = [];
   const representativeByGroup = new Map<string, string>();
   const counts = new Map<string, number>();
-  for (const session of sessions) {
+  const stableSessions = [...sessions].sort((left, right) => left.createdAt.localeCompare(right.createdAt) || left.id.localeCompare(right.id));
+  for (const session of stableSessions) {
     if (!session.providerSessionId.startsWith("process:")) {
       representatives.push(session);
       continue;
@@ -101,11 +103,17 @@ function stateLabel(session: Session, state: string): string {
   return STATE_LABELS[state] ?? state;
 }
 
-export function TasksView({ sessions, tasks, onOpen }: TasksViewProps) {
+export function TasksView({ projects, sessions, tasks, onOpen }: TasksViewProps) {
   const [query, setQuery] = useState("");
   const [filter, setFilter] = useState<TaskFilter>("all");
+  const [projectId, setProjectId] = useState<string>("all");
   const [showAll, setShowAll] = useState(false);
   const taskBySession = useMemo(() => latestTasksBySession(tasks), [tasks]);
+  const projectById = useMemo(() => new Map(projects.map((project) => [project.id, project])), [projects]);
+  const stableProjects = useMemo(
+    () => [...projects].sort((left, right) => left.name.localeCompare(right.name, "zh-CN", { sensitivity: "base" }) || left.id.localeCompare(right.id)),
+    [projects],
+  );
   const collapsed = useMemo(() => collapseProcessSessions(sessions), [sessions]);
   const managedSessions = collapsed.sessions;
   const groupedProcessCount = sessions.length - managedSessions.length;
@@ -119,16 +127,17 @@ export function TasksView({ sessions, tasks, onOpen }: TasksViewProps) {
     .filter((session) => {
       const task = taskBySession.get(session.id);
       const state = effectiveState(session, task);
+      if (projectId !== "all" && session.projectId !== projectId) return false;
       if (filter === "active" && !["running", "waiting", "waiting_input", "reviewing", "user_review"].includes(state)) return false;
       if ((filter === "codex" || filter === "claude") && session.provider !== filter) return false;
       if (!normalizedQuery) return true;
       const location = sessionLocation(session);
-      return [taskTitle(session, task), task?.reason, location.label, session.cwd, runtimeLabel(session.provider), state]
+      return [taskTitle(session, task), task?.reason, projectById.get(session.projectId ?? "")?.name, location.label, session.cwd, runtimeLabel(session.provider), state]
         .some((value) => value?.toLocaleLowerCase().includes(normalizedQuery));
     })
     .sort((left, right) => {
       const priority = statePriority(effectiveState(left, taskBySession.get(left.id))) - statePriority(effectiveState(right, taskBySession.get(right.id)));
-      return priority || right.lastActivityAt.localeCompare(left.lastActivityAt);
+      return priority || right.createdAt.localeCompare(left.createdAt) || left.id.localeCompare(right.id);
     });
   const visible = normalizedQuery || showAll
     ? filtered
@@ -148,9 +157,20 @@ export function TasksView({ sessions, tasks, onOpen }: TasksViewProps) {
       <div className="section-heading task-heading">
         <div>
           <p className="eyebrow">任务管理</p>
-          <h2>{managedSessions.length} 个任务</h2>
+          <h2>{projects.length} 个项目</h2>
         </div>
-        <span>{activeCount} 个进行中{groupedProcessCount > 0 ? ` · ${groupedProcessCount} 个同目录进程已归组` : ""}</span>
+        <span>{managedSessions.length} 个任务 · {activeCount} 个进行中{groupedProcessCount > 0 ? ` · ${groupedProcessCount} 个同目录进程已归组` : ""}</span>
+      </div>
+
+      <div className="project-directory" aria-label="项目目录">
+        <button className={projectId === "all" ? "active" : ""} onClick={() => setProjectId("all")}>
+          <strong>全部项目</strong><small>{managedSessions.length} 个任务</small>
+        </button>
+        {stableProjects.map((project) => (
+          <button key={project.id} className={projectId === project.id ? "active" : ""} onClick={() => setProjectId(project.id)}>
+            <strong>{project.name}</strong><small>{project.sessionCount} 个任务 · {project.postCount} 张卡</small>
+          </button>
+        ))}
       </div>
 
       <div className="task-tools">
@@ -184,7 +204,7 @@ export function TasksView({ sessions, tasks, onOpen }: TasksViewProps) {
                     <small>{location.kind === "project" ? "项目" : "目录"} · {location.label}<span aria-hidden="true"> · </span>{processCount > 1 ? `${processCount} 个活跃进程已归组` : relativeTaskTime(session.lastActivityAt)}</small>
                   </span>
                   <span className="task-side">
-                    <span className={`provider provider-${session.provider}`}>{runtimeLabel(session.provider)}</span>
+                    <span className={`provider provider-${session.provider}`}>{sessionRuntimeLabel(session)}</span>
                     <small>{stateLabel(session, state)}</small>
                   </span>
                 </button>

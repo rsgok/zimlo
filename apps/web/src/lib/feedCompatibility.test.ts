@@ -42,7 +42,14 @@ describe("Feed compatibility", () => {
 
     expect(snapshot.posts).toHaveLength(1);
     expect(snapshot.posts[0]).toMatchObject({ id: "agent", headline: "完成", template: "paper" });
+    expect(snapshot.projects).toEqual([]);
     expect(snapshot.tasks).toEqual([]);
+    expect(snapshot.dismissedFeedItemIds).toEqual([]);
+  });
+
+  it("marks sessions from an older Bridge with an unknown surface", () => {
+    const snapshot = normalizeSnapshot({ sessions: [{ id: "legacy" }] } as never);
+    expect(snapshot.sessions[0]?.surface).toBe("unknown");
   });
 
   it("hides stale recursive approvals for Zimlo's own control tools", () => {

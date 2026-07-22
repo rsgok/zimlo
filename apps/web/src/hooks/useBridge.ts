@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import type { ClientCommand, ServerMessage, Snapshot, UnifiedEvent } from "@zimlo/protocol";
+import type { ClientCommand, IntegrationStatus, ServerMessage, Snapshot, UnifiedEvent } from "@zimlo/protocol";
 import {
   createKeyPair,
   decryptFrame,
@@ -22,6 +22,7 @@ import {
 import { isInternalZimloAction, normalizeFeedPost, normalizeSnapshot } from "../lib/feedCompatibility";
 
 const EMPTY_SNAPSHOT: Snapshot = {
+  projects: [],
   sessions: [],
   cards: [],
   posts: [],
@@ -29,6 +30,7 @@ const EMPTY_SNAPSHOT: Snapshot = {
   commands: [],
   workspaces: [],
   seenPostIds: [],
+  dismissedFeedItemIds: [],
   actions: [],
   sequence: 0,
   lanApprovalsEnabled: false,
@@ -63,6 +65,7 @@ interface BridgeState {
   devices: DeviceInfo[];
   pairing: PairingInfo | null;
   codexPlugin: CodexPluginInfo | null;
+  integrations: IntegrationStatus[];
   connected: boolean;
   pairingRequired: boolean;
   localAdmin: boolean;
@@ -130,6 +133,7 @@ export function useBridge() {
     devices: [],
     pairing: null,
     codexPlugin: null,
+    integrations: [],
     connected: false,
     pairingRequired: false,
     localAdmin: false,
@@ -148,6 +152,8 @@ export function useBridge() {
         switch (message.type) {
           case "session.snapshot":
             return { ...current, snapshot: normalizeSnapshot(message.snapshot), error: null };
+          case "project.updated":
+            return { ...current, snapshot: { ...current.snapshot, projects: upsertById(current.snapshot.projects, message.project) } };
           case "session.updated":
             return { ...current, snapshot: { ...current.snapshot, sessions: upsertById(current.snapshot.sessions, message.session) } };
           case "session.removed":
@@ -177,6 +183,10 @@ export function useBridge() {
             return current.snapshot.seenPostIds.includes(message.postId)
               ? current
               : { ...current, snapshot: { ...current.snapshot, seenPostIds: [...current.snapshot.seenPostIds, message.postId] } };
+          case "feed.dismissed.updated":
+            return current.snapshot.dismissedFeedItemIds.includes(message.itemId)
+              ? current
+              : { ...current, snapshot: { ...current.snapshot, dismissedFeedItemIds: [...current.snapshot.dismissedFeedItemIds, message.itemId] } };
           case "action.upsert": {
             if (isInternalZimloAction(message.action)) {
               return {
@@ -207,6 +217,8 @@ export function useBridge() {
             return { ...current, snapshot: { ...current.snapshot, lanApprovalsEnabled: message.enabled } };
           case "codex.plugin.status":
             return { ...current, codexPlugin: message, notice: message.detail };
+          case "integrations.status":
+            return { ...current, integrations: message.integrations };
           case "capabilities.changed":
             return { ...current, snapshot: { ...current.snapshot, sessions: current.snapshot.sessions.map((session) => session.id === message.sessionId ? { ...session, capabilities: message.capabilities } : session) } };
           case "action.result":

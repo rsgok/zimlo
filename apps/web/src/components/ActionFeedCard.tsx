@@ -1,6 +1,6 @@
 import type { ClientCommand, PendingAction, Session } from "@zimlo/protocol";
 import { ActionPanel } from "./ActionPanel";
-import { runtimeLabel, sessionLocation } from "./sessionPresentation";
+import { runtimeLabel, sessionLocation, sessionRuntimeLabel } from "./sessionPresentation";
 
 interface ActionFeedCardProps {
   action: PendingAction;
@@ -42,7 +42,7 @@ export function ActionFeedCard({ action, session, send, position, total }: Actio
       </div>
       <div className="post-footer">
         <div className="session-meta">
-          <span className={`provider provider-${session?.provider ?? "codex"}`}>{session ? runtimeLabel(session.provider) : "Agent"}</span>
+          <span className={`provider provider-${session?.provider ?? "codex"}`}>{session ? sessionRuntimeLabel(session) : "Agent"}</span>
           <span>{location ? `${location.kind === "project" ? "项目" : "目录"} · ${location.label}` : "任务"}</span>
           <span className="action-required-badge">需要你处理</span>
         </div>

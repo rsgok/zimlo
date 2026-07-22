@@ -1,7 +1,9 @@
 import { useEffect, useMemo, useState } from "react";
 import type { ClientCommand, FeedPost, PendingAction, Session, TaskCommand, UnifiedEvent } from "@zimlo/protocol";
 import { ActionPanel } from "./ActionPanel";
-import { conciseTaskInput, runtimeLabel, sessionLocation } from "./sessionPresentation";
+import { FormattedText } from "./FormattedText";
+import { VoiceInput } from "./VoiceInput";
+import { conciseTaskInput, sessionLocation, sessionRuntimeLabel } from "./sessionPresentation";
 
 interface SessionDetailProps {
   session: Session;
@@ -9,7 +11,6 @@ interface SessionDetailProps {
   actions: PendingAction[];
   posts: FeedPost[];
   commands: TaskCommand[];
-  initialSection?: "timeline" | "diff";
   send: (command: ClientCommand) => void;
   onClose: () => void;
 }
@@ -101,11 +102,10 @@ function attributedDiff(payload: unknown): string {
 
 type TimelineItem =
   | { type: "post"; id: string; at: string; post: FeedPost }
-  | { type: "action"; id: string; at: string; action: PendingAction }
   | { type: "event"; id: string; at: string; event: UnifiedEvent }
   | { type: "command"; id: string; at: string; command: TaskCommand };
 
-export function SessionDetail({ session, events, actions, posts, commands, initialSection = "timeline", send, onClose }: SessionDetailProps) {
+export function SessionDetail({ session, events, actions, posts, commands, send, onClose }: SessionDetailProps) {
   const [message, setMessage] = useState("");
   const instructions = [...events]
     .filter((event) => event.kind === "user_instruction")
@@ -115,6 +115,7 @@ export function SessionDetail({ session, events, actions, posts, commands, initi
   const taskInput = conciseTaskInput(rawTaskInput);
   const location = sessionLocation(session);
   const pendingAction = actions.find((action) => action.state === "pending");
+  const pendingActions = actions.filter((action) => action.state === "pending");
   const queuedCommand = commands.find((command) => ["queued", "dispatching", "running"].includes(command.state));
   const latestActionPrompt = [...posts].sort((left, right) => right.createdAt.localeCompare(left.createdAt)).find((post) => post.actionPrompt)?.actionPrompt;
   const nextAction = pendingAction?.title
@@ -123,18 +124,16 @@ export function SessionDetail({ session, events, actions, posts, commands, initi
     ?? (session.status === "running" ? "Agent 正在执行，无需操作" : session.status === "failed" ? "查看失败原因并决定是否重试" : "可以继续布置任务");
   const canContinue = Boolean(session.cwd && !session.correlationUncertain);
   const willQueue = session.activePid !== null || session.status === "running" || session.status === "waiting";
-  const reviewEvents = events.filter((event) => event.kind === "files_changed" || event.kind === "tests_passed" || event.kind === "tests_failed");
 
   const timeline = useMemo<TimelineItem[]>(() => [
     ...posts.map((post): TimelineItem => ({ type: "post", id: post.id, at: post.createdAt, post })),
-    ...actions.map((action): TimelineItem => ({ type: "action", id: action.actionId, at: action.createdAt, action })),
     ...commands.map((command): TimelineItem => ({ type: "command", id: command.id, at: command.createdAt, command })),
     ...events
       .filter((event) => EVENT_LABELS[event.kind])
       .filter((event) => event.kind !== "user_instruction" || !commands.some((command) => command.text === instructionText(event)))
       .filter((event) => event.kind !== "completed" || readablePayload(event.payload))
       .map((event): TimelineItem => ({ type: "event", id: event.id, at: event.occurredAt, event })),
-  ].sort((left, right) => right.at.localeCompare(left.at)), [actions, commands, events, posts]);
+  ].sort((left, right) => right.at.localeCompare(left.at)), [commands, events, posts]);
 
   useEffect(() => {
     const closeOnEscape = (event: KeyboardEvent) => {
@@ -156,36 +155,24 @@ export function SessionDetail({ session, events, actions, posts, commands, initi
           <div className={`task-runtime-avatar provider-${session.provider}`} aria-hidden="true">{session.provider === "codex" ? "C" : "CC"}</div>
           <div className="task-profile-copy">
             <p className="eyebrow">Task Input</p>
-            <p className="task-input">{taskInput}</p>
-            {rawTaskInput.trim() !== taskInput.trim() && <details className="task-input-full"><summary>查看完整输入</summary><pre>{rawTaskInput}</pre></details>}
+            <div className="task-input"><FormattedText text={taskInput} compact /></div>
+            {rawTaskInput.trim() !== taskInput.trim() && <details className="task-input-full"><summary>查看完整输入</summary><FormattedText text={rawTaskInput} /></details>}
           </div>
           <div className="task-profile-meta" aria-label="任务信息">
-            <span className={`provider provider-${session.provider}`}>{runtimeLabel(session.provider)}</span>
+            <span className={`provider provider-${session.provider}`}>{sessionRuntimeLabel(session)}</span>
             <span>{location.kind === "project" ? "项目" : "目录"} · {location.label}</span>
             <span className={`task-status task-status-${session.status}`}>{STATUS_LABELS[session.status]}</span>
             <span>开始 · {readableDate(session.createdAt)}</span>
           </div>
           <div className="task-next-action"><span>现在需要你</span><strong>{nextAction}</strong></div>
           {session.correlationUncertain && <p className="task-profile-note">当前任务关联仍待确认，因此保持只读，避免把指令发到其他 Session。</p>}
+          {pendingActions.length > 0 && (
+            <section className="profile-attention-panel" aria-label="当前待处理事项">
+              <p className="eyebrow">待处理</p>
+              {pendingActions.map((action) => <ActionPanel key={action.actionId} action={action} send={send} />)}
+            </section>
+          )}
         </section>
-
-        {initialSection === "diff" && (
-          <section className="task-review-area" aria-label="任务 Diff 与 Review">
-            <header><div><p className="eyebrow">TASK REVIEW</p><h2>Diff 与验证</h2></div><span>{reviewEvents.length} 条证据</span></header>
-            {reviewEvents.length === 0 ? (
-              <div className="timeline-empty"><strong>这个任务还没有可归属的 Diff</strong><p>只有明确关联到当前任务的文件变更与测试结果会显示在这里。</p></div>
-            ) : reviewEvents.map((event) => {
-              const diff = event.kind === "files_changed" && event.source !== "process" ? attributedDiff(event.payload) : "";
-              return (
-                <article key={`review:${event.id}`} className={`review-evidence review-${event.kind}`}>
-                  <div><strong>{EVENT_LABELS[event.kind]}</strong><time>{readableDate(event.occurredAt)}</time></div>
-                  {readablePayload(event.payload) && <p>{readablePayload(event.payload)}</p>}
-                  {diff && <pre>{diff}</pre>}
-                </article>
-              );
-            })}
-          </section>
-        )}
 
         <section className="task-timeline" aria-label="任务 Timeline">
           <header className="timeline-heading"><h2>Timeline</h2><span>最新动态在上</span></header>
@@ -195,19 +182,10 @@ export function SessionDetail({ session, events, actions, posts, commands, initi
                 <div className="timeline-marker" aria-hidden="true" />
                 <div className="timeline-content">
                   <div className="timeline-meta"><strong>{POST_LABELS[item.post.kind]} · {item.post.agentId.toUpperCase()}</strong><time>{readableDate(item.at)}</time></div>
-                  <h3>{item.post.headline}</h3><p>{item.post.takeaway}</p>
+                  <h3>{item.post.headline}</h3><FormattedText text={item.post.takeaway} />
                   {item.post.highlights.length > 0 && <ul>{item.post.highlights.map((highlight) => <li key={highlight}>{highlight}</li>)}</ul>}
                   {item.post.proof && <p className="timeline-proof"><span>已验证</span>{item.post.proof}</p>}
                   {item.post.actionPrompt && <p className="timeline-action-prompt">{item.post.actionPrompt}</p>}
-                </div>
-              </article>
-            );
-            if (item.type === "action") return (
-              <article className={`task-timeline-item timeline-${item.action.state === "pending" ? "attention" : "resolved"}`} key={`action:${item.id}`}>
-                <div className="timeline-marker" aria-hidden="true" />
-                <div className="timeline-content">
-                  <div className="timeline-meta"><strong>{item.action.state === "pending" ? "需要你处理" : "操作已处理"}</strong><time>{readableDate(item.at)}</time></div>
-                  {item.action.state === "pending" ? <ActionPanel action={item.action} send={send} /> : <><h3>{item.action.title}</h3><p>{item.action.detail}</p><span className="timeline-state-pill">{item.action.state === "resolved" ? "已完成" : "已过期"}</span></>}
                 </div>
               </article>
             );
@@ -216,8 +194,8 @@ export function SessionDetail({ session, events, actions, posts, commands, initi
                 <div className="timeline-marker" aria-hidden="true" />
                 <div className="timeline-content">
                   <div className="timeline-meta"><strong>{item.command.kind === "create" ? "你创建了任务" : "你追加了指令"}</strong><time>{readableDate(item.at)}</time></div>
-                  <p>{item.command.text}</p><span className="timeline-state-pill">{COMMAND_LABELS[item.command.state]}</span>
-                  {item.command.error && <p className="timeline-command-error">{item.command.error}</p>}
+                  <FormattedText text={item.command.text} /><span className="timeline-state-pill">{COMMAND_LABELS[item.command.state]}</span>
+                  {item.command.error && <div className="timeline-command-error"><FormattedText text={item.command.error} compact /></div>}
                   {item.command.state === "failed" && <button className="timeline-retry" onClick={() => send({ type: "task.command.retry", commandId: item.command.id, idempotencyKey: crypto.randomUUID() })}>重试</button>}
                 </div>
               </article>
@@ -229,7 +207,7 @@ export function SessionDetail({ session, events, actions, posts, commands, initi
                 <div className="timeline-marker" aria-hidden="true" />
                 <div className="timeline-content">
                   <div className="timeline-meta"><strong>{EVENT_LABELS[item.event.kind]}</strong><time>{readableDate(item.at)}</time></div>
-                  {summary && <p>{summary.length > 800 ? `${summary.slice(0, 800)}…` : summary}</p>}
+                  {summary && <FormattedText text={summary.length > 800 ? `${summary.slice(0, 800)}…` : summary} />}
                   {diff && <details className="timeline-diff"><summary>查看任务 Diff</summary><pre>{diff}</pre></details>}
                 </div>
               </article>
@@ -239,7 +217,7 @@ export function SessionDetail({ session, events, actions, posts, commands, initi
         </section>
 
         <section className="profile-composer" aria-label="继续当前任务">
-          <textarea value={message} onChange={(event) => setMessage(event.target.value)} rows={2} placeholder={willQueue ? "追加指令，将在当前步骤结束后执行…" : "告诉 Agent 接下来做什么…"} disabled={!canContinue} />
+          <VoiceInput compact value={message} onChange={setMessage} rows={1} ariaLabel="继续当前任务" placeholder={willQueue ? "说出或输入追加指令…" : "说出或输入下一步…"} disabled={!canContinue} />
           <button disabled={!canContinue || !message.trim()} onClick={() => {
             send({ type: "task.follow_up", sessionId: session.id, text: message.trim(), idempotencyKey: crypto.randomUUID() });
             setMessage("");

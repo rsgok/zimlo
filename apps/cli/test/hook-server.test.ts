@@ -22,7 +22,7 @@ function setup() {
 }
 
 interface TestableHookServer {
-  handleRequest(request: { id: string; provider: "codex"; payload: Record<string, unknown> }, cancellation?: AbortSignal): Promise<Record<string, unknown>>;
+  handleRequest(request: { id: string; provider: "codex"; surface: "gui" | "cli"; payload: Record<string, unknown> }, cancellation?: AbortSignal): Promise<Record<string, unknown>>;
 }
 
 function handleRequest(server: HookServer, request: Parameters<TestableHookServer["handleRequest"]>[0], cancellation?: AbortSignal) {
@@ -55,7 +55,7 @@ describe("Hook approval routing", () => {
         tool_input: { headline: "完成" },
       };
       expect(isTrustedZimloPermission(payload)).toBe(true);
-      const response = await handleRequest(server, { id: "trusted", provider: "codex", payload });
+      const response = await handleRequest(server, { id: "trusted", provider: "codex", surface: "gui", payload });
       expect(response).toMatchObject({
         id: "trusted",
         output: { hookSpecificOutput: { hookEventName: "PermissionRequest", decision: { behavior: "allow" } } },
@@ -93,6 +93,7 @@ describe("Hook approval routing", () => {
       const response = handleRequest(server, {
         id: "cancelled",
         provider: "codex",
+        surface: "cli",
         payload: {
           session_id: "thread-b",
           cwd: "/tmp/project",

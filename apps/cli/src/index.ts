@@ -13,6 +13,7 @@ import { DiscoveryService } from "./discovery-service.js";
 import { formatDoctor, runDoctor } from "./doctor.js";
 import { applyHookChanges, formatHookChanges, hookConfigChanges } from "./hook-config.js";
 import { HookServer, runHookClient } from "./hook-server.js";
+import { detectHookSurface } from "./hook-surface.js";
 import { ZIMLO_PATHS } from "./paths.js";
 import { ResumeService } from "./resume-service.js";
 import { RuntimeHub } from "./runtime.js";
@@ -147,9 +148,12 @@ program.command("open").description("Open the local management page").action(asy
 program.command("hook")
   .description("Internal hook transport")
   .requiredOption("--provider <provider>")
-  .action(async (options: { provider: string }) => {
+  .option("--surface <surface>", "Execution surface", "unknown")
+  .action(async (options: { provider: string; surface: string }) => {
     if (options.provider !== "codex" && options.provider !== "claude") throw new Error("未知 provider。");
-    await runHookClient(options.provider, ZIMLO_PATHS.socket);
+    if (!["gui", "cli", "auto", "unknown"].includes(options.surface)) throw new Error("未知 surface。");
+    const surface = options.surface === "auto" ? detectHookSurface() : options.surface as "gui" | "cli" | "unknown";
+    await runHookClient(options.provider, surface, ZIMLO_PATHS.socket);
   });
 
 program.command("mcp")

@@ -1,9 +1,6 @@
 import { EventEmitter } from "node:events";
-import { createHash } from "node:crypto";
-import { homedir } from "node:os";
-import { dirname, resolve } from "node:path";
 import type { FeedPost, PendingAction, ServerMessage, Session, TaskCommand, TaskRecord, TrustedWorkspace, UnifiedEvent } from "@zimlo/protocol";
-import { projectContextForCwd, projectNameForCwd } from "./project-context.js";
+import { projectNameForCwd } from "./project-context.js";
 import { sanitizeEventPayload } from "./sanitization.js";
 import { ZimloStore } from "./store.js";
 import { titleSessionFromInput } from "./task-title.js";
@@ -31,6 +28,10 @@ export class RuntimeHub extends EventEmitter {
     const stored = this.store.upsertSession(session);
     const presented = this.withProject(stored);
     this.send({ type: "session.updated", session: presented });
+    if (presented.projectId) {
+      const project = this.store.getProject(presented.projectId);
+      if (project) this.send({ type: "project.updated", project });
+    }
     return presented;
   }
 
@@ -72,7 +73,13 @@ export class RuntimeHub extends EventEmitter {
 
   postFeed(post: FeedPost): { post: FeedPost; inserted: boolean } {
     const result = this.store.insertFeedPost(post);
-    if (result.inserted) this.send({ type: "feed.posted", post: result.post });
+    if (result.inserted) {
+      this.send({ type: "feed.posted", post: result.post });
+      if (result.post.projectId) {
+        const project = this.store.getProject(result.post.projectId);
+        if (project) this.send({ type: "project.updated", project });
+      }
+    }
     return result;
   }
 
@@ -113,24 +120,15 @@ export class RuntimeHub extends EventEmitter {
   }
 
   workspaces(): TrustedWorkspace[] {
-    const byRoot = new Map<string, TrustedWorkspace>();
-    for (const session of this.store.listSessions()) {
-      if (!session.cwd) continue;
-      const project = projectContextForCwd(session.cwd);
-      const path = resolve(project?.root ?? session.cwd);
-      if (["/", homedir(), dirname(homedir())].includes(path)) continue;
-      const existing = byRoot.get(path);
-      const providers = existing ? new Set(existing.providers) : new Set<Session["provider"]>();
-      providers.add(session.provider);
-      byRoot.set(path, {
-        id: `workspace:${createHash("sha256").update(path).digest("hex").slice(0, 20)}`,
-        label: project?.name ?? path.split("/").filter(Boolean).at(-1) ?? path,
-        path,
-        providers: [...providers],
-        lastUsedAt: existing && existing.lastUsedAt > session.lastActivityAt ? existing.lastUsedAt : session.lastActivityAt,
-      });
-    }
-    return [...byRoot.values()].sort((left, right) => right.lastUsedAt.localeCompare(left.lastUsedAt)).slice(0, 50);
+    return this.store.listProjects()
+      .filter((project) => project.primaryPath)
+      .map((project) => ({
+        id: project.id,
+        label: project.name,
+        path: project.primaryPath,
+        providers: project.providers,
+        lastUsedAt: project.lastUsedAt,
+      }));
   }
 
   snapshot(deviceId = "") {
@@ -140,7 +138,8 @@ export class RuntimeHub extends EventEmitter {
 
   private withProject(session: Session): Session {
     const titled = titleSessionFromInput(session, this.store.firstTaskInput(session.id));
-    return { ...titled, projectName: projectNameForCwd(session.cwd) };
+    const project = titled.projectId ? this.store.getProject(titled.projectId) : null;
+    return { ...titled, projectName: project?.name ?? projectNameForCwd(session.cwd) };
   }
 
   private payloadContainsDiff(payload: unknown): boolean {

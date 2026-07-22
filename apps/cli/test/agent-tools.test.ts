@@ -8,6 +8,7 @@ import { ZimloStore } from "../src/store.js";
 const session: Session = {
   id: "session-a",
   provider: "codex",
+  surface: "cli",
   providerSessionId: "run-a",
   title: "Codex run",
   cwd: "/tmp/project-a",
@@ -127,6 +128,46 @@ describe("agent-authored feed protocol", () => {
 });
 
 describe("feed decision Stop checkpoint", () => {
+  it("uses a unique open hook checkpoint before considering cwd", () => {
+    const localStore = new ZimloStore(":memory:");
+    try {
+      const localRuntime = new RuntimeHub(localStore);
+      const localTools = new AgentToolService(localRuntime);
+      const hookSession = localStore.upsertSession({ ...session, activePid: null });
+      localStore.beginFeedCheckpoint({
+        agentId: "codex",
+        runId: hookSession.providerSessionId,
+        taskId: `run:${hookSession.providerSessionId}`,
+        sessionId: hookSession.id,
+        startedAt: new Date().toISOString(),
+      });
+      expect(localStore.findSessionForAgentTool("codex", 0, "/", "editor-task")?.id).toBe(hookSession.id);
+      const result = localTools.handle({
+        type: "agent_tool",
+        id: "post-from-mcp-helper",
+        provider: "codex",
+        parentPid: 0,
+        cwd: "/",
+        name: "feed.post",
+        arguments: {
+          task_id: "editor-task",
+          kind: "result",
+          template: "paper",
+          headline: "归属完成",
+          takeaway: "卡片继承真实 Session 的项目。",
+          highlights: [],
+          action_required: false,
+          actions: [],
+          dedupe_key: "editor-task:result",
+        },
+      });
+      expect(result.ok).toBe(true);
+      expect(localStore.listFeedPosts()[0]).toMatchObject({ sessionId: hookSession.id, projectId: hookSession.projectId });
+    } finally {
+      localStore.close();
+    }
+  });
+
   it("does not attach a new Agent task to an uncertain PID or cwd match", () => {
     const localStore = new ZimloStore(":memory:");
     try {

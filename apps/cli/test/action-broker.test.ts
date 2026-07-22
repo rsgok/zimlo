@@ -17,6 +17,7 @@ function setup() {
   const session: Session = {
     id: "session-a",
     provider: "codex",
+    surface: "cli",
     providerSessionId: "provider-a",
     title: "Test",
     cwd: "/tmp",

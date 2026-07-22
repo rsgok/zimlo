@@ -5,6 +5,7 @@ import { hasGeneratedSessionTitle, taskTitleFromInput, titleSessionFromInput } f
 const session: Session = {
   id: "session-a",
   provider: "codex",
+  surface: "cli",
   providerSessionId: "019f8600-abcdef",
   title: "Codex · zimlo",
   cwd: "/Users/kai/Code/zimlo",

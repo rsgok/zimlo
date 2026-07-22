@@ -5,9 +5,20 @@ export type FeedItem =
   | { type: "action"; id: string; createdAt: string; needsAction: true; unread: true; action: PendingAction }
   | { type: "command"; id: string; createdAt: string; needsAction: true; unread: true; command: TaskCommand };
 
-export function buildFeedItems(posts: FeedPost[], actions: PendingAction[], seenPostIds: string[] = [], commands: TaskCommand[] = []): FeedItem[] {
+export function feedItemId(item: Pick<FeedItem, "type" | "id">): string {
+  return `${item.type}:${item.id}`;
+}
+
+export function buildFeedItems(
+  posts: FeedPost[],
+  actions: PendingAction[],
+  seenPostIds: string[] = [],
+  commands: TaskCommand[] = [],
+  dismissedFeedItemIds: string[] = [],
+): FeedItem[] {
   const linkedActionIds = new Set(posts.flatMap((post) => post.pendingActionIds));
   const seen = new Set(seenPostIds);
+  const dismissed = new Set(dismissedFeedItemIds);
   return [
     ...posts.map((post): FeedItem => ({
       type: "post",
@@ -23,7 +34,8 @@ export function buildFeedItems(posts: FeedPost[], actions: PendingAction[], seen
     ...commands
       .filter((command) => command.kind === "create" && command.state === "failed" && command.sessionId === null)
       .map((command): FeedItem => ({ type: "command", id: command.id, createdAt: command.createdAt, needsAction: true, unread: true, command })),
-  ].sort((left, right) => Number(right.needsAction) - Number(left.needsAction)
+  ].filter((item) => !dismissed.has(feedItemId(item)))
+    .sort((left, right) => Number(right.needsAction) - Number(left.needsAction)
     || Number(right.unread) - Number(left.unread)
     || right.createdAt.localeCompare(left.createdAt));
 }

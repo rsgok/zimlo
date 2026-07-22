@@ -40,6 +40,7 @@ describe("Codex GUI plugin installer", () => {
     const stop = hooks.hooks.Stop[0].hooks[0];
     expect(stop.command).toContain(nodePath);
     expect(stop.command).toContain(entrypoint);
+    expect(stop.command).toContain("--surface gui");
 
     const marketplace = JSON.parse(await readFile(paths.marketplace, "utf8"));
     expect(marketplace.name).toBe("personal");

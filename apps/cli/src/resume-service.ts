@@ -52,6 +52,7 @@ export class ResumeService {
     const provisional: Session = {
       id: `pending:${uuidV7()}`,
       provider: "codex",
+      surface: "managed",
       providerSessionId: `pending:${uuidV7()}`,
       title: text.replace(/\s+/gu, " ").trim().slice(0, 72) || "Codex 新任务",
       cwd,
@@ -100,6 +101,7 @@ export class ResumeService {
         session = this.runtime.upsertSession({
           id: stableSessionId("claude", providerSessionId),
           provider: "claude",
+          surface: "managed",
           providerSessionId,
           title: text.replace(/\s+/gu, " ").trim().slice(0, 72) || "Claude 新任务",
           cwd,
@@ -200,6 +202,7 @@ export class ResumeService {
   private beginSession(session: Session, pid: number | null): void {
     this.runtime.upsertSession({
       ...session,
+      surface: "managed",
       status: "running",
       activePid: pid,
       processStartedAt: new Date().toISOString(),

@@ -26,7 +26,7 @@ const CLAUDE_EVENTS = [
 ] as const;
 
 export function codexPluginHooks(entrypoint: string, nodePath = process.execPath): JsonObject {
-  const configured = appendHooks({}, CODEX_PLUGIN_EVENTS, zimloHookCommand(entrypoint, "codex", nodePath), "codex");
+  const configured = appendHooks({}, CODEX_PLUGIN_EVENTS, zimloHookCommand(entrypoint, "codex", "gui", nodePath), "codex");
   return {
     description: "Zimlo Feed checkpoints and action bridge for Codex",
     hooks: configured.hooks ?? {},
@@ -50,8 +50,13 @@ function shellQuote(value: string): string {
   return `'${value.replaceAll("'", `'"'"'`)}'`;
 }
 
-export function zimloHookCommand(entrypoint: string, provider: "codex" | "claude", nodePath = process.execPath): string {
-  return `${shellQuote(nodePath)} ${shellQuote(entrypoint)} hook --provider ${provider}`;
+export function zimloHookCommand(
+  entrypoint: string,
+  provider: "codex" | "claude",
+  surface: "gui" | "cli" | "auto" = "cli",
+  nodePath = process.execPath,
+): string {
+  return `${shellQuote(nodePath)} ${shellQuote(entrypoint)} hook --provider ${provider} --surface ${surface}`;
 }
 
 function appendHooks(
@@ -118,8 +123,8 @@ export async function hookConfigChanges(entrypoint: string, uninstall = false): 
   const claudePath = join(home, ".claude", "settings.json");
   const codexBefore = await readJson(codexPath);
   const claudeBefore = await readJson(claudePath);
-  const codexCommand = zimloHookCommand(entrypoint, "codex");
-  const claudeCommand = zimloHookCommand(entrypoint, "claude");
+  const codexCommand = zimloHookCommand(entrypoint, "codex", "cli");
+  const claudeCommand = zimloHookCommand(entrypoint, "claude", "auto");
   return [
     {
       path: codexPath,

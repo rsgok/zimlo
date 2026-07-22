@@ -6,6 +6,7 @@ import { SessionDetail } from "./SessionDetail";
 const session: Session = {
   id: "session-a",
   provider: "claude",
+  surface: "cli",
   providerSessionId: "run-a",
   title: "修复 Feed 交互",
   projectName: "zimlo",
@@ -31,7 +32,7 @@ const events: UnifiedEvent[] = [
     kind: "user_instruction",
     source: "hook",
     occurredAt: "2026-07-22T09:00:00.000Z",
-    payload: { prompt: "右滑进入当前任务详情" },
+    payload: { prompt: "左滑进入当前任务详情" },
     provenance: "verified",
   },
   {
@@ -100,7 +101,7 @@ describe("SessionDetail", () => {
       <SessionDetail session={session} events={events} actions={[]} posts={[post]} commands={[command]} send={vi.fn()} onClose={vi.fn()} />,
     );
 
-    expect(markup).toContain("右滑进入当前任务详情");
+    expect(markup).toContain("左滑进入当前任务详情");
     expect(markup).toContain("详情页已经重构");
     expect(markup).toContain("Claude Code");
     expect(markup).toContain("项目 · zimlo");
@@ -111,13 +112,12 @@ describe("SessionDetail", () => {
     expect(markup).not.toContain("command started");
   });
 
-  it("opens a real task review area for open_diff", () => {
+  it("keeps task-attributed diffs inside the timeline", () => {
     const markup = renderToStaticMarkup(
-      <SessionDetail session={session} events={events} actions={[]} posts={[post]} commands={[]} initialSection="diff" send={vi.fn()} onClose={vi.fn()} />,
+      <SessionDetail session={session} events={events} actions={[]} posts={[post]} commands={[]} send={vi.fn()} onClose={vi.fn()} />,
     );
 
-    expect(markup).toContain("TASK REVIEW");
-    expect(markup).toContain("Diff 与验证");
+    expect(markup).toContain("查看任务 Diff");
     expect(markup).toContain("- old");
     expect(markup).toContain("+ new");
     expect(markup).not.toContain("SECRET_TOOL_COMMAND");

@@ -8,6 +8,7 @@ import type {
   FeedPostKind,
   FeedTemplate,
   PendingAction,
+  Project,
   Session,
   SessionCapabilities,
   Snapshot,
@@ -16,6 +17,7 @@ import type {
   TrustedWorkspace,
   UnifiedEvent,
 } from "@zimlo/protocol";
+import { persistableProjectForCwd } from "./project-context.js";
 import { sanitizeEventPayload } from "./sanitization.js";
 
 interface DeviceRow {
@@ -89,9 +91,27 @@ export class ZimloStore {
 
   private migrate(): void {
     this.database.exec(`
+      CREATE TABLE IF NOT EXISTS projects (
+        id TEXT PRIMARY KEY,
+        name TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        last_used_at TEXT NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS projects_last_used_idx ON projects(last_used_at DESC);
+
+      CREATE TABLE IF NOT EXISTS project_locations (
+        path TEXT PRIMARY KEY,
+        project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+        first_seen_at TEXT NOT NULL,
+        last_seen_at TEXT NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS project_locations_project_idx ON project_locations(project_id, last_seen_at DESC);
+
       CREATE TABLE IF NOT EXISTS sessions (
         id TEXT PRIMARY KEY,
+        project_id TEXT REFERENCES projects(id) ON DELETE SET NULL,
         provider TEXT NOT NULL,
+        surface TEXT NOT NULL DEFAULT 'unknown',
         provider_session_id TEXT NOT NULL,
         title TEXT NOT NULL,
         cwd TEXT,
@@ -142,6 +162,7 @@ export class ZimloStore {
 
       CREATE TABLE IF NOT EXISTS feed_posts (
         id TEXT PRIMARY KEY,
+        project_id TEXT REFERENCES projects(id) ON DELETE SET NULL,
         task_id TEXT NOT NULL,
         run_id TEXT NOT NULL,
         agent_id TEXT NOT NULL,
@@ -192,6 +213,13 @@ export class ZimloStore {
         post_id TEXT NOT NULL REFERENCES feed_posts(id) ON DELETE CASCADE,
         seen_at TEXT NOT NULL,
         PRIMARY KEY(device_id, post_id)
+      );
+
+      CREATE TABLE IF NOT EXISTS feed_dismissed (
+        device_id TEXT NOT NULL REFERENCES devices(id) ON DELETE CASCADE,
+        item_id TEXT NOT NULL,
+        dismissed_at TEXT NOT NULL,
+        PRIMARY KEY(device_id, item_id)
       );
 
       CREATE TABLE IF NOT EXISTS feed_checkpoints (
@@ -255,16 +283,83 @@ export class ZimloStore {
     if (!feedColumns.some((column) => column.name === "content_json")) {
       this.database.exec("ALTER TABLE feed_posts ADD COLUMN content_json TEXT");
     }
+    if (!feedColumns.some((column) => column.name === "project_id")) {
+      this.database.exec("ALTER TABLE feed_posts ADD COLUMN project_id TEXT REFERENCES projects(id) ON DELETE SET NULL");
+    }
+    const sessionColumns = this.database.prepare("PRAGMA table_info(sessions)").all() as Array<{ name: string }>;
+    if (!sessionColumns.some((column) => column.name === "project_id")) {
+      this.database.exec("ALTER TABLE sessions ADD COLUMN project_id TEXT REFERENCES projects(id) ON DELETE SET NULL");
+    }
+    if (!sessionColumns.some((column) => column.name === "surface")) {
+      this.database.exec("ALTER TABLE sessions ADD COLUMN surface TEXT NOT NULL DEFAULT 'unknown'");
+    }
     const deviceColumns = this.database.prepare("PRAGMA table_info(devices)").all() as Array<{ name: string }>;
     if (!deviceColumns.some((column) => column.name === "can_approve")) {
       this.database.exec("ALTER TABLE devices ADD COLUMN can_approve INTEGER NOT NULL DEFAULT 0");
     }
+    this.backfillProjects();
     this.migrateFeedV2();
     this.database.prepare("UPDATE task_commands SET state = 'queued', updated_at = ?, error = NULL WHERE state IN ('dispatching', 'running')")
       .run(new Date().toISOString());
     this.database.prepare("UPDATE actions SET state = 'expired' WHERE state IN ('pending', 'submitted')").run();
     this.clearInactiveActionLinks();
     this.scrubStoredContent();
+  }
+
+  ensureProjectForCwd(cwd: string | null, seenAt: string, createdAt = seenAt): Project | null {
+    const identity = persistableProjectForCwd(cwd);
+    if (!identity) return null;
+    this.database.prepare(`
+      INSERT INTO projects(id, name, created_at, last_used_at) VALUES (?, ?, ?, ?)
+      ON CONFLICT(id) DO UPDATE SET
+        name = excluded.name,
+        created_at = CASE WHEN excluded.created_at < projects.created_at THEN excluded.created_at ELSE projects.created_at END,
+        last_used_at = CASE WHEN excluded.last_used_at > projects.last_used_at THEN excluded.last_used_at ELSE projects.last_used_at END
+    `).run(identity.id, identity.name, createdAt, seenAt);
+    this.database.prepare(`
+      INSERT INTO project_locations(path, project_id, first_seen_at, last_seen_at) VALUES (?, ?, ?, ?)
+      ON CONFLICT(path) DO UPDATE SET
+        project_id = excluded.project_id,
+        first_seen_at = CASE WHEN excluded.first_seen_at < project_locations.first_seen_at THEN excluded.first_seen_at ELSE project_locations.first_seen_at END,
+        last_seen_at = CASE WHEN excluded.last_seen_at > project_locations.last_seen_at THEN excluded.last_seen_at ELSE project_locations.last_seen_at END
+    `).run(identity.root, identity.id, createdAt, seenAt);
+    return this.getProject(identity.id);
+  }
+
+  getProject(id: string): Project | null {
+    const row = this.database.prepare("SELECT * FROM projects WHERE id = ?").get(id) as Record<string, unknown> | undefined;
+    return row ? this.projectFromRow(row) : null;
+  }
+
+  listProjects(): Project[] {
+    return (this.database.prepare("SELECT * FROM projects ORDER BY name COLLATE NOCASE, id").all() as Record<string, unknown>[])
+      .map((row) => this.projectFromRow(row));
+  }
+
+  private backfillProjects(): void {
+    const sessions = this.database.prepare("SELECT id, cwd, created_at, last_activity_at FROM sessions WHERE cwd IS NOT NULL").all() as Array<{
+      id: string;
+      cwd: string;
+      created_at: string;
+      last_activity_at: string;
+    }>;
+    const updateSession = this.database.prepare("UPDATE sessions SET project_id = ? WHERE id = ?");
+    for (const session of sessions) {
+      const project = this.ensureProjectForCwd(session.cwd, session.last_activity_at, session.created_at);
+      if (project) updateSession.run(project.id, session.id);
+    }
+    this.database.prepare(`
+      UPDATE feed_posts SET project_id = (
+        SELECT sessions.project_id FROM sessions WHERE sessions.id = feed_posts.session_id
+      )
+      WHERE project_id IS NULL AND session_id IS NOT NULL
+    `).run();
+    this.database.prepare(`
+      UPDATE task_commands SET workspace_id = (
+        SELECT project_locations.project_id FROM project_locations WHERE project_locations.path = task_commands.cwd
+      )
+      WHERE cwd <> '' AND EXISTS (SELECT 1 FROM project_locations WHERE project_locations.path = task_commands.cwd)
+    `).run();
   }
 
   private clearInactiveActionLinks(): void {
@@ -414,13 +509,17 @@ export class ZimloStore {
   }
 
   upsertSession(session: Session): Session {
+    const inferredProject = this.ensureProjectForCwd(session.cwd, session.lastActivityAt, session.createdAt);
+    const projectId = session.projectId ?? inferredProject?.id ?? null;
     this.database.prepare(`
       INSERT INTO sessions (
-        id, provider, provider_session_id, title, cwd, transcript_path, status,
+        id, project_id, provider, surface, provider_session_id, title, cwd, transcript_path, status,
         last_activity_at, created_at, active_pid, process_started_at, tty,
         correlation_uncertain, capabilities_json
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       ON CONFLICT(id) DO UPDATE SET
+        project_id = COALESCE(excluded.project_id, sessions.project_id),
+        surface = CASE WHEN excluded.surface = 'unknown' THEN sessions.surface ELSE excluded.surface END,
         title = excluded.title,
         cwd = COALESCE(excluded.cwd, sessions.cwd),
         transcript_path = COALESCE(excluded.transcript_path, sessions.transcript_path),
@@ -433,7 +532,9 @@ export class ZimloStore {
         capabilities_json = excluded.capabilities_json
     `).run(
       session.id,
+      projectId,
       session.provider,
+      session.surface ?? "unknown",
       session.providerSessionId,
       session.title,
       session.cwd,
@@ -447,6 +548,10 @@ export class ZimloStore {
       session.correlationUncertain ? 1 : 0,
       JSON.stringify(session.capabilities),
     );
+    if (projectId) {
+      this.database.prepare("UPDATE feed_posts SET project_id = ? WHERE session_id = ? AND project_id IS NULL")
+        .run(projectId, session.id);
+    }
     return this.getSession(session.id) ?? session;
   }
 
@@ -465,6 +570,16 @@ export class ZimloStore {
   findSessionForAgentTool(provider: Session["provider"], parentPid: number, cwd: string, taskId: string): Session | null {
     const direct = this.getSessionByProviderId(provider, taskId);
     if (direct) return direct;
+    const checkpointMatch = this.database.prepare(`
+      SELECT sessions.* FROM feed_checkpoints
+      JOIN sessions ON sessions.id = feed_checkpoints.session_id
+      WHERE feed_checkpoints.agent_id = ? AND feed_checkpoints.task_id = ?
+      ORDER BY feed_checkpoints.started_at DESC LIMIT 1
+    `).get(provider, taskId) as Record<string, unknown> | undefined;
+    if (checkpointMatch) {
+      const session = this.sessionFromRow(checkpointMatch);
+      if (!session.correlationUncertain) return session;
+    }
     if (parentPid > 0) {
       const row = this.database.prepare("SELECT * FROM sessions WHERE provider = ? AND active_pid = ? ORDER BY last_activity_at DESC LIMIT 1")
         .get(provider, parentPid) as Record<string, unknown> | undefined;
@@ -472,6 +587,18 @@ export class ZimloStore {
         const session = this.sessionFromRow(row);
         if (!session.correlationUncertain) return session;
       }
+    }
+    const cutoff = new Date(Date.now() - 12 * 60 * 60 * 1_000).toISOString();
+    const openCheckpoints = this.database.prepare(`
+      SELECT sessions.* FROM feed_checkpoints
+      JOIN sessions ON sessions.id = feed_checkpoints.session_id
+      WHERE feed_checkpoints.agent_id = ? AND feed_checkpoints.decision_kind IS NULL
+        AND feed_checkpoints.started_at >= ?
+      ORDER BY feed_checkpoints.started_at DESC LIMIT 2
+    `).all(provider, cutoff) as Record<string, unknown>[];
+    if (openCheckpoints.length === 1) {
+      const session = this.sessionFromRow(openCheckpoints[0]!);
+      if (!session.correlationUncertain) return session;
     }
     if (!cwd) return null;
     const rows = this.database.prepare(`
@@ -594,14 +721,16 @@ export class ZimloStore {
   }
 
   insertFeedPost(post: FeedPost): { post: FeedPost; inserted: boolean } {
+    const projectId = post.projectId ?? (post.sessionId ? this.getSession(post.sessionId)?.projectId ?? null : null);
     const result = this.database.prepare(`
       INSERT OR IGNORE INTO feed_posts (
-        id, task_id, run_id, agent_id, session_id, kind, title, body,
+        id, project_id, task_id, run_id, agent_id, session_id, kind, title, body,
         action_required, actions_json, pending_action_ids_json, dedupe_key,
         source, created_at, content_json
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
       post.id,
+      projectId,
       post.taskId,
       post.runId,
       post.agentId,
@@ -624,7 +753,14 @@ export class ZimloStore {
         ...(post.actionPrompt ? { actionPrompt: post.actionPrompt } : {}),
       } satisfies StoredFeedContentV2),
     );
-    if (result.changes > 0) return { post, inserted: true };
+    if (result.changes > 0) {
+      if (projectId) {
+        this.database.prepare(`
+          UPDATE projects SET last_used_at = CASE WHEN ? > last_used_at THEN ? ELSE last_used_at END WHERE id = ?
+        `).run(post.createdAt, post.createdAt, projectId);
+      }
+      return { post: { ...post, projectId }, inserted: true };
+    }
     const existing = this.database.prepare(`
       SELECT * FROM feed_posts WHERE agent_id = ? AND run_id = ? AND dedupe_key = ?
     `).get(post.agentId, post.runId, post.dedupeKey) as Record<string, unknown> | undefined;
@@ -776,6 +912,18 @@ export class ZimloStore {
     if (!deviceId) return [];
     return (this.database.prepare("SELECT post_id FROM feed_seen WHERE device_id = ?").all(deviceId) as Array<{ post_id: string }>)
       .map((row) => row.post_id);
+  }
+
+  dismissFeedItem(deviceId: string, itemId: string): boolean {
+    return this.database.prepare(`
+      INSERT OR IGNORE INTO feed_dismissed(device_id, item_id, dismissed_at) VALUES (?, ?, ?)
+    `).run(deviceId, itemId, new Date().toISOString()).changes > 0;
+  }
+
+  listDismissedFeedItemIds(deviceId: string): string[] {
+    if (!deviceId) return [];
+    return (this.database.prepare("SELECT item_id FROM feed_dismissed WHERE device_id = ?").all(deviceId) as Array<{ item_id: string }>)
+      .map((row) => row.item_id);
   }
 
   lanApprovalsEnabled(): boolean {
@@ -978,6 +1126,7 @@ export class ZimloStore {
   snapshot(_lanApprovalsEnabled: boolean, deviceId: string, workspaces: TrustedWorkspace[]): Snapshot {
     const device = deviceId ? this.getDevice(deviceId) : null;
     return {
+      projects: this.listProjects(),
       sessions: this.listSessions(),
       cards: [],
       posts: this.listFeedPosts(),
@@ -985,6 +1134,7 @@ export class ZimloStore {
       commands: this.listTaskCommands(),
       workspaces,
       seenPostIds: this.listSeenPostIds(deviceId),
+      dismissedFeedItemIds: this.listDismissedFeedItemIds(deviceId),
       actions: this.listActions(),
       sequence: this.latestSequence(),
       lanApprovalsEnabled: device?.isLocalAdmin === true || device?.canApprove === true,
@@ -1007,7 +1157,9 @@ export class ZimloStore {
   private sessionFromRow(row: Record<string, unknown>): Session {
     return {
       id: String(row.id),
+      projectId: row.project_id === null || row.project_id === undefined ? null : String(row.project_id),
       provider: row.provider as Session["provider"],
+      surface: (row.surface ?? "unknown") as Session["surface"],
       providerSessionId: String(row.provider_session_id),
       title: String(row.title),
       cwd: row.cwd === null ? null : String(row.cwd),
@@ -1020,6 +1172,29 @@ export class ZimloStore {
       tty: row.tty === null ? null : String(row.tty),
       correlationUncertain: Number(row.correlation_uncertain) === 1,
       capabilities: json<SessionCapabilities>(String(row.capabilities_json)),
+    };
+  }
+
+  private projectFromRow(row: Record<string, unknown>): Project {
+    const id = String(row.id);
+    const locations = this.database.prepare("SELECT path FROM project_locations WHERE project_id = ? ORDER BY last_seen_at DESC")
+      .all(id) as Array<{ path: string }>;
+    const providers = this.database.prepare("SELECT DISTINCT provider FROM sessions WHERE project_id = ? ORDER BY provider")
+      .all(id) as Array<{ provider: Project["providers"][number] }>;
+    const sessionCount = this.database.prepare("SELECT COUNT(*) AS count FROM sessions WHERE project_id = ?")
+      .get(id) as { count: number };
+    const postCount = this.database.prepare("SELECT COUNT(*) AS count FROM feed_posts WHERE project_id = ? AND source = 'agent'")
+      .get(id) as { count: number };
+    return {
+      id,
+      name: String(row.name),
+      primaryPath: locations[0]?.path ?? "",
+      paths: locations.map((location) => location.path),
+      providers: providers.map((provider) => provider.provider),
+      sessionCount: Number(sessionCount.count),
+      postCount: Number(postCount.count),
+      createdAt: String(row.created_at),
+      lastUsedAt: String(row.last_used_at),
     };
   }
 
@@ -1077,6 +1252,7 @@ export class ZimloStore {
     }
     return {
       id: String(row.id),
+      projectId: row.project_id === null || row.project_id === undefined ? null : String(row.project_id),
       taskId: String(row.task_id),
       runId: String(row.run_id),
       agentId: String(row.agent_id),

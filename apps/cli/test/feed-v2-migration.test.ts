@@ -21,6 +21,7 @@ describe("Feed V2 storage migration", () => {
     seed.upsertSession({
       id: "session-a",
       provider: "codex",
+      surface: "cli",
       providerSessionId: "run-a",
       title: "Legacy task",
       cwd: "/tmp/project",

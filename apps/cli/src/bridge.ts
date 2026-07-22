@@ -9,6 +9,7 @@ import type { ClientCommand, ServerMessage } from "@zimlo/protocol";
 import { ActionBroker } from "./action-broker.js";
 import { codexPluginDeepLink, inspectCodexPlugin, installCodexPlugin } from "./codex-plugin.js";
 import { DeviceManager } from "./device-manager.js";
+import { inspectIntegrationStatuses, installCliIntegrations } from "./integration-status.js";
 import { isLoopbackAddress, isTrustedLanAddress, preferredLanAddress } from "./network.js";
 import { RuntimeHub } from "./runtime.js";
 import { SecureSocket } from "./secure-socket.js";
@@ -150,6 +151,19 @@ export class BridgeServer {
           devices: this.devicesList(),
         });
         return;
+      case "integrations.request":
+        if (!connection.isLocalAdmin) return connection.send({ type: "error", code: "forbidden", message: "仅 Mac 本机管理页可查看本地 Agent 接入状态。" });
+        connection.send({ type: "integrations.status", integrations: await inspectIntegrationStatuses(this.entrypoint) });
+        return;
+      case "integrations.cli.install":
+        if (!connection.isLocalAdmin) return connection.send({ type: "error", code: "forbidden", message: "仅 Mac 本机管理页可修改本地 Agent 接入配置。" });
+        try {
+          await installCliIntegrations(this.entrypoint);
+          connection.send({ type: "integrations.status", integrations: await inspectIntegrationStatuses(this.entrypoint) });
+        } catch (error) {
+          connection.send({ type: "error", code: "integration_install_failed", message: error instanceof Error ? error.message : String(error) });
+        }
+        return;
       case "device.approvals.set": {
         if (!connection.isLocalAdmin) return connection.send({ type: "error", code: "forbidden", message: "仅 Mac 本机管理页可授权手机审批。" });
         const device = this.runtime.store.setDeviceApproval(command.deviceId, command.enabled);
@@ -242,6 +256,11 @@ export class BridgeServer {
       case "feed.seen": {
         this.runtime.store.markFeedSeen(deviceId, command.postId);
         connection.send({ type: "feed.seen.updated", postId: command.postId });
+        return;
+      }
+      case "feed.dismiss": {
+        this.runtime.store.dismissFeedItem(deviceId, command.itemId);
+        connection.send({ type: "feed.dismissed.updated", itemId: command.itemId });
         return;
       }
       case "pairing.create": {

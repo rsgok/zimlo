@@ -43,7 +43,7 @@ describe("task command and per-device feed state", () => {
     reopened.close();
   });
 
-  it("keeps read receipts device-scoped and persists approval trust", () => {
+  it("keeps read receipts and dismissals device-scoped and persists approval trust", () => {
     const { root, store } = createStore();
     const now = "2026-07-23T00:00:00.000Z";
     for (const id of ["device-a", "device-b"]) {
@@ -71,6 +71,9 @@ describe("task command and per-device feed state", () => {
     expect(store.markFeedSeen("device-a", "post-a")).toBe(true);
     expect(store.listSeenPostIds("device-a")).toEqual(["post-a"]);
     expect(store.listSeenPostIds("device-b")).toEqual([]);
+    expect(store.dismissFeedItem("device-a", "post:post-a")).toBe(true);
+    expect(store.listDismissedFeedItemIds("device-a")).toEqual(["post:post-a"]);
+    expect(store.listDismissedFeedItemIds("device-b")).toEqual([]);
     store.setLanApprovalsEnabled(true);
     expect(store.setDeviceApproval("device-a", true)?.canApprove).toBe(true);
     store.close();
@@ -79,6 +82,8 @@ describe("task command and per-device feed state", () => {
     expect(new RuntimeHub(reopened).lanApprovalsEnabled).toBe(true);
     expect(reopened.getDevice("device-a")?.canApprove).toBe(true);
     expect(reopened.getDevice("device-b")?.canApprove).toBe(false);
+    expect(reopened.listDismissedFeedItemIds("device-a")).toEqual(["post:post-a"]);
+    expect(reopened.snapshot(false, "device-a", []).dismissedFeedItemIds).toEqual(["post:post-a"]);
     reopened.close();
   });
 });

@@ -56,6 +56,27 @@ Bridge 启动时先读取进程快照，再扫描 transcript。活跃进程能�
 
 关联顺序是 provider session id、绝对 transcript 路径、PID 与启动时间、TTY/打开文件/父进程。cwd 与更新时间只参与弱证据评分。证据冲突时保留独立 session 并设置 `correlationUncertain`，同时关闭不安全的回复能力。
 
+`provider` 与 `surface` 是两个维度：provider 为 Codex/Claude，surface 为 GUI/CLI/managed/unknown。Codex GUI 插件与 Codex CLI hooks 写入明确 surface；Claude 的共享用户级 hook 根据 TTY 和 Claude Desktop 父进程链识别 GUI/CLI，证据不足时保留 unknown；app-server 与 controlled runner 写入 managed。未知来源不能覆盖已经确认的 surface，同一个 provider session 切换界面后仍属于同一 Task Profile。
+
+## Project、Session 与卡片
+
+Project 是 SQLite 中的一等持久实体，不再在每次 Snapshot 时临时从 cwd 生成。当前关系为：
+
+```text
+Project
+├── project_locations
+├── Sessions / Tasks
+│   └── events + actions + task_commands
+└── feed_posts
+    └── 同时保留 session_id（可归属时）
+```
+
+Session 写入时先把 cwd 归一到最近 Git root，再获得稳定的路径哈希 `project_id`；非 Git 目录保留其规范绝对路径，`/`、用户主目录等宽泛根目录不会创建 Project。现有数据库启动时会幂等回填 Session、FeedPost 和未执行 TaskCommand 的项目关系。
+
+插件卡片优先使用 provider session id、已绑定 checkpoint 或唯一开放 hook checkpoint 找到强 Session，再从 Session 继承 `project_id`。无法确定时保留为未归属卡片，绝不根据 MCP 辅助进程的 cwd 猜项目。Profile Timeline 仍按 `session_id` 聚合，Project 目录则按 `project_id` 汇总任务与卡片，数据只保存一份。
+
+Tasks 的项目目录按名称稳定排序；任务只在 attention/active/recent 状态改变时跨组，组内使用不可变 `created_at` 与 id 排序。心跳、transcript 追加和普通 `last_activity_at` 更新只刷新文案，不改变列表位置。
+
 ## 交互租约
 
 - `activePid !== null`：外部终端占用，`replyable=false`，不做 TTY 注入。
@@ -76,4 +97,4 @@ Session、persistent 与高风险决策要求确认短语。永久规则只有�
 
 ## LAN 通道
 
-`zimlo start` 只绑定 `127.0.0.1`；`--lan` 仅选择 loopback、RFC1918 或 ULA 地址。二维码携带 2 分钟单次 secret，X25519 协商设备密钥，随后每个方向派生独立 XChaCha20-Poly1305 密钥并使用连接级计数器防重放。浏览器密钥保存在 IndexedDB，Mac 可立即撤销设备。
+`zimlo start` 只绑定 `127.0.0.1`；`--lan` 仅选择 loopback、RFC1918 或 ULA 地址。二维码携带 2 分钟单次 secret，X25519 协商设备密钥，随后每个方向派生独立 XChaCha20-Poly1305 密钥并使用连接级计数器防重放。浏览器密钥保存在 IndexedDB，Mac 可立即撤销设备，并按设备持久授权手机审批。

@@ -208,6 +208,7 @@ export class DiscoveryService {
     const session: Session = {
       id,
       provider: candidate.provider,
+      surface: existing?.surface ?? "unknown",
       providerSessionId,
       title: state.title || defaultTitle(candidate, state.cwd),
       cwd,
@@ -238,6 +239,7 @@ export class DiscoveryService {
           activePids.add(process.pid);
           this.runtime.upsertSession({
             ...strongSession,
+            surface: process.tty ? "cli" : strongSession.surface,
             cwd: process.cwd ?? strongSession.cwd,
             status: "running",
             activePid: process.pid,
@@ -256,6 +258,7 @@ export class DiscoveryService {
           const session = this.ensureSession(candidate, state, candidate.modifiedAt);
           this.runtime.upsertSession({
             ...session,
+            surface: process.tty ? "cli" : session.surface,
             cwd: process.cwd ?? session.cwd,
             status: "running",
             activePid: process.pid,
@@ -273,6 +276,7 @@ export class DiscoveryService {
         this.runtime.upsertSession({
           id,
           provider: process.provider,
+          surface: process.tty ? "cli" : "unknown",
           providerSessionId,
           title: `${process.provider === "codex" ? "Codex" : "Claude"} · 活跃进程 ${process.pid}`,
           cwd: process.cwd,

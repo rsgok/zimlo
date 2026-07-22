@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import type { ClientCommand, Provider, TrustedWorkspace } from "@zimlo/protocol";
+import { VoiceInput } from "./VoiceInput";
 
 interface TaskComposerProps {
   workspaces: TrustedWorkspace[];
@@ -42,7 +43,7 @@ export function TaskComposer({ workspaces, send, onClose }: TaskComposerProps) {
         </label>
         <label>
           <span>Task Input</span>
-          <textarea autoFocus rows={6} value={text} onChange={(event) => setText(event.target.value)} placeholder="告诉 Agent 你想完成什么…" />
+          <VoiceInput autoFocus rows={4} value={text} onChange={setText} ariaLabel="Task Input" placeholder="说出或输入你想完成什么…" />
         </label>
         {workspaces.length === 0 && <p className="composer-warning">先在 Mac 的 Codex 或 Claude Code 中打开一次项目，Zimlo 才会把它加入可信列表。</p>}
         <button

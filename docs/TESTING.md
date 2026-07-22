@@ -20,7 +20,7 @@ pnpm build
 node apps/cli/dist/index.js doctor
 ```
 
-`pnpm test` 覆盖 Codex/Claude fixture parser、测试命令识别、脱敏、Feed 发帖去重与结束检查点、Action Broker 幂等与重启过期、网络地址判断、协议加密/防重放，以及 Codex app-server 审批值映射。
+`pnpm test` 覆盖 Codex/Claude fixture parser、Project 回填与卡片归属、测试命令识别、脱敏、Feed 发帖去重与结束检查点、Action Broker 幂等与重启过期、网络地址判断、协议加密/防重放，以及 Codex app-server 审批值映射。
 
 启动 Bridge 后可运行端到端加密握手 smoke：
 
@@ -35,6 +35,9 @@ pnpm --filter @zimlo/cli smoke
 |---|---|
 | 已运行 Codex / Claude session | 5 秒内出现在 Tasks |
 | 同 cwd 两个 session | 保持两个 session，不交叉事件 |
+| 同 Git root 的 Codex/Claude session | 共享一个持久 Project，仍保留各自 Session |
+| 插件 FeedPost | 同时继承强 Session 与 Project；无法确定时保持未归属 |
+| 旧数据库升级 | 幂等回填 Project/Session/FeedPost，不丢历史 Timeline |
 | JSONL 追加/截断/轮转 | 增量恢复，不产生 Feed 帖子 |
 | 真实测试成功/失败 | 依据命令与 exit code 生成正确测试事件 |
 | 外部终端正在运行 | 回复按钮关闭并显示原因 |
@@ -47,6 +50,9 @@ pnpm --filter @zimlo/cli smoke
 | 输入、普通审批、高风险审批 | 卡内完成操作；确认短语只在选择高风险决策后展开 |
 | Plugin 旧内容版本 | status 提示重新安装；重新安装后要求新建任务 |
 | hook 安装/升级/卸载 | 用户已有配置与非 Zimlo handler 保持不变 |
+| GUI/CLI/托管来源 | surface 正确显示；unknown 更新不能覆盖已确认来源 |
+| Tasks 稳定性 | 普通活动时间更新不重排项目或组内任务；只有关注状态变化可跨组 |
+| 新任务按钮 | 默认不使用 Tab 选中态；Composer 打开时才高亮 |
 | 机密 fixture | SQLite、网页消息和日志均不含原始机密 |
 
 ## 性能采样

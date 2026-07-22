@@ -9,7 +9,7 @@ import {
   stableSessionId,
   uuidV7,
 } from "@zimlo/adapters";
-import { EMPTY_CAPABILITIES, type Decision, type Provider, type Session, type UnifiedEvent } from "@zimlo/protocol";
+import { EMPTY_CAPABILITIES, type Decision, type Provider, type Session, type SessionSurface, type UnifiedEvent } from "@zimlo/protocol";
 import { ActionBroker, type DecisionResolution } from "./action-broker.js";
 import { AgentToolService, type AgentToolRequest, type AgentToolResult } from "./agent-tools.js";
 import { RuntimeHub } from "./runtime.js";
@@ -18,6 +18,7 @@ interface HookRequest {
   type?: "hook";
   id: string;
   provider: Provider;
+  surface: SessionSurface;
   payload: Record<string, unknown>;
 }
 
@@ -260,6 +261,7 @@ export class HookServer {
     const session: Session = {
       id: sessionId,
       provider: request.provider,
+      surface: request.surface,
       providerSessionId,
       title: existing?.title ?? `${request.provider === "codex" ? "Codex" : "Claude"} · ${providerSessionId.slice(0, 8)}`,
       cwd: typeof payload.cwd === "string" ? payload.cwd : (existing?.cwd ?? null),
@@ -403,7 +405,11 @@ export class HookServer {
   }
 }
 
-export async function runHookClient(provider: Provider, socketPath: string): Promise<void> {
+export async function runHookClient(
+  provider: Provider,
+  surface: SessionSurface,
+  socketPath: string,
+): Promise<void> {
   const chunks: Buffer[] = [];
   for await (const chunk of process.stdin) chunks.push(Buffer.from(chunk));
   let payload: Record<string, unknown>;
@@ -412,7 +418,7 @@ export async function runHookClient(provider: Provider, socketPath: string): Pro
   } catch {
     return;
   }
-  const request: HookRequest = { type: "hook", id: uuidV7(), provider, payload };
+  const request: HookRequest = { type: "hook", id: uuidV7(), provider, surface, payload };
   const response = await new Promise<HookResponse | null>((resolve) => {
     const socket = createConnection(socketPath);
     let responseBuffer = "";

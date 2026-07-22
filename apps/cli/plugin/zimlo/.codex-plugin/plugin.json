@@ -1,6 +1,6 @@
 {
   "name": "zimlo",
-  "version": "0.2.0+codex.20260722",
+  "version": "0.2.0+codex.20260723",
   "description": "Structured Agent-authored reading cards and action checkpoints for Codex",
   "author": {
     "name": "Zimlo"
@@ -22,7 +22,7 @@
       "Post the current result to my Zimlo Feed.",
       "Explain what is blocking this task and ask me through Zimlo."
     ],
-    "brandColor": "#EE4D5A"
+    "brandColor": "#D5FF4C"
   },
   "mcpServers": "./.mcp.json"
 }

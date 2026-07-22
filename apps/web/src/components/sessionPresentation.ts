@@ -1,7 +1,18 @@
-import type { Provider, Session } from "@zimlo/protocol";
+import type { Provider, Session, SessionSurface } from "@zimlo/protocol";
 
 export function runtimeLabel(provider: Provider): string {
   return provider === "claude" ? "Claude Code" : "Codex";
+}
+
+export function surfaceLabel(surface: SessionSurface): string {
+  if (surface === "gui") return "GUI";
+  if (surface === "cli") return "CLI";
+  if (surface === "managed") return "Zimlo 托管";
+  return "来源未知";
+}
+
+export function sessionRuntimeLabel(session: Pick<Session, "provider" | "surface">): string {
+  return `${runtimeLabel(session.provider)} · ${surfaceLabel(session.surface)}`;
 }
 
 export function lastPathSegment(path: string | null): string | null {

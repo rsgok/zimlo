@@ -1,5 +1,7 @@
 import { useState } from "react";
 import type { ClientCommand, Decision, PendingAction } from "@zimlo/protocol";
+import { FormattedText } from "./FormattedText";
+import { VoiceInput } from "./VoiceInput";
 
 interface ActionPanelProps {
   action: PendingAction;
@@ -29,7 +31,7 @@ export function ActionPanel({ action, send, compact = false }: ActionPanelProps)
         <strong>{action.kind === "input" ? "直接回复 Agent" : "直接处理审批"}</strong>
         <span>{new Date(action.expiresAt).toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit" })} 前有效</span>
       </div>
-      <p className={`action-detail ${!compact ? "action-detail-full" : expanded ? "action-detail-expanded" : ""}`}>{action.detail}</p>
+      <div className={`action-detail ${!compact ? "action-detail-full" : expanded ? "action-detail-expanded" : ""}`}><FormattedText text={action.detail} compact /></div>
       {hasLongDetail && (
         <button className="action-expand" onClick={() => setExpanded((value) => !value)}>
           {expanded ? "收起详情" : "展开详情"}
@@ -38,13 +40,7 @@ export function ActionPanel({ action, send, compact = false }: ActionPanelProps)
 
       {action.kind === "input" ? (
         <div className="action-input-row">
-          <textarea
-            aria-label="回复 Agent"
-            value={answer}
-            onChange={(event) => setAnswer(event.target.value)}
-            placeholder="输入你的回答…"
-            rows={2}
-          />
+          <VoiceInput compact ariaLabel="回复 Agent" value={answer} onChange={setAnswer} placeholder="说出或输入回答…" rows={1} />
           <button
             className="action-submit"
             disabled={!answer.trim()}

@@ -13,7 +13,6 @@ export function App() {
   const bridge = useBridge();
   const [tab, setTab] = useState<Tab>("feed");
   const [selectedSessionId, setSelectedSessionId] = useState<string | null>(null);
-  const [selectedSection, setSelectedSection] = useState<"timeline" | "diff">("timeline");
   const [newTaskOpen, setNewTaskOpen] = useState(false);
   const selectedSession = useMemo(
     () => bridge.snapshot.sessions.find((session) => session.id === selectedSessionId) ?? null,
@@ -29,13 +28,6 @@ export function App() {
   if (bridge.pairingRequired) return <PairingRequired error={bridge.error} />;
 
   const openSession = (sessionId: string) => {
-    setSelectedSection("timeline");
-    setSelectedSessionId(sessionId);
-    bridge.send({ type: "session.events.request", sessionId });
-  };
-
-  const openSessionDiff = (sessionId: string) => {
-    setSelectedSection("diff");
     setSelectedSessionId(sessionId);
     bridge.send({ type: "session.events.request", sessionId });
   };
@@ -54,14 +46,15 @@ export function App() {
 
       <main className={`main-content ${tab === "feed" ? "feed-main" : ""}`}>
         {bridge.error && <div className="error-banner">{bridge.error}</div>}
-        {tab === "feed" && <FeedView posts={bridge.snapshot.posts} sessions={bridge.snapshot.sessions} actions={bridge.snapshot.actions} commands={bridge.snapshot.commands} seenPostIds={bridge.snapshot.seenPostIds} send={bridge.send} onOpen={openSession} onOpenDiff={openSessionDiff} />}
-        {tab === "tasks" && <TasksView sessions={bridge.snapshot.sessions} tasks={bridge.snapshot.tasks} onOpen={openSession} />}
+        {tab === "feed" && <FeedView projects={bridge.snapshot.projects} posts={bridge.snapshot.posts} sessions={bridge.snapshot.sessions} actions={bridge.snapshot.actions} commands={bridge.snapshot.commands} seenPostIds={bridge.snapshot.seenPostIds} dismissedFeedItemIds={bridge.snapshot.dismissedFeedItemIds} send={bridge.send} onOpen={openSession} onNewTask={() => setNewTaskOpen(true)} />}
+        {tab === "tasks" && <TasksView projects={bridge.snapshot.projects} sessions={bridge.snapshot.sessions} tasks={bridge.snapshot.tasks} onOpen={openSession} />}
         {tab === "profile" && (
           <ProfileView
             localAdmin={bridge.localAdmin}
             devices={bridge.devices}
             pairing={bridge.pairing}
             codexPlugin={bridge.codexPlugin}
+            integrations={bridge.integrations}
             sessions={bridge.snapshot.sessions}
             lanApprovalsEnabled={bridge.snapshot.lanApprovalsEnabled}
             send={bridge.send}
@@ -73,11 +66,17 @@ export function App() {
       <nav className="bottom-nav" aria-label="主导航">
         <button aria-current={tab === "feed" ? "page" : undefined} className={tab === "feed" ? "active" : ""} onClick={() => setTab("feed")}><span>◫</span>Feed</button>
         <button aria-current={tab === "tasks" ? "page" : undefined} className={tab === "tasks" ? "active" : ""} onClick={() => setTab("tasks")}><span>◎</span>Tasks</button>
-        <button className="new-task-nav" onClick={() => setNewTaskOpen(true)} aria-label="布置新任务"><span>＋</span><strong>新任务</strong></button>
+        <button
+          className={`new-task-nav ${newTaskOpen ? "active" : ""}`}
+          aria-pressed={newTaskOpen}
+          onClick={() => setNewTaskOpen(true)}
+          aria-label="布置新任务"
+        ><span>＋</span><strong>新任务</strong></button>
         <button aria-current={tab === "profile" ? "page" : undefined} className={tab === "profile" ? "active" : ""} onClick={() => {
           setTab("profile");
           if (bridge.localAdmin) bridge.send({ type: "devices.request" });
           if (bridge.localAdmin) bridge.send({ type: "codex.plugin.request" });
+          if (bridge.localAdmin) bridge.send({ type: "integrations.request" });
         }}><span>◇</span>Profile</button>
       </nav>
 
@@ -89,7 +88,6 @@ export function App() {
           actions={bridge.snapshot.actions.filter((action) => action.sessionId === selectedSession.id)}
           posts={bridge.snapshot.posts.filter((post) => post.sessionId === selectedSession.id)}
           commands={bridge.snapshot.commands.filter((command) => command.sessionId === selectedSession.id)}
-          initialSection={selectedSection}
           send={bridge.send}
           onClose={() => setSelectedSessionId(null)}
         />

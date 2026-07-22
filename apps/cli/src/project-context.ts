@@ -1,4 +1,6 @@
+import { createHash } from "node:crypto";
 import { existsSync } from "node:fs";
+import { homedir } from "node:os";
 import { basename, dirname, join, resolve } from "node:path";
 
 interface ProjectContext {
@@ -31,4 +33,16 @@ export function projectContextForCwd(cwd: string | null): ProjectContext | null 
 
 export function projectNameForCwd(cwd: string | null): string | null {
   return projectContextForCwd(cwd)?.name ?? null;
+}
+
+export function persistableProjectForCwd(cwd: string | null): (ProjectContext & { id: string }) | null {
+  if (!cwd) return null;
+  const context = projectContextForCwd(cwd);
+  const root = resolve(context?.root ?? cwd);
+  if (["/", homedir(), dirname(homedir())].includes(root)) return null;
+  return {
+    id: `project:${createHash("sha256").update(root).digest("hex").slice(0, 20)}`,
+    name: context?.name ?? basename(root),
+    root,
+  };
 }

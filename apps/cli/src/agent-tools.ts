@@ -105,6 +105,7 @@ export class AgentToolService {
     const now = new Date().toISOString();
     const post: FeedPost = {
       id: uuidV7(),
+      projectId: session.projectId ?? null,
       taskId: input.task_id,
       runId: session.providerSessionId,
       agentId: request.provider,
@@ -198,6 +199,7 @@ export class AgentToolService {
     return this.runtime.upsertSession({
       id: sessionId,
       provider: request.provider,
+      surface: "unknown",
       providerSessionId,
       title: `${request.provider === "codex" ? "Codex" : "Claude"} · ${taskId}`,
       cwd: request.cwd || null,

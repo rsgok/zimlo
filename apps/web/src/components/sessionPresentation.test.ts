@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { Session } from "@zimlo/protocol";
-import { conciseTaskInput, lastPathSegment, runtimeLabel, sessionLocation } from "./sessionPresentation";
+import { conciseTaskInput, lastPathSegment, runtimeLabel, sessionLocation, sessionRuntimeLabel, surfaceLabel } from "./sessionPresentation";
 
 const session = {
   provider: "codex",
@@ -20,6 +20,8 @@ describe("session presentation", () => {
   it("uses product runtime names", () => {
     expect(runtimeLabel("codex")).toBe("Codex");
     expect(runtimeLabel("claude")).toBe("Claude Code");
+    expect(surfaceLabel("managed")).toBe("Zimlo 托管");
+    expect(sessionRuntimeLabel({ provider: "codex", surface: "gui" })).toBe("Codex · GUI");
   });
 
   it("pulls the human request out of verbose annotation context", () => {
