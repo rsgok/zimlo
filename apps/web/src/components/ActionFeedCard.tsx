@@ -25,7 +25,7 @@ export function ActionFeedCard({ action, session, send, position, total }: Actio
     ? `${purpose}。请确认这一步是否符合你的预期。`
     : `“${subject}”需要你确认这一步；“允许一次”影响范围最小，拒绝后 Agent 会停在当前步骤。`;
   return (
-    <article className="feed-post post-attention template-marker action-feed-card">
+    <article className="feed-post post-attention template-marker is-attention action-feed-card">
       <div className="post-topline">
         <div><span className="post-kind">需要你处理</span><span className="post-author">{session?.provider.toUpperCase() ?? "AGENT"}</span></div>
         <span className="post-position">{String(position).padStart(2, "0")} / {String(total).padStart(2, "0")}</span>

@@ -16,6 +16,7 @@ interface FeedViewProps {
   dismissedFeedItemIds: string[];
   send: (command: ClientCommand) => void;
   onOpen: (sessionId: string) => void;
+  onOpenProject: (projectId: string) => void;
   onNewTask: () => void;
 }
 
@@ -51,7 +52,7 @@ function SeenFeedPage({ children, postId, seen, onSeen, pageRef, historical = fa
   }} className={`feed-page ${historical ? "feed-history-page" : ""}`} aria-label={historical ? "历史 Feed 卡片" : "Feed 卡片"}>{children}</section>;
 }
 
-export function FeedView({ projects, posts, sessions, actions, commands, seenPostIds, dismissedFeedItemIds, send, onOpen, onNewTask }: FeedViewProps) {
+export function FeedView({ projects, posts, sessions, actions, commands, seenPostIds, dismissedFeedItemIds, send, onOpen, onOpenProject, onNewTask }: FeedViewProps) {
   const sessionById = new Map(sessions.map((session) => [session.id, session]));
   const projectById = new Map(projects.map((project) => [project.id, project]));
   const items = buildFeedItems(posts, actions, seenPostIds, commands, dismissedFeedItemIds);
@@ -63,7 +64,7 @@ export function FeedView({ projects, posts, sessions, actions, commands, seenPos
   }
   const currentItems = items
     .filter((item) => currentCohort.current.get(feedItemId(item)))
-    .sort((left, right) => Number(right.needsAction) - Number(left.needsAction) || right.createdAt.localeCompare(left.createdAt));
+    .sort((left, right) => left.priority - right.priority || right.createdAt.localeCompare(left.createdAt));
   const historyItems = items
     .filter((item) => !currentCohort.current.get(feedItemId(item)))
     .sort((left, right) => right.createdAt.localeCompare(left.createdAt));
@@ -92,6 +93,7 @@ export function FeedView({ projects, posts, sessions, actions, commands, seenPos
             project={item.post.projectId ? projectById.get(item.post.projectId) : undefined}
             actions={actions.filter((action) => item.post.pendingActionIds.includes(action.actionId))}
             send={send}
+            onOpenProject={onOpenProject}
             position={position}
             total={orderedItems.length}
           /> : item.type === "action" ? <ActionFeedCard

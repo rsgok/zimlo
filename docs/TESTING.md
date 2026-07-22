@@ -7,7 +7,7 @@ pnpm exec vitest run apps/cli/test/codex-plugin.test.ts
 node apps/cli/dist/index.js codex-plugin status
 ```
 
-手工验证：在本机 Profile 点击“准备 Codex 插件”，使用 deeplink 打开 Codex Plugins，安装并审核 hooks，然后**新建**任务。确认新任务能看到 Feed V2 MCP 工具，MCP 会在 Bridge 未运行时自动拉起它；用户原始指令只进入 Task 详情，不得出现在 Feed。普通轮次允许静默结束且不得出现 Feed 协议反馈；只有值得说的内容才调用结构化 `feed.post`。
+手工验证：在本机 Settings 点击“准备 Codex 插件”，使用 deeplink 打开 Codex Plugins，安装并审核 hooks，然后**新建**任务。确认新任务能看到 Feed V2 MCP 工具，MCP 会在 Bridge 未运行时自动拉起它；用户原始指令只进入 Task Detail，不得出现在 Feed。普通轮次允许静默结束且不得出现 Feed 协议反馈；只有值得说的内容才调用结构化 `feed.post`。
 
 Stop 回归检查：给 hook transport 输入一个没有 Feed 决策的 `Stop` 事件，stdout 必须为空，SQLite 对应 checkpoint 应变为 `implicit_skip`；重复同一 Stop 仍为空且不会覆盖显式 `post/skip`。
 
@@ -36,6 +36,8 @@ pnpm --filter @zimlo/cli smoke
 | 已运行 Codex / Claude session | 5 秒内出现在 Tasks |
 | 同 cwd 两个 session | 保持两个 session，不交叉事件 |
 | 同 Git root 的 Codex/Claude session | 共享一个持久 Project，仍保留各自 Session |
+| Git 项目移动或改名 | 通过 Git identity 找回相同 UUID，Agent 名称、头像和默认 Runtime 保留 |
+| Agents 目录与详情 | Project Agent 身份优先于 Runtime；跨任务 Timeline 可进入对应 Task Detail |
 | 插件 FeedPost | 同时继承强 Session 与 Project；无法确定时保持未归属 |
 | 旧数据库升级 | 幂等回填 Project/Session/FeedPost，不丢历史 Timeline |
 | JSONL 追加/截断/轮转 | 增量恢复，不产生 Feed 帖子 |
@@ -45,8 +47,11 @@ pnpm --filter @zimlo/cli smoke
 | 四个并发审批 | 每个 action 只解析到自己的上游请求 |
 | 双击/重放/断线重试 | 同一 idempotency key 不重复执行 |
 | Bridge 在审批时崩溃 | resolver 失效，重启后旧 action 过期 |
-| Mac Safari/Chrome、iPhone Safari | 一屏一帖、Tasks、详情与 Profile 无横向溢出 |
+| Mac Safari/Chrome、iPhone Safari | 一屏一帖、Tasks、Agents、Task Detail 与 Settings 无横向溢出 |
 | 320×568、390×844、768px、桌面 | 五套文字卡无横向溢出；普通卡无内部滚动 |
+| Feed 内容收敛 | 标题最多三行、正文最多四行、事实最多两条；证据只在 Task Detail 展示 |
+| Task Detail 阅读位置 | 每台设备独立保存 Timeline cursor；重开时准确显示未读数量 |
+| 新任务与 follow-up 草稿 | 刷新或重开后恢复；相同在途指令不会重复入队；失败保留原文 |
 | 输入、普通审批、高风险审批 | 卡内完成操作；确认短语只在选择高风险决策后展开 |
 | Plugin 旧内容版本 | status 提示重新安装；重新安装后要求新建任务 |
 | hook 安装/升级/卸载 | 用户已有配置与非 Zimlo handler 保持不变 |

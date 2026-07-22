@@ -263,6 +263,22 @@ export class BridgeServer {
         connection.send({ type: "feed.dismissed.updated", itemId: command.itemId });
         return;
       }
+      case "task.timeline.seen": {
+        this.runtime.store.markTaskTimelineSeen(deviceId, command.sessionId, command.itemId);
+        connection.send({ type: "task.timeline.seen.updated", sessionId: command.sessionId, itemId: command.itemId });
+        return;
+      }
+      case "agent.profile.update": {
+        const project = this.runtime.store.updateAgentProfile(command.projectId, {
+          displayName: command.displayName,
+          avatar: command.avatar,
+          bio: command.bio,
+          defaultProvider: command.defaultProvider,
+        });
+        if (!project) return connection.send({ type: "error", code: "project_not_found", message: "这个 Project 已不存在。" });
+        connection.send({ type: "project.updated", project });
+        return;
+      }
       case "pairing.create": {
         if (!connection.isLocalAdmin) return connection.send({ type: "error", code: "forbidden", message: "仅 Mac 本机管理页可创建配对。" });
         const host = preferredLanAddress();

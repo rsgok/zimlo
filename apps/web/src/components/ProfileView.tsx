@@ -31,8 +31,8 @@ export function ProfileView({ localAdmin, devices, pairing, lanApprovalsEnabled,
   return (
     <section className="profile-view">
       <div className="section-heading">
-        <p className="eyebrow">设备与安全</p>
-        <h2>{localAdmin ? "Mac 本机管理" : "已配对浏览器"}</h2>
+        <p className="eyebrow">SETTINGS</p>
+        <h2>{localAdmin ? "设备、接入与安全" : "当前设备设置"}</h2>
       </div>
       <div className="settings-card">
         <div>
@@ -44,8 +44,8 @@ export function ProfileView({ localAdmin, devices, pairing, lanApprovalsEnabled,
 
       <div className="settings-card runtime-overview-card">
         <div>
-          <h3>Agent 工作能力</h3>
-          <p>发现、审阅、审批和继续任务都在同一处完成。</p>
+          <h3>Runtime 工作能力</h3>
+          <p>Codex 和 Claude Code 是 Project Agent 可替换的执行引擎。</p>
         </div>
         <div className="runtime-overview">
           {runtimeSummary.map((runtime) => (
@@ -65,7 +65,7 @@ export function ProfileView({ localAdmin, devices, pairing, lanApprovalsEnabled,
         <>
           <div className="settings-card integration-card">
             <div>
-              <h3>Agent 接入方式</h3>
+              <h3>Runtime 接入方式</h3>
               <p>Provider 和运行界面分开记录；同一个 Session 在 GUI、CLI 或 Zimlo 托管之间恢复时不会被拆成多个任务。</p>
             </div>
             <div className="integration-list">
@@ -141,7 +141,7 @@ export function ProfileView({ localAdmin, devices, pairing, lanApprovalsEnabled,
         <div className="settings-card">
           <div>
             <h3>手机审批权限</h3>
-            <p>{lanApprovalsEnabled ? "已由 Mac 持久授权；高风险操作仍要求确认短语。" : "尚未授权。请在 Mac 的 Zimlo Profile 中为这台设备开启。"}</p>
+            <p>{lanApprovalsEnabled ? "已由 Mac 持久授权；高风险操作仍要求确认短语。" : "尚未授权。请在 Mac 的 Zimlo Settings 中为这台设备开启。"}</p>
           </div>
         </div>
       )}

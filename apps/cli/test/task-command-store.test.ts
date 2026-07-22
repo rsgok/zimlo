@@ -74,6 +74,9 @@ describe("task command and per-device feed state", () => {
     expect(store.dismissFeedItem("device-a", "post:post-a")).toBe(true);
     expect(store.listDismissedFeedItemIds("device-a")).toEqual(["post:post-a"]);
     expect(store.listDismissedFeedItemIds("device-b")).toEqual([]);
+    store.markTaskTimelineSeen("device-a", "session-a", "post:post-a");
+    expect(store.listTaskTimelineCursors("device-a")).toEqual({ "session-a": "post:post-a" });
+    expect(store.listTaskTimelineCursors("device-b")).toEqual({});
     store.setLanApprovalsEnabled(true);
     expect(store.setDeviceApproval("device-a", true)?.canApprove).toBe(true);
     store.close();
@@ -84,6 +87,7 @@ describe("task command and per-device feed state", () => {
     expect(reopened.getDevice("device-b")?.canApprove).toBe(false);
     expect(reopened.listDismissedFeedItemIds("device-a")).toEqual(["post:post-a"]);
     expect(reopened.snapshot(false, "device-a", []).dismissedFeedItemIds).toEqual(["post:post-a"]);
+    expect(reopened.snapshot(false, "device-a", []).taskTimelineCursors).toEqual({ "session-a": "post:post-a" });
     reopened.close();
   });
 });

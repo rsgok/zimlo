@@ -207,6 +207,15 @@ export const FeedPostSchema = z.object({
 });
 export type FeedPost = z.infer<typeof FeedPostSchema>;
 
+export const AgentProfileSchema = z.object({
+  displayName: z.string(),
+  avatar: z.string(),
+  bio: z.string(),
+  defaultProvider: ProviderSchema.nullable(),
+  updatedAt: z.string(),
+});
+export type AgentProfile = z.infer<typeof AgentProfileSchema>;
+
 export const ProjectSchema = z.object({
   id: z.string(),
   name: z.string(),
@@ -215,6 +224,7 @@ export const ProjectSchema = z.object({
   providers: z.array(ProviderSchema),
   sessionCount: z.number().int().nonnegative(),
   postCount: z.number().int().nonnegative(),
+  agentProfile: AgentProfileSchema,
   createdAt: z.string(),
   lastUsedAt: z.string(),
 });
@@ -301,6 +311,7 @@ export const SnapshotSchema = z.object({
   workspaces: z.array(TrustedWorkspaceSchema),
   seenPostIds: z.array(z.string()),
   dismissedFeedItemIds: z.array(z.string()),
+  taskTimelineCursors: z.record(z.string(), z.string()),
   actions: z.array(PendingActionSchema),
   sequence: z.number().int().nonnegative(),
   lanApprovalsEnabled: z.boolean(),
@@ -344,6 +355,15 @@ export const ClientCommandSchema = z.discriminatedUnion("type", [
   }),
   z.object({ type: z.literal("feed.seen"), postId: z.string() }),
   z.object({ type: z.literal("feed.dismiss"), itemId: z.string().min(1).max(240) }),
+  z.object({ type: z.literal("task.timeline.seen"), sessionId: z.string(), itemId: z.string().min(1).max(240) }),
+  z.object({
+    type: z.literal("agent.profile.update"),
+    projectId: z.string(),
+    displayName: z.string().min(1).max(80),
+    avatar: z.string().min(1).max(16),
+    bio: z.string().max(280),
+    defaultProvider: ProviderSchema.nullable(),
+  }),
   z.object({ type: z.literal("session.events.request"), sessionId: z.string() }),
   z.object({ type: z.literal("devices.request") }),
   z.object({ type: z.literal("integrations.request") }),
@@ -368,6 +388,7 @@ export type ServerMessage =
   | { type: "task.command.updated"; command: TaskCommand }
   | { type: "feed.seen.updated"; postId: string }
   | { type: "feed.dismissed.updated"; itemId: string }
+  | { type: "task.timeline.seen.updated"; sessionId: string; itemId: string }
   | { type: "action.upsert"; action: PendingAction }
   | { type: "action.result"; actionId: string; ok: boolean; message: string }
   | { type: "session.message.result"; sessionId: string; ok: boolean; message: string }

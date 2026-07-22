@@ -31,6 +31,7 @@ const project: Project = {
   providers: ["codex"],
   sessionCount: 1,
   postCount: 3,
+  agentProfile: { displayName: "Zimlo", avatar: "Z", bio: "Zimlo Agent", defaultProvider: "codex", updatedAt: session.createdAt },
   createdAt: session.createdAt,
   lastUsedAt: session.lastActivityAt,
 };

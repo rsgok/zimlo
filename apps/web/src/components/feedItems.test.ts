@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { FeedPost, PendingAction, TaskCommand } from "@zimlo/protocol";
-import { buildFeedItems } from "./feedItems";
+import { buildFeedItems, mergeRoutinePosts } from "./feedItems";
 
 const post: FeedPost = {
   id: "post-a",
@@ -69,9 +69,28 @@ describe("Feed item composition", () => {
     expect(items[0]).toMatchObject({ type: "command", id: "command-failed", needsAction: true });
   });
 
+  it("shows a queued create command immediately as a neutral placeholder", () => {
+    const queued: TaskCommand = {
+      id: "command-queued", idempotencyKey: "device:queued", kind: "create", provider: "claude", sessionId: null,
+      workspaceId: "workspace-a", cwd: "/Projects/stocks", text: "分析财报", state: "queued",
+      createdAt: "2026-07-23T01:00:00.000Z", updatedAt: "2026-07-23T01:00:00.000Z",
+    };
+    expect(buildFeedItems([], [], [], [queued])[0]).toMatchObject({ type: "command", needsAction: false, priority: 5 });
+  });
+
   it("removes dismissed cards from both current and historical composition", () => {
     const history = { ...post, id: "history", actionRequired: false, pendingActionIds: [], createdAt: "2026-07-20T00:00:00.000Z" };
     const items = buildFeedItems([post, history], [], ["history"], [], ["post:post-a", "post:history"]);
     expect(items).toEqual([]);
+  });
+
+  it("merges nearby routine updates while preserving higher-value results", () => {
+    const older = { ...post, id: "progress-old", kind: "progress" as const, actionRequired: false, pendingActionIds: [], highlights: ["旧事实"], createdAt: "2026-07-23T00:00:00.000Z" };
+    const newer = { ...older, id: "progress-new", highlights: ["新事实"], createdAt: "2026-07-23T03:00:00.000Z" };
+    const result = { ...older, id: "result", kind: "result" as const, createdAt: "2026-07-23T02:00:00.000Z" };
+    const merged = mergeRoutinePosts([older, newer, result]);
+    expect(merged.map((item) => item.id)).toEqual(["progress-new", "result"]);
+    expect(merged[0]?.highlights).toEqual(["新事实", "旧事实"]);
+    expect(buildFeedItems([newer, result], []).map((item) => item.id)).toEqual(["result", "progress-new"]);
   });
 });

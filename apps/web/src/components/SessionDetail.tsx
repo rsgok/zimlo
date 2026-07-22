@@ -1,16 +1,19 @@
 import { useEffect, useMemo, useState } from "react";
-import type { ClientCommand, FeedPost, PendingAction, Session, TaskCommand, UnifiedEvent } from "@zimlo/protocol";
+import type { ClientCommand, FeedPost, PendingAction, Project, Session, TaskCommand, UnifiedEvent } from "@zimlo/protocol";
 import { ActionPanel } from "./ActionPanel";
 import { FormattedText } from "./FormattedText";
 import { VoiceInput } from "./VoiceInput";
+import { agentAvatarStyle } from "./AgentsView";
 import { conciseTaskInput, sessionLocation, sessionRuntimeLabel } from "./sessionPresentation";
 
 interface SessionDetailProps {
   session: Session;
+  project?: Project | undefined;
   events: UnifiedEvent[];
   actions: PendingAction[];
   posts: FeedPost[];
   commands: TaskCommand[];
+  timelineCursor?: string | undefined;
   send: (command: ClientCommand) => void;
   onClose: () => void;
 }
@@ -72,8 +75,17 @@ function readableDate(value: string): string {
   }).format(new Date(value));
 }
 
+function cleanDisplayText(value: string): string {
+  return value
+    .replace(/<oai-mem-citation>[\s\S]*?<\/oai-mem-citation>/gu, "")
+    .replace(/<response-annotations>[\s\S]*?<\/response-annotations>/gu, "")
+    .replace(/::(?:git-[\w-]+|created-thread)\{[^\n]*\}/gu, "")
+    .replace(/\n{3,}/gu, "\n\n")
+    .trim();
+}
+
 function readablePayload(payload: unknown): string {
-  if (typeof payload === "string") return payload.slice(0, 800);
+  if (typeof payload === "string") return cleanDisplayText(payload).slice(0, 800);
   if (Array.isArray(payload)) return payload.map(readablePayload).filter(Boolean).join(" ").slice(0, 800);
   if (!payload || typeof payload !== "object") return "";
   const record = payload as Record<string, unknown>;
@@ -105,13 +117,14 @@ type TimelineItem =
   | { type: "event"; id: string; at: string; event: UnifiedEvent }
   | { type: "command"; id: string; at: string; command: TaskCommand };
 
-export function SessionDetail({ session, events, actions, posts, commands, send, onClose }: SessionDetailProps) {
-  const [message, setMessage] = useState("");
+export function SessionDetail({ session, project, events, actions, posts, commands, timelineCursor, send, onClose }: SessionDetailProps) {
+  const draftKey = `zimlo:task-draft:${session.id}`;
+  const [message, setMessage] = useState(() => typeof localStorage === "undefined" ? "" : localStorage.getItem(draftKey) ?? "");
   const instructions = [...events]
     .filter((event) => event.kind === "user_instruction")
     .sort((left, right) => left.sequence - right.sequence);
   const firstInstruction = instructions[0];
-  const rawTaskInput = firstInstruction ? instructionText(firstInstruction) || session.title : session.title;
+  const rawTaskInput = cleanDisplayText(firstInstruction ? instructionText(firstInstruction) || session.title : session.title);
   const taskInput = conciseTaskInput(rawTaskInput);
   const location = sessionLocation(session);
   const pendingAction = actions.find((action) => action.state === "pending");
@@ -124,6 +137,9 @@ export function SessionDetail({ session, events, actions, posts, commands, send,
     ?? (session.status === "running" ? "Agent 正在执行，无需操作" : session.status === "failed" ? "查看失败原因并决定是否重试" : "可以继续布置任务");
   const canContinue = Boolean(session.cwd && !session.correlationUncertain);
   const willQueue = session.activePid !== null || session.status === "running" || session.status === "waiting";
+  const activeQueue = commands.filter((command) => ["queued", "dispatching", "running"].includes(command.state)).sort((left, right) => left.createdAt.localeCompare(right.createdAt));
+  const duplicateActive = activeQueue.some((command) => command.text.trim() === message.trim());
+  const latestPost = [...posts].sort((left, right) => right.createdAt.localeCompare(left.createdAt))[0];
 
   const timeline = useMemo<TimelineItem[]>(() => [
     ...posts.map((post): TimelineItem => ({ type: "post", id: post.id, at: post.createdAt, post })),
@@ -134,6 +150,25 @@ export function SessionDetail({ session, events, actions, posts, commands, send,
       .filter((event) => event.kind !== "completed" || readablePayload(event.payload))
       .map((event): TimelineItem => ({ type: "event", id: event.id, at: event.occurredAt, event })),
   ].sort((left, right) => right.at.localeCompare(left.at)), [commands, events, posts]);
+  const timelineIds = timeline.map((item) => `${item.type}:${item.id}`);
+  const cursorIndex = timelineCursor ? timelineIds.indexOf(timelineCursor) : -1;
+  const unreadCount = timeline.length === 0 || timelineCursor === timelineIds[0] ? 0 : cursorIndex >= 0 ? cursorIndex : timeline.length;
+
+  useEffect(() => {
+    const latest = timelineIds[0];
+    if (!latest || latest === timelineCursor) return;
+    const timer = window.setTimeout(() => send({ type: "task.timeline.seen", sessionId: session.id, itemId: latest }), 1_000);
+    return () => window.clearTimeout(timer);
+  }, [send, session.id, timelineCursor, timelineIds[0]]);
+
+  useEffect(() => {
+    if (message) localStorage.setItem(draftKey, message);
+    else localStorage.removeItem(draftKey);
+  }, [draftKey, message]);
+
+  useEffect(() => {
+    if (message && commands.some((command) => command.state === "completed" && command.text.trim() === message.trim())) setMessage("");
+  }, [commands, message]);
 
   useEffect(() => {
     const closeOnEscape = (event: KeyboardEvent) => {
@@ -148,11 +183,11 @@ export function SessionDetail({ session, events, actions, posts, commands, send,
       <section className="detail-panel" role="dialog" aria-modal="true" aria-labelledby="detail-title">
         <header className="detail-nav">
           <button className="detail-back-button" onClick={onClose} aria-label="返回 Feed">←</button>
-          <div><strong id="detail-title">{session.title}</strong><small>{timeline.length} 条动态</small></div>
+          <div><strong id="detail-title">{session.title}</strong><small>Task Detail · {timeline.length} 条动态</small></div>
         </header>
 
         <section className="task-profile-header">
-          <div className={`task-runtime-avatar provider-${session.provider}`} aria-hidden="true">{session.provider === "codex" ? "C" : "CC"}</div>
+          <div className={`task-runtime-avatar ${project ? agentAvatarStyle(project.id) : `provider-${session.provider}`}`} aria-hidden="true">{project?.agentProfile.avatar ?? (session.provider === "codex" ? "C" : "CC")}</div>
           <div className="task-profile-copy">
             <p className="eyebrow">Task Input</p>
             <div className="task-input"><FormattedText text={taskInput} compact /></div>
@@ -165,6 +200,7 @@ export function SessionDetail({ session, events, actions, posts, commands, send,
             <span>开始 · {readableDate(session.createdAt)}</span>
           </div>
           <div className="task-next-action"><span>现在需要你</span><strong>{nextAction}</strong></div>
+          {latestPost && <div className="task-latest-result"><span>最新结论</span><strong>{latestPost.headline}</strong><FormattedText text={latestPost.takeaway} compact /></div>}
           {session.correlationUncertain && <p className="task-profile-note">当前任务关联仍待确认，因此保持只读，避免把指令发到其他 Session。</p>}
           {pendingActions.length > 0 && (
             <section className="profile-attention-panel" aria-label="当前待处理事项">
@@ -175,7 +211,7 @@ export function SessionDetail({ session, events, actions, posts, commands, send,
         </section>
 
         <section className="task-timeline" aria-label="任务 Timeline">
-          <header className="timeline-heading"><h2>Timeline</h2><span>最新动态在上</span></header>
+          <header className="timeline-heading"><h2>Timeline</h2><span>{unreadCount > 0 ? `${unreadCount} 条未读 · 已定位` : "最新动态在上"}</span></header>
           {timeline.map((item) => {
             if (item.type === "post") return (
               <article className={`task-timeline-item timeline-${item.post.kind}`} key={`post:${item.id}`}>
@@ -218,10 +254,10 @@ export function SessionDetail({ session, events, actions, posts, commands, send,
 
         <section className="profile-composer" aria-label="继续当前任务">
           <VoiceInput compact value={message} onChange={setMessage} rows={1} ariaLabel="继续当前任务" placeholder={willQueue ? "说出或输入追加指令…" : "说出或输入下一步…"} disabled={!canContinue} />
-          <button disabled={!canContinue || !message.trim()} onClick={() => {
+          {activeQueue.length > 0 && <small className="queue-position">当前有 {activeQueue.length} 条指令在执行或排队</small>}
+          <button disabled={!canContinue || !message.trim() || duplicateActive} onClick={() => {
             send({ type: "task.follow_up", sessionId: session.id, text: message.trim(), idempotencyKey: crypto.randomUUID() });
-            setMessage("");
-          }}>{willQueue ? "加入队列" : "发送"}</button>
+          }}>{duplicateActive ? "已在队列" : willQueue ? "加入队列" : "发送"}</button>
         </section>
       </section>
     </div>

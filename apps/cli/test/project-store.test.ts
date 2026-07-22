@@ -1,4 +1,4 @@
-import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -134,5 +134,28 @@ describe("persistent project model", () => {
     expect(store.getSession(cli.id)?.surface).toBe("cli");
     expect(store.listProjects().map((project) => project.name)).toEqual(["alpha", "zeta"]);
     store.close();
+  });
+
+  it("keeps Agent identity and profile when a Git project moves", () => {
+    const { root, database } = fixture();
+    const original = join(root, "original");
+    const moved = join(root, "moved");
+    for (const path of [original, moved]) {
+      mkdirSync(join(path, ".git"), { recursive: true });
+      writeFileSync(join(path, ".git", "config"), '[remote "origin"]\n\turl = https://example.com/acme/product.git\n');
+    }
+    const store = new ZimloStore(database);
+    const first = store.upsertSession(session("original", original, "2026-07-23T01:00:00.000Z"));
+    expect(first.projectId).toMatch(/^project:[0-9a-f-]{36}$/u);
+    const updated = store.updateAgentProfile(first.projectId!, { displayName: "股票研究", avatar: "📈", bio: "跟踪公司和投资论文", defaultProvider: "codex" });
+    expect(updated?.agentProfile).toMatchObject({ displayName: "股票研究", avatar: "📈", defaultProvider: "codex" });
+    const second = store.upsertSession(session("moved", moved, "2026-07-23T02:00:00.000Z"));
+    expect(second.projectId).toBe(first.projectId);
+    expect(store.getProject(first.projectId!)?.paths).toEqual([moved, original]);
+    store.close();
+
+    const reopened = new ZimloStore(database);
+    expect(reopened.getProject(first.projectId!)?.agentProfile.displayName).toBe("股票研究");
+    reopened.close();
   });
 });

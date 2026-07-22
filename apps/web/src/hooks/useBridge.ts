@@ -31,6 +31,7 @@ const EMPTY_SNAPSHOT: Snapshot = {
   workspaces: [],
   seenPostIds: [],
   dismissedFeedItemIds: [],
+  taskTimelineCursors: {},
   actions: [],
   sequence: 0,
   lanApprovalsEnabled: false,
@@ -187,6 +188,8 @@ export function useBridge() {
             return current.snapshot.dismissedFeedItemIds.includes(message.itemId)
               ? current
               : { ...current, snapshot: { ...current.snapshot, dismissedFeedItemIds: [...current.snapshot.dismissedFeedItemIds, message.itemId] } };
+          case "task.timeline.seen.updated":
+            return { ...current, snapshot: { ...current.snapshot, taskTimelineCursors: { ...current.snapshot.taskTimelineCursors, [message.sessionId]: message.itemId } } };
           case "action.upsert": {
             if (isInternalZimloAction(message.action)) {
               return {

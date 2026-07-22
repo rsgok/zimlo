@@ -1,4 +1,4 @@
-import type { FeedAction, FeedPost, FeedPostKind, FeedTemplate, Snapshot } from "@zimlo/protocol";
+import type { FeedAction, FeedPost, FeedPostKind, FeedTemplate, Project, Snapshot } from "@zimlo/protocol";
 
 const KINDS = new Set<FeedPostKind>(["progress", "decision", "attention", "result", "failure"]);
 const TEMPLATES = new Set<FeedTemplate>(["paper", "grid", "sticky", "marker", "poster"]);
@@ -72,7 +72,16 @@ export function normalizeFeedPost(value: unknown): FeedPost | null {
 export function normalizeSnapshot(value: Snapshot): Snapshot {
   const snapshot = value as Partial<Snapshot>;
   return {
-    projects: Array.isArray(snapshot.projects) ? snapshot.projects : [],
+    projects: Array.isArray(snapshot.projects) ? snapshot.projects.map((project): Project => ({
+      ...project,
+      agentProfile: project.agentProfile ?? {
+        displayName: project.name,
+        avatar: project.name.slice(0, 1).toLocaleUpperCase(),
+        bio: `负责 ${project.name} 项目的长期工作与上下文。`,
+        defaultProvider: null,
+        updatedAt: project.createdAt,
+      },
+    })) : [],
     sessions: Array.isArray(snapshot.sessions)
       ? snapshot.sessions.map((session) => ({ ...session, surface: session.surface ?? "unknown" }))
       : [],
@@ -85,6 +94,7 @@ export function normalizeSnapshot(value: Snapshot): Snapshot {
     workspaces: Array.isArray(snapshot.workspaces) ? snapshot.workspaces : [],
     seenPostIds: Array.isArray(snapshot.seenPostIds) ? snapshot.seenPostIds : [],
     dismissedFeedItemIds: Array.isArray(snapshot.dismissedFeedItemIds) ? snapshot.dismissedFeedItemIds : [],
+    taskTimelineCursors: snapshot.taskTimelineCursors && typeof snapshot.taskTimelineCursors === "object" ? snapshot.taskTimelineCursors : {},
     actions: Array.isArray(snapshot.actions) ? snapshot.actions.filter((action) => !isInternalZimloAction(action)) : [],
     sequence: typeof snapshot.sequence === "number" ? snapshot.sequence : 0,
     lanApprovalsEnabled: snapshot.lanApprovalsEnabled === true,

@@ -5,19 +5,22 @@ Zimlo 是 Codex 与 Claude Code 的本地移动状态层。它自动发现 Mac �
 ## 当前能力
 
 - 每 2 秒扫描 Codex/Claude Code 进程，并增量读取最近 7 天、每个 provider 最多 200 个 transcript。
-- 把发现到的 Git root/工作目录持久化为 Project；同一 Project 下聚合 Codex 与 Claude Code Sessions，并统计插件卡片。
+- 把发现到的 Git root/工作目录持久化为 Project；每个 Project 拥有可编辑的 Agent Profile（名称、头像、简介、默认 Runtime），同一 Agent 下聚合 Codex 与 Claude Code Tasks 和插件卡片。
 - 使用 provider session id、transcript 路径、PID/启动时间、TTY、打开文件和父进程做保守关联；cwd 绝不作为唯一合并依据。
 - 用户原始指令只保留在 Task 详情；Feed 只接收 Agent 主动编辑的结构化阅读卡和真实待处理操作，平台不 scrape 输出，也不二次生成摘要。
 - `signal.transition` 单独维护机器任务状态；Feed 不是状态 source of truth。
 - 普通轮次可以静默结束；Stop hook 只幂等记录 `implicit_skip`，不会打断或把内部协议提示发进对话。关键状态仍会校验匹配的帖子种类。
-- 主 Feed 使用全屏纵向 scroll-snap，一屏一张卡；排序固定为待处理、未读、已读，稳定停留一秒后按设备记录已读。
-- 左滑 Feed 卡进入所属 Task Profile，右滑将卡片从本设备的当前与历史 Feed 中移除；Profile 以最新在上的紧凑 Timeline 展示指令、Agent 动态、任务 Diff、测试与持久队列状态。
+- 主 Feed 使用全屏纵向 scroll-snap，一屏一张卡；待处理、失败、结果、判断和进展按内容价值排序，六小时内同任务的常规更新自动合并，稳定停留一秒后按设备记录已读。
+- 左滑 Feed 卡进入所属 Task Detail，右滑将卡片从本设备的当前与历史 Feed 中移除；卡片上的 Agent 身份进入跨任务 Agent Profile。
+- 底部导航为 `Feed · Tasks · ＋ · Agents`；设备、安全和 Runtime 接入位于右上角 Settings。
 - 底部 `+` 可从 Mac 已发现的可信项目中创建 Codex/Claude Code 任务；运行中 follow-up 会先持久化，再等待精确 session 空闲后执行。
+- 新任务默认最近 Project Agent/Runtime，支持项目搜索和草稿恢复；发送后立即出现启动中占位卡。Task Detail 的 follow-up 同样保存草稿、显示队列状态并阻止同文重复提交。
+- Task Detail 固定展示 Task Input、状态、最新结论和下一步；Timeline 按设备保存阅读位置。
 - 只有真实测试命令与真实退出码才能生成 `tests_passed` / `tests_failed`。
 - 闲置 Codex session 通过 app-server 的 `thread/read`、`thread/resume` 和 `turn/start` 安全继续；闲置 Claude session 使用 stream-json runner。
 - 活跃外部终端 session 禁止 TTY 注入；精确 hook 审批仍可按原请求闭环。
-- SQLite WAL 分开保存 Project/位置、Session、规范事件、任务状态、任务指令队列、Agent 帖子、每设备已读游标、设备和操作审计，原始 transcript 不复制入库，默认保留 7 天。
-- Session 额外保存最近一次可靠运行界面：`GUI / CLI / Zimlo managed / unknown`；切换界面不会拆成新的 Task Profile。
+- SQLite WAL 分开保存 Project/位置/Agent Profile、Session、规范事件、任务状态、任务指令队列、Agent 帖子、每设备已读与移除状态、设备和操作审计，原始 transcript 不复制入库，默认保留 7 天。
+- Session 额外保存最近一次可靠运行界面：`GUI / CLI / Zimlo managed / unknown`；切换界面不会拆成新的 Task Detail。
 - 本机 loopback 管理页与 X25519 配对；后续 WebSocket 帧使用 XChaCha20-Poly1305、单调计数器与防重放校验。
 
 详细实现见 [架构说明](docs/ARCHITECTURE.md) 与 [验证手册](docs/TESTING.md)。
@@ -44,7 +47,7 @@ node apps/cli/dist/index.js start
 node apps/cli/dist/index.js start --lan
 ```
 
-然后在 Mac 本机 Profile 页面生成 2 分钟、单次使用的二维码。手机审批必须由 Mac 在已知设备列表中逐台授权，授权会跨 Bridge 重启持久保留；高风险操作仍要求确认短语。
+然后在 Mac 本机右上角 Settings 生成 2 分钟、单次使用的二维码。手机审批必须由 Mac 在已知设备列表中逐台授权，授权会跨 Bridge 重启持久保留；高风险操作仍要求确认短语。
 
 ## npm CLI
 
@@ -72,7 +75,7 @@ zimlo open
 
 ### Codex GUI
 
-启动 Zimlo 后，在本机网页打开 **Profile → Codex GUI 发帖插件**：
+启动 Zimlo 后，在本机网页打开 **Settings → Codex GUI 发帖插件**：
 
 1. 点击“准备 Codex 插件”；
 2. 点击“在 Codex 中打开”；
@@ -100,7 +103,7 @@ claude mcp add --scope user zimlo -- zimlo mcp --provider claude
 
 安装器采用备份、临时文件与 rename 原子合并，卸载只移除 Zimlo 自己的 handler。只有 Codex CLI 使用 `/hooks` 检查并信任用户级 hook；Codex GUI 使用上面的 Plugins 页面。Claude Code 可用 `/mcp` 检查工具是否已连接。
 
-也可以在 Mac 本机的 **Profile → Agent 接入方式** 中查看 Codex/Claude 的 GUI、CLI 状态，并显式点击“配置 / 修复 CLI 接入”。Zimlo 启动时不会静默修改用户配置；Claude Code 的 GUI 与 CLI 共用用户级 Hooks/MCP，hook 会根据终端与父进程链记录实际 surface。Zimlo 自己创建的 Codex app-server 与 Claude runner 任务标记为 `Zimlo 托管`。
+也可以在 Mac 本机的 **Settings → Runtime 接入方式** 中查看 Codex/Claude 的 GUI、CLI 状态，并显式点击“配置 / 修复 CLI 接入”。Zimlo 启动时不会静默修改用户配置；Claude Code 的 GUI 与 CLI 共用用户级 Hooks/MCP，hook 会根据终端与父进程链记录实际 surface。Zimlo 自己创建的 Codex app-server 与 Claude runner 任务标记为 `Zimlo 托管`。
 
 Agent 的编辑门槛内置在工具描述与 Skill 中：只有信息会改变用户判断、行动或信心才发帖。每张卡按“结论 → 用户影响 → 关键事实 → 证据 → 下一步”书写，并从 `paper / grid / sticky / marker / poster` 中选择模板。普通 tool call、文件读取、编译测试过程、短暂重试和心跳应保持沉默；只有受控 Runner 或显式 `completed` 状态检查点才需要用 `feed.skip` 记录“本轮不发”。
 

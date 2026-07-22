@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { chmodSync, existsSync, mkdirSync } from "node:fs";
 import { dirname } from "node:path";
 import { DatabaseSync } from "node:sqlite";
@@ -221,6 +222,13 @@ export class ZimloStore {
         dismissed_at TEXT NOT NULL,
         PRIMARY KEY(device_id, item_id)
       );
+      CREATE TABLE IF NOT EXISTS task_timeline_cursors (
+        device_id TEXT NOT NULL,
+        session_id TEXT NOT NULL,
+        item_id TEXT NOT NULL,
+        seen_at TEXT NOT NULL,
+        PRIMARY KEY(device_id, session_id)
+      );
 
       CREATE TABLE IF NOT EXISTS feed_checkpoints (
         agent_id TEXT NOT NULL,
@@ -286,6 +294,14 @@ export class ZimloStore {
     if (!feedColumns.some((column) => column.name === "project_id")) {
       this.database.exec("ALTER TABLE feed_posts ADD COLUMN project_id TEXT REFERENCES projects(id) ON DELETE SET NULL");
     }
+    const projectColumns = this.database.prepare("PRAGMA table_info(projects)").all() as Array<{ name: string }>;
+    if (!projectColumns.some((column) => column.name === "identity_key")) this.database.exec("ALTER TABLE projects ADD COLUMN identity_key TEXT");
+    if (!projectColumns.some((column) => column.name === "agent_display_name")) this.database.exec("ALTER TABLE projects ADD COLUMN agent_display_name TEXT");
+    if (!projectColumns.some((column) => column.name === "agent_avatar")) this.database.exec("ALTER TABLE projects ADD COLUMN agent_avatar TEXT");
+    if (!projectColumns.some((column) => column.name === "agent_bio")) this.database.exec("ALTER TABLE projects ADD COLUMN agent_bio TEXT");
+    if (!projectColumns.some((column) => column.name === "agent_default_provider")) this.database.exec("ALTER TABLE projects ADD COLUMN agent_default_provider TEXT");
+    if (!projectColumns.some((column) => column.name === "agent_updated_at")) this.database.exec("ALTER TABLE projects ADD COLUMN agent_updated_at TEXT");
+    this.database.exec("CREATE INDEX IF NOT EXISTS projects_identity_idx ON projects(identity_key)");
     const sessionColumns = this.database.prepare("PRAGMA table_info(sessions)").all() as Array<{ name: string }>;
     if (!sessionColumns.some((column) => column.name === "project_id")) {
       this.database.exec("ALTER TABLE sessions ADD COLUMN project_id TEXT REFERENCES projects(id) ON DELETE SET NULL");
@@ -309,21 +325,25 @@ export class ZimloStore {
   ensureProjectForCwd(cwd: string | null, seenAt: string, createdAt = seenAt): Project | null {
     const identity = persistableProjectForCwd(cwd);
     if (!identity) return null;
+    const location = this.database.prepare("SELECT project_id FROM project_locations WHERE path = ?").get(identity.root) as { project_id: string } | undefined;
+    const matched = this.database.prepare("SELECT id FROM projects WHERE identity_key = ?").get(identity.identityKey) as { id: string } | undefined;
+    const projectId = location?.project_id ?? matched?.id ?? `project:${randomUUID()}`;
     this.database.prepare(`
-      INSERT INTO projects(id, name, created_at, last_used_at) VALUES (?, ?, ?, ?)
+      INSERT INTO projects(id, name, identity_key, created_at, last_used_at) VALUES (?, ?, ?, ?, ?)
       ON CONFLICT(id) DO UPDATE SET
         name = excluded.name,
+        identity_key = COALESCE(projects.identity_key, excluded.identity_key),
         created_at = CASE WHEN excluded.created_at < projects.created_at THEN excluded.created_at ELSE projects.created_at END,
         last_used_at = CASE WHEN excluded.last_used_at > projects.last_used_at THEN excluded.last_used_at ELSE projects.last_used_at END
-    `).run(identity.id, identity.name, createdAt, seenAt);
+    `).run(projectId, identity.name, identity.identityKey, createdAt, seenAt);
     this.database.prepare(`
       INSERT INTO project_locations(path, project_id, first_seen_at, last_seen_at) VALUES (?, ?, ?, ?)
       ON CONFLICT(path) DO UPDATE SET
         project_id = excluded.project_id,
         first_seen_at = CASE WHEN excluded.first_seen_at < project_locations.first_seen_at THEN excluded.first_seen_at ELSE project_locations.first_seen_at END,
         last_seen_at = CASE WHEN excluded.last_seen_at > project_locations.last_seen_at THEN excluded.last_seen_at ELSE project_locations.last_seen_at END
-    `).run(identity.root, identity.id, createdAt, seenAt);
-    return this.getProject(identity.id);
+    `).run(identity.root, projectId, createdAt, seenAt);
+    return this.getProject(projectId);
   }
 
   getProject(id: string): Project | null {
@@ -334,6 +354,20 @@ export class ZimloStore {
   listProjects(): Project[] {
     return (this.database.prepare("SELECT * FROM projects ORDER BY name COLLATE NOCASE, id").all() as Record<string, unknown>[])
       .map((row) => this.projectFromRow(row));
+  }
+
+  updateAgentProfile(projectId: string, profile: {
+    displayName: string;
+    avatar: string;
+    bio: string;
+    defaultProvider: Project["agentProfile"]["defaultProvider"];
+  }): Project | null {
+    const updatedAt = new Date().toISOString();
+    const result = this.database.prepare(`
+      UPDATE projects SET agent_display_name = ?, agent_avatar = ?, agent_bio = ?, agent_default_provider = ?, agent_updated_at = ?
+      WHERE id = ?
+    `).run(profile.displayName.trim(), profile.avatar.trim(), profile.bio.trim(), profile.defaultProvider, updatedAt, projectId);
+    return Number(result.changes) > 0 ? this.getProject(projectId) : null;
   }
 
   private backfillProjects(): void {
@@ -926,6 +960,18 @@ export class ZimloStore {
       .map((row) => row.item_id);
   }
 
+  markTaskTimelineSeen(deviceId: string, sessionId: string, itemId: string): void {
+    this.database.prepare(`
+      INSERT INTO task_timeline_cursors(device_id, session_id, item_id, seen_at) VALUES (?, ?, ?, ?)
+      ON CONFLICT(device_id, session_id) DO UPDATE SET item_id = excluded.item_id, seen_at = excluded.seen_at
+    `).run(deviceId, sessionId, itemId, new Date().toISOString());
+  }
+
+  listTaskTimelineCursors(deviceId: string): Record<string, string> {
+    return Object.fromEntries((this.database.prepare("SELECT session_id, item_id FROM task_timeline_cursors WHERE device_id = ?").all(deviceId) as Array<{ session_id: string; item_id: string }>)
+      .map((row) => [row.session_id, row.item_id]));
+  }
+
   lanApprovalsEnabled(): boolean {
     const row = this.database.prepare("SELECT value FROM metadata WHERE key = 'lan_approvals_enabled'").get() as { value: string } | undefined;
     return row?.value === "1";
@@ -1135,6 +1181,7 @@ export class ZimloStore {
       workspaces,
       seenPostIds: this.listSeenPostIds(deviceId),
       dismissedFeedItemIds: this.listDismissedFeedItemIds(deviceId),
+      taskTimelineCursors: this.listTaskTimelineCursors(deviceId),
       actions: this.listActions(),
       sequence: this.latestSequence(),
       lanApprovalsEnabled: device?.isLocalAdmin === true || device?.canApprove === true,
@@ -1193,6 +1240,13 @@ export class ZimloStore {
       providers: providers.map((provider) => provider.provider),
       sessionCount: Number(sessionCount.count),
       postCount: Number(postCount.count),
+      agentProfile: {
+        displayName: row.agent_display_name ? String(row.agent_display_name) : String(row.name),
+        avatar: row.agent_avatar ? String(row.agent_avatar) : String(row.name).slice(0, 1).toLocaleUpperCase(),
+        bio: row.agent_bio ? String(row.agent_bio) : `负责 ${String(row.name)} 项目的长期工作与上下文。`,
+        defaultProvider: row.agent_default_provider === "codex" || row.agent_default_provider === "claude" ? row.agent_default_provider : null,
+        updatedAt: row.agent_updated_at ? String(row.agent_updated_at) : String(row.created_at),
+      },
       createdAt: String(row.created_at),
       lastUsedAt: String(row.last_used_at),
     };

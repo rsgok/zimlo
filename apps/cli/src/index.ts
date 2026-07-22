@@ -55,7 +55,7 @@ program.command("start")
     console.log(`Zimlo 已启动：${urls.localUrl}`);
     if (urls.lanUrl) console.log(`可信局域网：${urls.lanUrl}`);
     console.log(`已发现 ${store.listSessions().length} 个 Session（${Date.now() - discoveryStarted} ms）`);
-    console.log("按 Ctrl-C 停止。手机审批权限由 Mac 在 Profile 中按设备管理。");
+    console.log("按 Ctrl-C 停止。手机审批权限由 Mac 在 Settings 中按设备管理。");
 
     let stopping = false;
     const stop = async () => {

@@ -9,6 +9,7 @@ interface FeedPostViewProps {
   project: Project | undefined;
   actions: PendingAction[];
   send: (command: ClientCommand) => void;
+  onOpenProject: (projectId: string) => void;
   position: number;
   total: number;
 }
@@ -29,14 +30,14 @@ function relativeTime(value: string): string {
   return new Intl.DateTimeFormat("zh-CN", { month: "short", day: "numeric" }).format(new Date(value));
 }
 
-export function FeedPostView({ post, session, project, actions, send, position, total }: FeedPostViewProps) {
+export function FeedPostView({ post, session, project, actions, send, onOpenProject, position, total }: FeedPostViewProps) {
   const location = session ? sessionLocation(session) : null;
   return (
-    <article className={`feed-post post-${post.kind} template-${post.template}`}>
+    <article className={`feed-post post-${post.kind} template-${post.template} ${post.actionRequired ? "is-attention" : ""}`}>
       <div className="post-topline">
         <div>
           <span className="post-kind">{LABELS[post.kind]}</span>
-          <span className="post-author">{post.agentId.toUpperCase()}</span>
+          <span className="post-author">{project?.agentProfile.displayName ?? post.agentId.toUpperCase()}</span>
         </div>
         <span className="post-position">{String(position).padStart(2, "0")} / {String(total).padStart(2, "0")}</span>
       </div>
@@ -47,17 +48,18 @@ export function FeedPostView({ post, session, project, actions, send, position, 
         <div className="post-takeaway"><FormattedText text={post.takeaway} compact /></div>
         {post.highlights.length > 0 && (
           <ul className="post-highlights">
-            {post.highlights.map((highlight) => <li key={highlight}>{highlight}</li>)}
+            {post.highlights.slice(0, 2).map((highlight) => <li key={highlight}>{highlight}</li>)}
           </ul>
         )}
-        {post.proof && <p className="post-proof"><span>已验证</span>{post.proof}</p>}
         {post.actionPrompt && <p className="post-action-prompt">{post.actionPrompt}</p>}
       </div>
 
       <div className="post-footer">
         <div className="session-meta">
           <span className={`provider provider-${session?.provider ?? post.agentId}`}>{session ? sessionRuntimeLabel(session) : post.agentId}</span>
-          <span>{location ? `${location.kind === "project" ? "项目" : "目录"} · ${location.label}` : project ? `项目 · ${project.name}` : `未归属项目 · ${post.taskId}`}</span>
+          {project ? <button className="agent-project-link" onClick={(event) => { event.stopPropagation(); onOpenProject(project.id); }}>
+            <span>{project.agentProfile.avatar}</span>{project.agentProfile.displayName}
+          </button> : <span>{location ? `${location.kind === "project" ? "项目" : "目录"} · ${location.label}` : `未归属项目 · ${post.taskId}`}</span>}
           {post.actionRequired && <span className="action-required-badge">需要你处理</span>}
         </div>
 

@@ -12,7 +12,7 @@ Zimlo Codex plugin
 └── hooks/hooks.json           # 安装时写入绝对 hook 命令
 ```
 
-本机 Profile 通过加密 WebSocket 请求 Bridge 安装插件源；Bridge 只接受 local-admin 设备。安装器保留现有 `~/.agents/plugins/marketplace.json` 内容，幂等更新指向 `~/plugins/zimlo` 的 `./plugins/zimlo` 条目，并用临时目录、rename 和备份更新文件。用户随后在 Codex GUI 的 Plugins → Personal 中完成插件安装和 hook 审核，新任务才加载 Skill、MCP 与 hooks。
+本机 Settings 通过加密 WebSocket 请求 Bridge 安装插件源；Bridge 只接受 local-admin 设备。安装器保留现有 `~/.agents/plugins/marketplace.json` 内容，幂等更新指向 `~/plugins/zimlo` 的 `./plugins/zimlo` 条目，并用临时目录、rename 和备份更新文件。用户随后在 Codex GUI 的 Plugins → Personal 中完成插件安装和 hook 审核，新任务才加载 Skill、MCP 与 hooks。
 
 Codex GUI 插件只安装 `SessionStart`、`UserPromptSubmit`、`PermissionRequest` 和 `Stop`，避免为普通 tool call 增加 hook 开销。MCP 进程会先探测 Unix Socket；Bridge 不存在时以 detached 本地进程自动启动，并在 4 秒内等待就绪。非审批 hook 2.5 秒内 fail-open，Stop 只静默落下 `implicit_skip`，永不阻断 Agent 的结束循环。
 
@@ -25,7 +25,7 @@ Codex GUI 插件只安装 `SessionStart`、`UserPromptSubmit`、`PermissionReque
 | `packages/protocol` | Zod 协议、事件/帖子/任务状态/能力模型、设备配对与帧加密 |
 | `packages/adapters` | 进程识别、transcript 扫描与容错 parser、脱敏、测试命令识别 |
 | `apps/cli` | Fastify Bridge、SQLite、发现器、Agent MCP tools、Action Broker、hooks、app-server/resume、CLI |
-| `apps/web` | React/Vite Feed、Tasks、详情、Diff、回复、审批与设备管理 |
+| `apps/web` | React/Vite Feed、Tasks、Agents、Task Detail、回复、审批与 Settings |
 
 ## 数据流
 
@@ -56,24 +56,27 @@ Bridge 启动时先读取进程快照，再扫描 transcript。活跃进程能�
 
 关联顺序是 provider session id、绝对 transcript 路径、PID 与启动时间、TTY/打开文件/父进程。cwd 与更新时间只参与弱证据评分。证据冲突时保留独立 session 并设置 `correlationUncertain`，同时关闭不安全的回复能力。
 
-`provider` 与 `surface` 是两个维度：provider 为 Codex/Claude，surface 为 GUI/CLI/managed/unknown。Codex GUI 插件与 Codex CLI hooks 写入明确 surface；Claude 的共享用户级 hook 根据 TTY 和 Claude Desktop 父进程链识别 GUI/CLI，证据不足时保留 unknown；app-server 与 controlled runner 写入 managed。未知来源不能覆盖已经确认的 surface，同一个 provider session 切换界面后仍属于同一 Task Profile。
+`provider` 与 `surface` 是两个维度：provider 为 Codex/Claude，surface 为 GUI/CLI/managed/unknown。Codex GUI 插件与 Codex CLI hooks 写入明确 surface；Claude 的共享用户级 hook 根据 TTY 和 Claude Desktop 父进程链识别 GUI/CLI，证据不足时保留 unknown；app-server 与 controlled runner 写入 managed。未知来源不能覆盖已经确认的 surface，同一个 provider session 切换界面后仍属于同一 Task Detail。
 
 ## Project、Session 与卡片
 
-Project 是 SQLite 中的一等持久实体，不再在每次 Snapshot 时临时从 cwd 生成。当前关系为：
+Project 是 SQLite 中的一等持久实体，不再在每次 Snapshot 时临时从 cwd 生成。Project Agent 是它的用户可编辑展示身份，Codex/Claude 只作为 Runtime。当前关系为：
 
 ```text
 Project
 ├── project_locations
+├── AgentProfile
+│   ├── displayName / avatar / bio
+│   └── defaultProvider
 ├── Sessions / Tasks
 │   └── events + actions + task_commands
 └── feed_posts
     └── 同时保留 session_id（可归属时）
 ```
 
-Session 写入时先把 cwd 归一到最近 Git root，再获得稳定的路径哈希 `project_id`；非 Git 目录保留其规范绝对路径，`/`、用户主目录等宽泛根目录不会创建 Project。现有数据库启动时会幂等回填 Session、FeedPost 和未执行 TaskCommand 的项目关系。
+新 Project 使用持久 UUID。Session 写入时先把 cwd 归一到最近 Git root，再使用 origin remote 指纹、无 remote 时的 Git root commit 和 `project_locations` 找回已有 Project；因此常见的项目移动或改名不会丢失 Agent Profile。非 Git 目录回退到规范路径身份，`/`、用户主目录等宽泛根目录不会创建 Project。旧 Project ID 保持不变并在启动时幂等补充身份指纹。
 
-插件卡片优先使用 provider session id、已绑定 checkpoint 或唯一开放 hook checkpoint 找到强 Session，再从 Session 继承 `project_id`。无法确定时保留为未归属卡片，绝不根据 MCP 辅助进程的 cwd 猜项目。Profile Timeline 仍按 `session_id` 聚合，Project 目录则按 `project_id` 汇总任务与卡片，数据只保存一份。
+插件卡片优先使用 provider session id、已绑定 checkpoint 或唯一开放 hook checkpoint 找到强 Session，再从 Session 继承 `project_id`。无法确定时保留为未归属卡片，绝不根据 MCP 辅助进程的 cwd 猜项目。Task Detail 按 `session_id` 聚合；Agent Profile 按 `project_id` 汇总跨任务 Timeline，数据只保存一份。
 
 Tasks 的项目目录按名称稳定排序；任务只在 attention/active/recent 状态改变时跨组，组内使用不可变 `created_at` 与 id 排序。心跳、transcript 追加和普通 `last_activity_at` 更新只刷新文案，不改变列表位置。
 
