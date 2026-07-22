@@ -431,7 +431,10 @@ export class ZimloStore {
     if (parentPid > 0) {
       const row = this.database.prepare("SELECT * FROM sessions WHERE provider = ? AND active_pid = ? ORDER BY last_activity_at DESC LIMIT 1")
         .get(provider, parentPid) as Record<string, unknown> | undefined;
-      if (row) return this.sessionFromRow(row);
+      if (row) {
+        const session = this.sessionFromRow(row);
+        if (!session.correlationUncertain) return session;
+      }
     }
     if (!cwd) return null;
     const rows = this.database.prepare(`
@@ -439,12 +442,34 @@ export class ZimloStore {
       WHERE provider = ? AND cwd = ? AND active_pid IS NOT NULL
       ORDER BY last_activity_at DESC LIMIT 2
     `).all(provider, cwd) as Record<string, unknown>[];
-    return rows.length === 1 ? this.sessionFromRow(rows[0]!) : null;
+    if (rows.length !== 1) return null;
+    const session = this.sessionFromRow(rows[0]!);
+    return session.correlationUncertain ? null : session;
   }
 
   listSessions(): Session[] {
     return (this.database.prepare("SELECT * FROM sessions ORDER BY last_activity_at DESC").all() as Record<string, unknown>[])
       .map((row) => this.sessionFromRow(row));
+  }
+
+  firstTaskInput(sessionId: string): string | null {
+    const row = this.database.prepare(`
+      SELECT payload_json FROM events
+      WHERE session_id = ? AND kind = 'user_instruction'
+      ORDER BY sequence ASC LIMIT 1
+    `).get(sessionId) as { payload_json: string } | undefined;
+    if (!row) return null;
+    try {
+      const payload = json<unknown>(row.payload_json);
+      if (typeof payload === "string") return payload;
+      if (payload && typeof payload === "object") {
+        const prompt = (payload as Record<string, unknown>).prompt;
+        if (typeof prompt === "string") return prompt;
+      }
+    } catch {
+      // Invalid historical payloads do not block the task list.
+    }
+    return null;
   }
 
   clearInactiveProcesses(activePids: Set<number>): { changed: Session[]; removed: string[] } {

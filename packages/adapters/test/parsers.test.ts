@@ -23,6 +23,14 @@ describe("Codex 0.144.6 fixture contract", () => {
     expect(parseCodexLine("{not-complete", state).events).toEqual([]);
     expect(parseCodexLine('{"type":"future_record","payload":{"x":1}}', state).events).toEqual([]);
   });
+
+  it("captures user task input but skips injected runtime context", () => {
+    const state: ParserState = { provider: "codex", providerSessionId: "fallback", toolCalls: new Map() };
+    const task = parseCodexLine('{"type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"优化任务列表"}]}}', state);
+    const context = parseCodexLine('{"type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"<environment_context>cwd=/tmp</environment_context>"}]}}', state);
+    expect(task.events).toEqual([expect.objectContaining({ kind: "user_instruction", payload: { prompt: "优化任务列表" } })]);
+    expect(context.events).toEqual([]);
+  });
 });
 
 describe("Claude Code 2.1.207 fixture contract", () => {
@@ -34,6 +42,12 @@ describe("Claude Code 2.1.207 fixture contract", () => {
       "session_started", "command_started", "tests_failed", "completed",
     ]);
     expect(parsed.at(-1)?.events[0]?.provenance).toBe("agent_reported");
+  });
+
+  it("captures a textual user task separately from tool results", () => {
+    const state: ParserState = { provider: "claude", providerSessionId: "fallback", toolCalls: new Map() };
+    const parsed = parseClaudeLine('{"type":"user","sessionId":"claude-a","message":{"content":[{"type":"text","text":"完成发布检查"}]}}', state);
+    expect(parsed.events).toEqual([expect.objectContaining({ kind: "user_instruction", payload: { prompt: "完成发布检查" } })]);
   });
 });
 

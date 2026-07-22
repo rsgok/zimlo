@@ -14,3 +14,16 @@ export function sessionLocation(session: Session): { kind: "project" | "director
   if (session.projectName) return { kind: "project", label: session.projectName };
   return { kind: "directory", label: lastPathSegment(session.cwd) ?? "工作目录未知" };
 }
+
+export function conciseTaskInput(input: string, maxLength = 560): string {
+  const comment = input.match(/(?:^|\n)Comment:\s*([^\n]+)/iu)?.[1]?.trim();
+  const requested = input.match(/##\s*My request for (?:Codex|Claude(?: Code)?):\s*([\s\S]+)/iu)?.[1]?.trim();
+  const source = comment || requested || input;
+  const readable = source
+    .replace(/<[^>]+>/gu, " ")
+    .replace(/^(?:File|Side|Lines|PDF path|PDF page|PDF annotation|Annotated .* screenshot|selected text):.*$/gimu, "")
+    .replace(/^#+\s*/gmu, "")
+    .replace(/\n{3,}/gu, "\n\n")
+    .trim();
+  return readable.length > maxLength ? `${readable.slice(0, maxLength).trimEnd()}…` : readable;
+}

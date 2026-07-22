@@ -45,13 +45,14 @@ export function App() {
       <main className={`main-content ${tab === "feed" ? "feed-main" : ""}`}>
         {bridge.error && <div className="error-banner">{bridge.error}</div>}
         {tab === "feed" && <FeedView posts={bridge.snapshot.posts} sessions={bridge.snapshot.sessions} actions={bridge.snapshot.actions} send={bridge.send} onOpen={openSession} />}
-        {tab === "tasks" && <TasksView sessions={bridge.snapshot.sessions} onOpen={openSession} />}
+        {tab === "tasks" && <TasksView sessions={bridge.snapshot.sessions} tasks={bridge.snapshot.tasks} onOpen={openSession} />}
         {tab === "profile" && (
           <ProfileView
             localAdmin={bridge.localAdmin}
             devices={bridge.devices}
             pairing={bridge.pairing}
             codexPlugin={bridge.codexPlugin}
+            sessions={bridge.snapshot.sessions}
             lanApprovalsEnabled={bridge.snapshot.lanApprovalsEnabled}
             send={bridge.send}
             forgetDevice={bridge.forgetDevice}

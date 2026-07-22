@@ -127,6 +127,20 @@ describe("agent-authored feed protocol", () => {
 });
 
 describe("feed decision Stop checkpoint", () => {
+  it("does not attach a new Agent task to an uncertain PID or cwd match", () => {
+    const localStore = new ZimloStore(":memory:");
+    try {
+      localStore.upsertSession({ ...session, correlationUncertain: true });
+      expect(localStore.findSessionForAgentTool("codex", 4242, "/tmp/project-a", "new-task")).toBeNull();
+
+      const direct = { ...session, id: "tool-session", providerSessionId: "new-task", correlationUncertain: true };
+      localStore.upsertSession(direct);
+      expect(localStore.findSessionForAgentTool("codex", 0, "/tmp/other", "new-task")?.id).toBe("tool-session");
+    } finally {
+      localStore.close();
+    }
+  });
+
   it("stores user prompts as Task events without creating Feed posts", () => {
     const localStore = new ZimloStore(":memory:");
     const localRuntime = new RuntimeHub(localStore);

@@ -16,6 +16,14 @@ function text(value: unknown, fallback = ""): string {
   return typeof value === "string" && value.length > 0 ? value : fallback;
 }
 
+export function isInternalZimloAction(value: unknown): boolean {
+  if (!value || typeof value !== "object") return false;
+  const action = value as Record<string, unknown>;
+  return action.kind === "approval"
+    && typeof action.detail === "string"
+    && /(?:^|工具：)mcp__zimlo__(?:feed_post|feed_skip|signal_transition)$/mu.test(action.detail.trim());
+}
+
 export function normalizeFeedPost(value: unknown): FeedPost | null {
   if (!value || typeof value !== "object") return null;
   const post = value as Record<string, unknown>;
@@ -69,7 +77,7 @@ export function normalizeSnapshot(value: Snapshot): Snapshot {
       ? snapshot.posts.map(normalizeFeedPost).filter((post): post is FeedPost => post !== null)
       : [],
     tasks: Array.isArray(snapshot.tasks) ? snapshot.tasks : [],
-    actions: Array.isArray(snapshot.actions) ? snapshot.actions : [],
+    actions: Array.isArray(snapshot.actions) ? snapshot.actions.filter((action) => !isInternalZimloAction(action)) : [],
     sequence: typeof snapshot.sequence === "number" ? snapshot.sequence : 0,
     lanApprovalsEnabled: snapshot.lanApprovalsEnabled === true,
   };

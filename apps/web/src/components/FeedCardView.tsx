@@ -44,7 +44,6 @@ export function FeedCardView({ card, session, actions, send, onOpen }: FeedCardV
         </div>
       </button>
       {actions.map((action) => <ActionPanel key={action.actionId} action={action} send={send} />)}
-      <button className="text-button" onClick={() => onOpen(card.sessionId)}>查看详情 →</button>
     </article>
   );
 }

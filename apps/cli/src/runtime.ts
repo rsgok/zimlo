@@ -3,6 +3,7 @@ import type { FeedPost, PendingAction, ServerMessage, Session, TaskRecord, Unifi
 import { projectNameForCwd } from "./project-context.js";
 import { sanitizeEventPayload } from "./sanitization.js";
 import { ZimloStore } from "./store.js";
+import { titleSessionFromInput } from "./task-title.js";
 
 export class RuntimeHub extends EventEmitter {
   readonly store: ZimloStore;
@@ -106,7 +107,8 @@ export class RuntimeHub extends EventEmitter {
   }
 
   private withProject(session: Session): Session {
-    return { ...session, projectName: projectNameForCwd(session.cwd) };
+    const titled = titleSessionFromInput(session, this.store.firstTaskInput(session.id));
+    return { ...titled, projectName: projectNameForCwd(session.cwd) };
   }
 
   private payloadContainsDiff(payload: unknown): boolean {

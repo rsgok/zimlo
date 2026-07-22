@@ -32,7 +32,19 @@ function record(value: unknown): Record<string, unknown> {
     : {};
 }
 
-function detailFor(payload: Record<string, unknown>): string {
+const TRUSTED_ZIMLO_TOOLS = new Set([
+  "mcp__zimlo__feed_post",
+  "mcp__zimlo__feed_skip",
+  "mcp__zimlo__signal_transition",
+]);
+
+export function isTrustedZimloPermission(payload: Record<string, unknown>): boolean {
+  return payload.hook_event_name === "PermissionRequest"
+    && typeof payload.tool_name === "string"
+    && TRUSTED_ZIMLO_TOOLS.has(payload.tool_name);
+}
+
+export function actionDetailFor(payload: Record<string, unknown>): string {
   const input = record(payload.tool_input);
   if (payload.tool_name === "AskUserQuestion" && Array.isArray(input.questions)) {
     const questions = input.questions.map((question) => {
@@ -41,12 +53,33 @@ function detailFor(payload: Record<string, unknown>): string {
     }).filter(Boolean);
     if (questions.length > 0) return redactText(questions.join("\n"), 800);
   }
-  const value = input.command ?? input.description ?? input.file_path ?? payload.message ?? payload.tool_name;
-  return redactText(typeof value === "string" ? value : JSON.stringify(value), 800);
+  const lines: string[] = [];
+  const reason = input.description ?? input.reason ?? payload.reason ?? payload.message;
+  if (typeof reason === "string" && reason.trim()) lines.push(`目的：${reason.trim()}`);
+  if (typeof input.command === "string" && input.command.trim()) lines.push(`命令：${input.command.trim()}`);
+  if (typeof input.file_path === "string" && input.file_path.trim()) lines.push(`文件：${input.file_path.trim()}`);
+  if (typeof input.headline === "string" && input.headline.trim()) lines.push(`内容：${input.headline.trim()}`);
+  if (typeof input.state === "string" && input.state.trim()) lines.push(`目标状态：${input.state.trim()}`);
+  if (typeof payload.tool_name === "string" && !["Bash", "AskUserQuestion"].includes(payload.tool_name)) {
+    lines.push(`工具：${payload.tool_name}`);
+  }
+  if (lines.length === 0) {
+    const value = Object.keys(input).length > 0 ? input : payload.tool_name;
+    lines.push(typeof value === "string" ? value : JSON.stringify(value));
+  }
+  return redactText(lines.join("\n"), 800);
+}
+
+export function approvalTitleFor(payload: Record<string, unknown>): string {
+  const tool = String(payload.tool_name ?? "");
+  if (tool === "Bash") return "批准执行命令";
+  if (/^(?:Edit|Write|apply_patch)$/u.test(tool)) return "批准修改文件";
+  if (tool) return `批准使用 ${tool.replace(/^mcp__/u, "")}`;
+  return "批准受保护操作";
 }
 
 function riskFor(payload: Record<string, unknown>): Decision["risk"] {
-  const detail = detailFor(payload);
+  const detail = actionDetailFor(payload);
   if (/\b(?:rm\s+-rf|deploy|production|git\s+push|git\s+reset|drop\s+(?:table|database)|sudo)\b/iu.test(detail)) return "high";
   if (/\b(?:write|edit|apply_patch|install|delete|remove)\b/iu.test(detail)) return "medium";
   return "low";
@@ -176,6 +209,11 @@ export class HookServer {
   private handleSocket(socket: Socket): void {
     socket.setEncoding("utf8");
     let buffer = "";
+    let responseStarted = false;
+    const cancellation = new AbortController();
+    socket.once("close", () => {
+      if (!responseStarted) cancellation.abort();
+    });
     socket.on("data", (chunk: string) => {
       buffer += chunk;
       const newline = buffer.indexOf("\n");
@@ -185,16 +223,23 @@ export class HookServer {
       const request = JSON.parse(line) as HookRequest | AgentToolRequest;
       if (request.type === "agent_tool") {
         const response: AgentToolResult = this.agentTools.handle(request);
+        responseStarted = true;
         socket.end(`${JSON.stringify(response)}\n`);
         return;
       }
-      void this.handleRequest(request).then((response) => {
+      void this.handleRequest(request, cancellation.signal).then((response) => {
+        if (cancellation.signal.aborted || socket.destroyed) return;
+        responseStarted = true;
         socket.end(`${JSON.stringify(response)}\n`);
-      }).catch(() => socket.end(`${JSON.stringify({ id: "unknown", output: null })}\n`));
+      }).catch(() => {
+        if (cancellation.signal.aborted || socket.destroyed) return;
+        responseStarted = true;
+        socket.end(`${JSON.stringify({ id: "unknown", output: null })}\n`);
+      });
     });
   }
 
-  private async handleRequest(request: HookRequest): Promise<HookResponse> {
+  private async handleRequest(request: HookRequest, cancellation?: AbortSignal): Promise<HookResponse> {
     const payload = request.payload;
     const providerSessionId = String(payload.session_id ?? payload.thread_id ?? `hook-${request.id}`);
     const sessionId = stableSessionId(request.provider, providerSessionId);
@@ -202,6 +247,7 @@ export class HookServer {
     const hookName = String(payload.hook_event_name ?? "");
     const isApproval = hookName === "PermissionRequest";
     const isInput = hookName === "PreToolUse" && payload.tool_name === "AskUserQuestion";
+    const trustedZimloPermission = request.provider === "codex" && isTrustedZimloPermission(payload);
     const session: Session = {
       id: sessionId,
       provider: request.provider,
@@ -209,7 +255,7 @@ export class HookServer {
       title: existing?.title ?? `${request.provider === "codex" ? "Codex" : "Claude"} · ${providerSessionId.slice(0, 8)}`,
       cwd: typeof payload.cwd === "string" ? payload.cwd : (existing?.cwd ?? null),
       transcriptPath: typeof payload.transcript_path === "string" ? payload.transcript_path : (existing?.transcriptPath ?? null),
-      status: isApproval || isInput ? "waiting" : (existing?.status ?? "running"),
+      status: (isApproval && !trustedZimloPermission) || isInput ? "waiting" : (existing?.status ?? "running"),
       lastActivityAt: new Date().toISOString(),
       createdAt: existing?.createdAt ?? new Date().toISOString(),
       activePid: existing?.activePid ?? null,
@@ -225,6 +271,18 @@ export class HookServer {
       },
     };
     this.runtime.upsertSession(session);
+
+    if (trustedZimloPermission) {
+      return {
+        id: request.id,
+        output: {
+          hookSpecificOutput: {
+            hookEventName: "PermissionRequest",
+            decision: { behavior: "allow" },
+          },
+        },
+      };
+    }
 
     if (hookName === "SessionStart" || hookName === "UserPromptSubmit") {
       this.runtime.store.beginFeedCheckpoint({
@@ -259,13 +317,20 @@ export class HookServer {
         sessionId,
         upstreamRequestId: String(payload.tool_use_id ?? request.id),
         kind: isInput ? "input" : "approval",
-        title: isInput ? "Agent 正在等待输入" : "需要批准操作",
-        detail: detailFor(payload),
+        title: isInput ? "Agent 正在等待输入" : approvalTitleFor(payload),
+        detail: actionDetailFor(payload),
         availableDecisions,
       });
+      const expireOnCancellation = () => this.broker.expire(pending.action.actionId);
+      cancellation?.addEventListener("abort", expireOnCancellation, { once: true });
+      if (cancellation?.aborted) expireOnCancellation();
       this.ingestHookEvent(request, session, kind, pending.action);
-      const resolution = await pending.result;
-      return { id: request.id, output: this.formatDecision(request.provider, payload, resolution) };
+      try {
+        const resolution = await pending.result;
+        return { id: request.id, output: this.formatDecision(request.provider, payload, resolution) };
+      } finally {
+        cancellation?.removeEventListener("abort", expireOnCancellation);
+      }
     }
 
     this.ingestHookEvent(request, session, kind);

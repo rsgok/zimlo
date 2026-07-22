@@ -19,7 +19,7 @@ import {
   saveCredentials,
   type DeviceCredentials,
 } from "../lib/credentials";
-import { normalizeFeedPost, normalizeSnapshot } from "../lib/feedCompatibility";
+import { isInternalZimloAction, normalizeFeedPost, normalizeSnapshot } from "../lib/feedCompatibility";
 
 const EMPTY_SNAPSHOT: Snapshot = {
   sessions: [],
@@ -168,6 +168,15 @@ export function useBridge() {
           case "task.updated":
             return { ...current, snapshot: { ...current.snapshot, tasks: upsertById(current.snapshot.tasks, message.task) } };
           case "action.upsert": {
+            if (isInternalZimloAction(message.action)) {
+              return {
+                ...current,
+                snapshot: {
+                  ...current.snapshot,
+                  actions: current.snapshot.actions.filter((action) => action.actionId !== message.action.actionId),
+                },
+              };
+            }
             const actions = message.action.state === "pending"
               ? upsertById(current.snapshot.actions.map((action) => ({ ...action, id: action.actionId })), { ...message.action, id: message.action.actionId }).map(({ id: _id, ...action }) => action)
               : current.snapshot.actions.filter((action) => action.actionId !== message.action.actionId);

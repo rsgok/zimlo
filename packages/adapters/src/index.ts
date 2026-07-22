@@ -5,6 +5,7 @@ export { classifyAgentCommand, scanAgentProcesses } from "./processes.js";
 export { redactText, redactUnknown } from "./redaction.js";
 export { isTestCommand, findExitCode, readCommand } from "./test-detection.js";
 export { stableSessionId, stableEventId, uuidV7 } from "./ids.js";
+export { userInstructionText } from "./user-instruction.js";
 export type {
   EventDraft,
   ParsedLine,

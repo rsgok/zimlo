@@ -1,5 +1,6 @@
 import { findExitCode, isTestCommand, readCommand } from "./test-detection.js";
 import type { EventDraft, ParsedLine, ParserState, TranscriptMetadata } from "./types.js";
+import { userInstructionText } from "./user-instruction.js";
 
 function objectValue(value: unknown): Record<string, unknown> {
   return value && typeof value === "object" && !Array.isArray(value)
@@ -99,6 +100,8 @@ export function parseClaudeLine(line: string, state: ParserState): ParsedLine {
 
   if (type === "user") {
     const message = objectValue(record.message);
+    const prompt = userInstructionText(message.content);
+    if (prompt) events.push(event("user_instruction", at, { prompt }, state));
     for (const rawBlock of contentBlocks(message)) {
       const block = objectValue(rawBlock);
       if (block.type !== "tool_result") continue;

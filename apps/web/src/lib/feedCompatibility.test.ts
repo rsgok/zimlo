@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { normalizeFeedPost, normalizeSnapshot } from "./feedCompatibility";
+import { isInternalZimloAction, normalizeFeedPost, normalizeSnapshot } from "./feedCompatibility";
 
 describe("Feed compatibility", () => {
   it("maps a legacy Agent post to the V2 reading model", () => {
@@ -43,5 +43,11 @@ describe("Feed compatibility", () => {
     expect(snapshot.posts).toHaveLength(1);
     expect(snapshot.posts[0]).toMatchObject({ id: "agent", headline: "完成", template: "paper" });
     expect(snapshot.tasks).toEqual([]);
+  });
+
+  it("hides stale recursive approvals for Zimlo's own control tools", () => {
+    expect(isInternalZimloAction({ kind: "approval", detail: "mcp__zimlo__feed_post" })).toBe(true);
+    expect(isInternalZimloAction({ kind: "approval", detail: "工具：mcp__zimlo__signal_transition" })).toBe(true);
+    expect(isInternalZimloAction({ kind: "approval", detail: "命令：git push" })).toBe(false);
   });
 });

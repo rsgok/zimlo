@@ -1,4 +1,4 @@
-import type { ClientCommand } from "@zimlo/protocol";
+import type { ClientCommand, Session } from "@zimlo/protocol";
 import type { CodexPluginInfo, DeviceInfo, PairingInfo } from "../hooks/useBridge";
 
 interface ProfileViewProps {
@@ -7,11 +7,22 @@ interface ProfileViewProps {
   pairing: PairingInfo | null;
   lanApprovalsEnabled: boolean;
   codexPlugin: CodexPluginInfo | null;
+  sessions: Session[];
   send: (command: ClientCommand) => void;
   forgetDevice: () => Promise<void>;
 }
 
-export function ProfileView({ localAdmin, devices, pairing, lanApprovalsEnabled, codexPlugin, send, forgetDevice }: ProfileViewProps) {
+export function ProfileView({ localAdmin, devices, pairing, lanApprovalsEnabled, codexPlugin, sessions, send, forgetDevice }: ProfileViewProps) {
+  const runtimeSummary = (["codex", "claude"] as const).map((provider) => {
+    const runtimeSessions = sessions.filter((session) => session.provider === provider);
+    return {
+      provider,
+      label: provider === "codex" ? "Codex" : "Claude Code",
+      total: runtimeSessions.length,
+      active: runtimeSessions.filter((session) => session.status === "running" || session.status === "waiting").length,
+      replyable: runtimeSessions.filter((session) => session.capabilities.replyable).length,
+    };
+  });
   return (
     <section className="profile-view">
       <div className="section-heading">
@@ -24,6 +35,22 @@ export function ProfileView({ localAdmin, devices, pairing, lanApprovalsEnabled,
           <p>WebSocket 的敏感消息使用设备密钥加密；初始网页仍受可信局域网边界限制。</p>
         </div>
         {!localAdmin && <button className="secondary-button" onClick={() => void forgetDevice()}>忘记此设备</button>}
+      </div>
+
+      <div className="settings-card runtime-overview-card">
+        <div>
+          <h3>Agent 工作能力</h3>
+          <p>发现、审阅、审批和继续任务都在同一处完成。</p>
+        </div>
+        <div className="runtime-overview">
+          {runtimeSummary.map((runtime) => (
+            <div key={runtime.provider}>
+              <span className={`provider provider-${runtime.provider}`}>{runtime.label}</span>
+              <strong>{runtime.total > 0 ? "已连接" : "等待任务"}</strong>
+              <small>{runtime.active} 个运行中 · {runtime.replyable} 个可继续</small>
+            </div>
+          ))}
+        </div>
       </div>
 
       {localAdmin && (

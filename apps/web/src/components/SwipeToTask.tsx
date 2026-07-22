@@ -14,6 +14,10 @@ interface GestureStart {
 
 const OPEN_THRESHOLD = 72;
 
+export function shouldOpenTaskSwipe(deltaX: number, deltaY: number): boolean {
+  return deltaX >= OPEN_THRESHOLD && Math.abs(deltaX) > Math.abs(deltaY) * 1.2;
+}
+
 export function SwipeToTask({ children, sessionId, onOpen }: SwipeToTaskProps) {
   const start = useRef<GestureStart | null>(null);
   const [offset, setOffset] = useState(0);
@@ -36,7 +40,7 @@ export function SwipeToTask({ children, sessionId, onOpen }: SwipeToTaskProps) {
     const deltaX = event.clientX - origin.x;
     const deltaY = event.clientY - origin.y;
     if (!dragging && (Math.abs(deltaX) < 10 || Math.abs(deltaX) <= Math.abs(deltaY))) return;
-    if (deltaX > 0) {
+    if (deltaX < 0) {
       setOffset(0);
       return;
     }
@@ -45,11 +49,12 @@ export function SwipeToTask({ children, sessionId, onOpen }: SwipeToTaskProps) {
       setDragging(true);
     }
     event.preventDefault();
-    setOffset(Math.max(-104, deltaX));
+    setOffset(Math.min(104, deltaX));
   };
 
   const handlePointerEnd = (event: PointerEvent<HTMLDivElement>) => {
-    const shouldOpen = Boolean(sessionId && dragging && offset <= -OPEN_THRESHOLD);
+    const origin = start.current;
+    const shouldOpen = Boolean(sessionId && origin && shouldOpenTaskSwipe(event.clientX - origin.x, event.clientY - origin.y));
     if (event.currentTarget.hasPointerCapture(event.pointerId)) event.currentTarget.releasePointerCapture(event.pointerId);
     reset();
     if (shouldOpen) onOpen(sessionId!);
@@ -57,7 +62,7 @@ export function SwipeToTask({ children, sessionId, onOpen }: SwipeToTaskProps) {
 
   const handleKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
     if (!sessionId || event.target !== event.currentTarget) return;
-    if (event.key === "Enter" || event.key === "ArrowLeft") {
+    if (event.key === "Enter" || event.key === "ArrowRight") {
       event.preventDefault();
       onOpen(sessionId);
     }
@@ -67,14 +72,14 @@ export function SwipeToTask({ children, sessionId, onOpen }: SwipeToTaskProps) {
     <div
       className={`swipe-task ${dragging ? "is-dragging" : ""}`}
       tabIndex={sessionId ? 0 : undefined}
-      aria-label={sessionId ? "左滑查看当前任务" : undefined}
+      aria-label={sessionId ? "右滑查看当前任务" : undefined}
       onKeyDown={handleKeyDown}
       onPointerDown={handlePointerDown}
       onPointerMove={handlePointerMove}
       onPointerUp={handlePointerEnd}
       onPointerCancel={reset}
     >
-      <div className="swipe-task-reveal" aria-hidden="true"><span>任务</span><strong>查看详情</strong></div>
+      <div className="swipe-task-reveal" aria-hidden="true"><span>任务</span><strong>查看时间线</strong></div>
       <div className="swipe-task-content" style={{ transform: `translate3d(${offset}px, 0, 0)` }}>{children}</div>
     </div>
   );

@@ -1,5 +1,6 @@
 import { findExitCode, isTestCommand, readCommand } from "./test-detection.js";
 import type { EventDraft, ParsedLine, ParserState, TranscriptMetadata } from "./types.js";
+import { userInstructionText } from "./user-instruction.js";
 
 function objectValue(value: unknown): Record<string, unknown> {
   return value && typeof value === "object" && !Array.isArray(value)
@@ -86,6 +87,10 @@ export function parseCodexLine(line: string, state: ParserState): ParsedLine {
 
   if (type === "response_item") {
     const itemType = typeof payload.type === "string" ? payload.type : "";
+    if (itemType === "message" && payload.role === "user") {
+      const prompt = userInstructionText(payload.content);
+      if (prompt) events.push(draft("user_instruction", occurredAt, { prompt }, state));
+    }
     if (itemType === "function_call" || itemType === "custom_tool_call") {
       const name = typeof payload.name === "string" ? payload.name : "unknown";
       const callId = String(payload.call_id ?? payload.id ?? `call-${state.toolCalls.size + 1}`);
