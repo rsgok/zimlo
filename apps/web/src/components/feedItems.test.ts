@@ -45,7 +45,7 @@ describe("Feed item composition", () => {
   it("sorts pending attention first, then unread posts, then seen history", () => {
     const result = { ...post, id: "result", kind: "result" as const, actionRequired: false, actionPrompt: undefined, pendingActionIds: [], createdAt: "2026-07-21T00:03:00.000Z" };
     const seen = { ...result, id: "seen", createdAt: "2026-07-21T00:04:00.000Z" };
-    const items = buildFeedItems([seen, result, post], [], ["seen"]);
+    const items = buildFeedItems([seen, result, post], [action("linked")], ["seen"]);
     expect(items.map((item) => item.id)).toEqual(["post-a", "result", "seen"]);
   });
 

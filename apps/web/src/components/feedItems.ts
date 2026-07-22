@@ -28,7 +28,7 @@ export function mergeRoutinePosts(posts: FeedPost[]): FeedPost[] {
       merged.push(post);
       continue;
     }
-    merged[existingIndex!] = { ...existing, highlights: [...existing.highlights, ...post.highlights].filter((value, index, all) => all.indexOf(value) === index).slice(0, 3) };
+    merged[existingIndex!] = { ...existing, highlights: [...existing.highlights, ...post.highlights].filter((value, index, all) => all.indexOf(value) === index).slice(0, 2) };
   }
   return merged;
 }
@@ -41,19 +41,29 @@ export function buildFeedItems(
   dismissedFeedItemIds: string[] = [],
 ): FeedItem[] {
   const linkedActionIds = new Set(posts.flatMap((post) => post.pendingActionIds));
+  const pendingActionIds = new Set(actions.filter((action) => action.state === "pending").map((action) => action.actionId));
+  const latestOutcomeByTask = new Map<string, string>();
+  for (const post of posts) {
+    if (!(post.kind === "result" || post.kind === "failure")) continue;
+    const key = post.sessionId ?? post.taskId;
+    const latest = latestOutcomeByTask.get(key);
+    if (!latest || post.createdAt > latest) latestOutcomeByTask.set(key, post.createdAt);
+  }
   const seen = new Set(seenPostIds);
   const dismissed = new Set(dismissedFeedItemIds);
   return [
     ...mergeRoutinePosts(posts).map((post): FeedItem => {
       const unread = !seen.has(post.id);
-      const needsAction = post.actionRequired && post.pendingActionIds.length > 0;
+      const needsAction = post.actionRequired && post.pendingActionIds.some((id) => pendingActionIds.has(id));
+      const covered = ["progress", "decision", "attention"].includes(post.kind)
+        && (latestOutcomeByTask.get(post.sessionId ?? post.taskId) ?? "") > post.createdAt;
       return {
       type: "post",
       id: post.id,
       createdAt: post.createdAt,
       needsAction,
       unread,
-      priority: needsAction ? 0 : POST_VALUE[post.kind] + (unread ? 0 : 10),
+      priority: needsAction ? 0 : POST_VALUE[post.kind] + (covered ? 6 : 0) + (unread ? 0 : 10),
       post,
       };
     }),

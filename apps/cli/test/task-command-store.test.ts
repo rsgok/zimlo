@@ -2,7 +2,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import type { FeedPost, TaskCommand } from "@zimlo/protocol";
+import { EMPTY_CAPABILITIES, type FeedPost, type TaskCommand } from "@zimlo/protocol";
 import { RuntimeHub } from "../src/runtime.js";
 import { ZimloStore } from "../src/store.js";
 
@@ -88,6 +88,26 @@ describe("task command and per-device feed state", () => {
     expect(reopened.listDismissedFeedItemIds("device-a")).toEqual(["post:post-a"]);
     expect(reopened.snapshot(false, "device-a", []).dismissedFeedItemIds).toEqual(["post:post-a"]);
     expect(reopened.snapshot(false, "device-a", []).taskTimelineCursors).toEqual({ "session-a": "post:post-a" });
+    reopened.close();
+  });
+
+  it("persists task pin and archive preferences across restarts", () => {
+    const { root, store } = createStore();
+    store.upsertSession({
+      id: "session-a", provider: "codex", surface: "cli", providerSessionId: "provider-a", title: "Task A",
+      cwd: "/tmp/project", transcriptPath: null, status: "idle", lastActivityAt: "2026-07-23T00:00:00.000Z",
+      createdAt: "2026-07-23T00:00:00.000Z", activePid: null, processStartedAt: null, tty: null,
+      correlationUncertain: false, capabilities: EMPTY_CAPABILITIES,
+    });
+    expect(store.setTaskPinned("session-a", true).pinnedAt).not.toBeNull();
+    expect(store.setTaskArchived("session-a", true).archivedAt).not.toBeNull();
+    store.close();
+
+    const reopened = new ZimloStore(join(root, "zimlo.db"));
+    expect(reopened.listTaskPreferences()).toEqual([
+      expect.objectContaining({ sessionId: "session-a", pinnedAt: expect.any(String), archivedAt: expect.any(String) }),
+    ]);
+    expect(reopened.snapshot(false, "", []).taskPreferences).toHaveLength(1);
     reopened.close();
   });
 });

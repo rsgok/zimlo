@@ -1,21 +1,23 @@
 import { useMemo, useState } from "react";
-import type { Project, Session, TaskRecord } from "@zimlo/protocol";
+import type { ClientCommand, Project, Session, TaskPreference, TaskRecord } from "@zimlo/protocol";
 import { runtimeLabel, sessionLocation, sessionRuntimeLabel } from "./sessionPresentation";
 
 interface TasksViewProps {
   projects: Project[];
   sessions: Session[];
   tasks: TaskRecord[];
+  preferences: TaskPreference[];
+  send: (command: ClientCommand) => void;
   onOpen: (sessionId: string) => void;
 }
 
-type TaskFilter = "all" | "active" | "codex" | "claude";
+type TaskFilter = "all" | "attention" | "active" | "recent";
 
 const FILTERS: Array<{ id: TaskFilter; label: string }> = [
   { id: "all", label: "全部" },
+  { id: "attention", label: "需关注" },
   { id: "active", label: "进行中" },
-  { id: "codex", label: "Codex" },
-  { id: "claude", label: "Claude Code" },
+  { id: "recent", label: "最近" },
 ];
 
 const STATE_LABELS: Record<string, string> = {
@@ -103,12 +105,14 @@ function stateLabel(session: Session, state: string): string {
   return STATE_LABELS[state] ?? state;
 }
 
-export function TasksView({ projects, sessions, tasks, onOpen }: TasksViewProps) {
+export function TasksView({ projects, sessions, tasks, preferences, send, onOpen }: TasksViewProps) {
   const [query, setQuery] = useState("");
   const [filter, setFilter] = useState<TaskFilter>("all");
   const [projectId, setProjectId] = useState<string>("all");
   const [showAll, setShowAll] = useState(false);
+  const [showArchived, setShowArchived] = useState(false);
   const taskBySession = useMemo(() => latestTasksBySession(tasks), [tasks]);
+  const preferenceBySession = useMemo(() => new Map(preferences.map((preference) => [preference.sessionId, preference])), [preferences]);
   const projectById = useMemo(() => new Map(projects.map((project) => [project.id, project])), [projects]);
   const stableProjects = useMemo(
     () => [...projects].sort((left, right) => left.name.localeCompare(right.name, "zh-CN", { sensitivity: "base" }) || left.id.localeCompare(right.id)),
@@ -127,15 +131,20 @@ export function TasksView({ projects, sessions, tasks, onOpen }: TasksViewProps)
     .filter((session) => {
       const task = taskBySession.get(session.id);
       const state = effectiveState(session, task);
+      const preference = preferenceBySession.get(session.id);
+      if (showArchived !== Boolean(preference?.archivedAt)) return false;
       if (projectId !== "all" && session.projectId !== projectId) return false;
+      if (filter === "attention" && statePriority(state) !== 0) return false;
       if (filter === "active" && !["running", "waiting", "waiting_input", "reviewing", "user_review"].includes(state)) return false;
-      if ((filter === "codex" || filter === "claude") && session.provider !== filter) return false;
+      if (filter === "recent" && statePriority(state) < 2) return false;
       if (!normalizedQuery) return true;
       const location = sessionLocation(session);
       return [taskTitle(session, task), task?.reason, projectById.get(session.projectId ?? "")?.name, location.label, session.cwd, runtimeLabel(session.provider), state]
         .some((value) => value?.toLocaleLowerCase().includes(normalizedQuery));
     })
     .sort((left, right) => {
+      const pinned = Number(Boolean(preferenceBySession.get(right.id)?.pinnedAt)) - Number(Boolean(preferenceBySession.get(left.id)?.pinnedAt));
+      if (pinned) return pinned;
       const priority = statePriority(effectiveState(left, taskBySession.get(left.id))) - statePriority(effectiveState(right, taskBySession.get(right.id)));
       return priority || right.createdAt.localeCompare(left.createdAt) || left.id.localeCompare(right.id);
     });
@@ -147,9 +156,10 @@ export function TasksView({ projects, sessions, tasks, onOpen }: TasksViewProps)
       ...filtered.filter((session) => statePriority(effectiveState(session, taskBySession.get(session.id))) >= 2).slice(0, 6),
     ];
   const groups = [
-    { id: "attention", label: "需要关注", sessions: visible.filter((session) => statePriority(effectiveState(session, taskBySession.get(session.id))) === 0) },
-    { id: "active", label: "进行中", sessions: visible.filter((session) => statePriority(effectiveState(session, taskBySession.get(session.id))) === 1) },
-    { id: "recent", label: "最近任务", sessions: visible.filter((session) => statePriority(effectiveState(session, taskBySession.get(session.id))) >= 2) },
+    { id: "pinned", label: "已置顶", sessions: visible.filter((session) => preferenceBySession.get(session.id)?.pinnedAt) },
+    { id: "attention", label: "需要关注", sessions: visible.filter((session) => !preferenceBySession.get(session.id)?.pinnedAt && statePriority(effectiveState(session, taskBySession.get(session.id))) === 0) },
+    { id: "active", label: "进行中", sessions: visible.filter((session) => !preferenceBySession.get(session.id)?.pinnedAt && statePriority(effectiveState(session, taskBySession.get(session.id))) === 1) },
+    { id: "recent", label: showArchived ? "已归档" : "最近任务", sessions: visible.filter((session) => !preferenceBySession.get(session.id)?.pinnedAt && statePriority(effectiveState(session, taskBySession.get(session.id))) >= 2) },
   ].filter((group) => group.sessions.length > 0);
 
   return (
@@ -183,6 +193,7 @@ export function TasksView({ projects, sessions, tasks, onOpen }: TasksViewProps)
           {FILTERS.map((item) => (
             <button key={item.id} className={filter === item.id ? "active" : ""} onClick={() => { setFilter(item.id); setShowAll(false); }}>{item.label}</button>
           ))}
+          <button className={showArchived ? "active" : ""} onClick={() => { setShowArchived((value) => !value); setFilter("all"); setShowAll(true); }}>{showArchived ? "返回任务" : "已归档"}</button>
         </div>
       </div>
 
@@ -197,17 +208,30 @@ export function TasksView({ projects, sessions, tasks, onOpen }: TasksViewProps)
               const processCount = collapsed.counts.get(session.id) ?? 1;
               const tone = statePriority(state) === 0 ? "waiting" : statePriority(state) === 1 ? "running" : session.status;
               return (
-                <button className="task-row" key={session.id} onClick={() => onOpen(session.id)}>
-                  <span className={`status-dot status-${tone}`} aria-hidden="true" />
-                  <span className="task-copy">
-                    <strong>{processCount > 1 ? `${runtimeLabel(session.provider)} 在 ${location.label} 运行 ${processCount} 个任务` : taskTitle(session, task)}</strong>
-                    <small>{location.kind === "project" ? "项目" : "目录"} · {location.label}<span aria-hidden="true"> · </span>{processCount > 1 ? `${processCount} 个活跃进程已归组` : relativeTaskTime(session.lastActivityAt)}</small>
-                  </span>
-                  <span className="task-side">
-                    <span className={`provider provider-${session.provider}`}>{sessionRuntimeLabel(session)}</span>
-                    <small>{stateLabel(session, state)}</small>
-                  </span>
-                </button>
+                <article className="task-row" key={session.id}>
+                  <button className="task-row-main" onClick={() => onOpen(session.id)}>
+                    <span className={`status-dot status-${tone}`} aria-hidden="true" />
+                    <span className="task-copy">
+                      <strong>{processCount > 1 ? `${runtimeLabel(session.provider)} 在 ${location.label} 运行 ${processCount} 个任务` : taskTitle(session, task)}</strong>
+                      <small>{location.kind === "project" ? "项目" : "目录"} · {location.label}<span aria-hidden="true"> · </span>{processCount > 1 ? `${processCount} 个活跃进程已归组` : relativeTaskTime(session.lastActivityAt)}</small>
+                    </span>
+                    <span className="task-side">
+                      <span className={`provider provider-${session.provider}`}>{sessionRuntimeLabel(session)}</span>
+                      <small>{stateLabel(session, state)}</small>
+                    </span>
+                  </button>
+                  <div className="task-row-actions">
+                    <button
+                      className={preferenceBySession.get(session.id)?.pinnedAt ? "active" : ""}
+                      onClick={() => send({ type: "task.pin", sessionId: session.id, pinned: !preferenceBySession.get(session.id)?.pinnedAt })}
+                      aria-label={preferenceBySession.get(session.id)?.pinnedAt ? "取消置顶" : "置顶任务"}
+                    >⌃</button>
+                    <button
+                      onClick={() => send({ type: "task.archive", sessionId: session.id, archived: !preferenceBySession.get(session.id)?.archivedAt })}
+                      aria-label={preferenceBySession.get(session.id)?.archivedAt ? "恢复任务" : "归档任务"}
+                    >{preferenceBySession.get(session.id)?.archivedAt ? "↩" : "—"}</button>
+                  </div>
+                </article>
               );
             })}
           </div>

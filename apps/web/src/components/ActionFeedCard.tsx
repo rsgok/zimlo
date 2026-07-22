@@ -36,8 +36,7 @@ export function ActionFeedCard({ action, session, send, position, total }: Actio
         <p className="post-takeaway">{action.kind === "input" ? `“${subject}”正在等待你的回答，提交后会继续执行。` : takeaway}</p>
         <ul className="post-highlights action-context">
           <li>来源任务：{subject}</li>
-          <li>{location ? `${location.kind === "project" ? "项目" : "目录"}：${location.label}` : "位置：未知"}</li>
-          {action.kind === "approval" && <li>影响等级：{risk}</li>}
+          <li>{location ? `${location.kind === "project" ? "项目" : "目录"}：${location.label}` : "位置：未知"}{action.kind === "approval" ? ` · ${risk}` : ""}</li>
         </ul>
       </div>
       <div className="post-footer">

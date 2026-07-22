@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
+import type { TaskCommand } from "@zimlo/protocol";
 import { FeedView } from "./components/FeedView";
 import { AgentProfileDetail } from "./components/AgentProfileDetail";
 import { AgentsView } from "./components/AgentsView";
@@ -13,6 +14,7 @@ type Tab = "feed" | "tasks" | "agents" | "settings";
 
 export function App() {
   const bridge = useBridge();
+  const [online, setOnline] = useState(() => typeof navigator === "undefined" || navigator.onLine);
   const [tab, setTab] = useState<Tab>("feed");
   const [selectedSessionId, setSelectedSessionId] = useState<string | null>(null);
   const [selectedProjectId, setSelectedProjectId] = useState<string | null>(null);
@@ -26,12 +28,43 @@ export function App() {
     () => bridge.snapshot.projects.find((project) => project.id === selectedProjectId) ?? null,
     [bridge.snapshot.projects, selectedProjectId],
   );
+  const localTaskCommands = useMemo<TaskCommand[]>(() => bridge.pendingCommandEntries.flatMap(({ command, enqueuedAt }): TaskCommand[] => {
+    if (command.type === "task.create") {
+      const workspace = bridge.snapshot.workspaces.find((candidate) => candidate.id === command.workspaceId);
+      return [{ id: `local:${command.idempotencyKey}`, idempotencyKey: command.idempotencyKey, kind: "create", provider: command.provider, sessionId: null, workspaceId: command.workspaceId, cwd: workspace?.path ?? "", text: command.text, state: "queued", createdAt: enqueuedAt, updatedAt: enqueuedAt }];
+    }
+    if (command.type === "task.follow_up" || command.type === "session.message") {
+      const session = bridge.snapshot.sessions.find((candidate) => candidate.id === command.sessionId);
+      if (!session) return [];
+      return [{ id: `local:${command.idempotencyKey}`, idempotencyKey: command.idempotencyKey, kind: "follow_up", provider: session.provider, sessionId: session.id, workspaceId: null, cwd: session.cwd ?? "", text: command.text, state: "queued", createdAt: enqueuedAt, updatedAt: enqueuedAt }];
+    }
+    return [];
+  }), [bridge.pendingCommandEntries, bridge.snapshot.sessions, bridge.snapshot.workspaces]);
+  const commands = useMemo(() => [...localTaskCommands, ...bridge.snapshot.commands], [bridge.snapshot.commands, localTaskCommands]);
 
   useEffect(() => {
     if (!bridge.notice) return;
     const timer = window.setTimeout(bridge.dismissNotice, 4_000);
     return () => window.clearTimeout(timer);
   }, [bridge.notice, bridge.dismissNotice]);
+
+  useEffect(() => {
+    const updateNetwork = () => setOnline(navigator.onLine);
+    const refreshAfterBackground = () => {
+      updateNetwork();
+      if (document.visibilityState === "visible" && bridge.connected) bridge.send({ type: "snapshot.request", afterSequence: bridge.snapshot.sequence });
+    };
+    window.addEventListener("online", updateNetwork);
+    window.addEventListener("offline", updateNetwork);
+    window.addEventListener("pageshow", refreshAfterBackground);
+    document.addEventListener("visibilitychange", refreshAfterBackground);
+    return () => {
+      window.removeEventListener("online", updateNetwork);
+      window.removeEventListener("offline", updateNetwork);
+      window.removeEventListener("pageshow", refreshAfterBackground);
+      document.removeEventListener("visibilitychange", refreshAfterBackground);
+    };
+  }, [bridge.connected, bridge.send, bridge.snapshot.sequence]);
 
   if (bridge.pairingRequired) return <PairingRequired error={bridge.error} />;
 
@@ -59,15 +92,22 @@ export function App() {
           <div><strong>Zimlo</strong><small>coding agents, at a glance</small></div>
         </div>
         <div className="header-actions">
-          <div className={`connection-pill ${bridge.connected ? "connected" : ""}`}><span />{bridge.connected ? "实时" : "重连中"}</div>
+          <div className={`connection-pill ${bridge.connected && online ? "connected" : ""}`}><span />{!online ? "离线" : bridge.connected ? "实时" : "重连中"}</div>
           <button className={`settings-button ${tab === "settings" ? "active" : ""}`} onClick={openSettings} aria-label="打开设置">⚙</button>
         </div>
       </header>
 
+      {(!online || bridge.pendingOutboxCount > 0) && (
+        <div className="sync-banner" role="status">
+          {!online ? "当前离线，操作会保存在本机" : "正在同步本机指令"}
+          {bridge.pendingOutboxCount > 0 && <strong>{bridge.pendingOutboxCount} 条待确认</strong>}
+        </div>
+      )}
+
       <main className={`main-content ${tab === "feed" ? "feed-main" : ""}`}>
         {bridge.error && <div className="error-banner">{bridge.error}</div>}
-        {tab === "feed" && <FeedView projects={bridge.snapshot.projects} posts={bridge.snapshot.posts} sessions={bridge.snapshot.sessions} actions={bridge.snapshot.actions} commands={bridge.snapshot.commands} seenPostIds={bridge.snapshot.seenPostIds} dismissedFeedItemIds={bridge.snapshot.dismissedFeedItemIds} send={bridge.send} onOpen={openSession} onOpenProject={openAgent} onNewTask={() => openNewTask()} />}
-        {tab === "tasks" && <TasksView projects={bridge.snapshot.projects} sessions={bridge.snapshot.sessions} tasks={bridge.snapshot.tasks} onOpen={openSession} />}
+        {tab === "feed" && <FeedView projects={bridge.snapshot.projects} posts={bridge.snapshot.posts} sessions={bridge.snapshot.sessions} actions={bridge.snapshot.actions} commands={commands} seenPostIds={bridge.snapshot.seenPostIds} dismissedFeedItemIds={bridge.snapshot.dismissedFeedItemIds} send={bridge.send} onOpen={openSession} onOpenProject={openAgent} onNewTask={() => openNewTask()} />}
+        {tab === "tasks" && <TasksView projects={bridge.snapshot.projects} sessions={bridge.snapshot.sessions} tasks={bridge.snapshot.tasks} preferences={bridge.snapshot.taskPreferences} send={bridge.send} onOpen={openSession} />}
         {tab === "agents" && <AgentsView projects={bridge.snapshot.projects} sessions={bridge.snapshot.sessions} onOpen={openAgent} onNewTask={openNewTask} />}
         {tab === "settings" && (
           <ProfileView
@@ -102,7 +142,7 @@ export function App() {
           project={selectedProject}
           sessions={bridge.snapshot.sessions.filter((session) => session.projectId === selectedProject.id)}
           posts={bridge.snapshot.posts.filter((post) => post.projectId === selectedProject.id)}
-          commands={bridge.snapshot.commands}
+          commands={commands}
           send={bridge.send}
           onOpenTask={openSession}
           onNewTask={openNewTask}
@@ -116,7 +156,7 @@ export function App() {
           events={bridge.events[selectedSession.id] ?? []}
           actions={bridge.snapshot.actions.filter((action) => action.sessionId === selectedSession.id)}
           posts={bridge.snapshot.posts.filter((post) => post.sessionId === selectedSession.id)}
-          commands={bridge.snapshot.commands.filter((command) => command.sessionId === selectedSession.id)}
+          commands={commands.filter((command) => command.sessionId === selectedSession.id)}
           timelineCursor={bridge.snapshot.taskTimelineCursors[selectedSession.id]}
           send={bridge.send}
           onClose={() => setSelectedSessionId(null)}

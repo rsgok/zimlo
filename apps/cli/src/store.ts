@@ -14,6 +14,7 @@ import type {
   SessionCapabilities,
   Snapshot,
   TaskCommand,
+  TaskPreference,
   TaskRecord,
   TrustedWorkspace,
   UnifiedEvent,
@@ -228,6 +229,12 @@ export class ZimloStore {
         item_id TEXT NOT NULL,
         seen_at TEXT NOT NULL,
         PRIMARY KEY(device_id, session_id)
+      );
+
+      CREATE TABLE IF NOT EXISTS task_preferences (
+        session_id TEXT PRIMARY KEY REFERENCES sessions(id) ON DELETE CASCADE,
+        pinned_at TEXT,
+        archived_at TEXT
       );
 
       CREATE TABLE IF NOT EXISTS feed_checkpoints (
@@ -972,6 +979,34 @@ export class ZimloStore {
       .map((row) => [row.session_id, row.item_id]));
   }
 
+  setTaskPinned(sessionId: string, pinned: boolean): TaskPreference {
+    const pinnedAt = pinned ? new Date().toISOString() : null;
+    this.database.prepare(`
+      INSERT INTO task_preferences(session_id, pinned_at, archived_at) VALUES (?, ?, NULL)
+      ON CONFLICT(session_id) DO UPDATE SET pinned_at = excluded.pinned_at
+    `).run(sessionId, pinnedAt);
+    return this.getTaskPreference(sessionId);
+  }
+
+  setTaskArchived(sessionId: string, archived: boolean): TaskPreference {
+    const archivedAt = archived ? new Date().toISOString() : null;
+    this.database.prepare(`
+      INSERT INTO task_preferences(session_id, pinned_at, archived_at) VALUES (?, NULL, ?)
+      ON CONFLICT(session_id) DO UPDATE SET archived_at = excluded.archived_at
+    `).run(sessionId, archivedAt);
+    return this.getTaskPreference(sessionId);
+  }
+
+  private getTaskPreference(sessionId: string): TaskPreference {
+    const row = this.database.prepare("SELECT session_id, pinned_at, archived_at FROM task_preferences WHERE session_id = ?").get(sessionId) as { session_id: string; pinned_at: string | null; archived_at: string | null } | undefined;
+    return { sessionId, pinnedAt: row?.pinned_at ?? null, archivedAt: row?.archived_at ?? null };
+  }
+
+  listTaskPreferences(): TaskPreference[] {
+    return (this.database.prepare("SELECT session_id, pinned_at, archived_at FROM task_preferences").all() as Array<{ session_id: string; pinned_at: string | null; archived_at: string | null }>)
+      .map((row) => ({ sessionId: row.session_id, pinnedAt: row.pinned_at, archivedAt: row.archived_at }));
+  }
+
   lanApprovalsEnabled(): boolean {
     const row = this.database.prepare("SELECT value FROM metadata WHERE key = 'lan_approvals_enabled'").get() as { value: string } | undefined;
     return row?.value === "1";
@@ -1182,6 +1217,7 @@ export class ZimloStore {
       seenPostIds: this.listSeenPostIds(deviceId),
       dismissedFeedItemIds: this.listDismissedFeedItemIds(deviceId),
       taskTimelineCursors: this.listTaskTimelineCursors(deviceId),
+      taskPreferences: this.listTaskPreferences(),
       actions: this.listActions(),
       sequence: this.latestSequence(),
       lanApprovalsEnabled: device?.isLocalAdmin === true || device?.canApprove === true,
@@ -1190,15 +1226,12 @@ export class ZimloStore {
 
   prune(retentionDays = 7): void {
     const cutoff = new Date(Date.now() - retentionDays * 86_400_000).toISOString();
-    this.database.prepare("DELETE FROM events WHERE occurred_at < ?").run(cutoff);
+    this.database.prepare("DELETE FROM events WHERE occurred_at < ? AND kind != 'user_instruction'").run(cutoff);
     this.database.prepare("DELETE FROM cards WHERE updated_at < ?").run(cutoff);
     this.database.prepare("DELETE FROM feed_posts WHERE created_at < ?").run(cutoff);
-    this.database.prepare("DELETE FROM tasks WHERE updated_at < ?").run(cutoff);
-    this.database.prepare("DELETE FROM task_commands WHERE updated_at < ? AND state IN ('completed', 'failed', 'canceled')").run(cutoff);
     this.database.prepare("DELETE FROM feed_checkpoints WHERE started_at < ?").run(cutoff);
     this.database.prepare("DELETE FROM actions WHERE created_at < ?").run(cutoff);
     this.database.prepare("DELETE FROM idempotency WHERE created_at < ?").run(cutoff);
-    this.database.prepare("DELETE FROM sessions WHERE last_activity_at < ? AND active_pid IS NULL").run(cutoff);
   }
 
   private sessionFromRow(row: Record<string, unknown>): Session {

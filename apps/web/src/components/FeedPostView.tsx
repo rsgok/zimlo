@@ -32,8 +32,12 @@ function relativeTime(value: string): string {
 
 export function FeedPostView({ post, session, project, actions, send, onOpenProject, position, total }: FeedPostViewProps) {
   const location = session ? sessionLocation(session) : null;
+  const pendingActions = actions.filter((action) => action.state === "pending");
+  const needsAction = pendingActions.length > 0;
+  const nextStep = post.actionPrompt
+    ?? (post.kind === "failure" ? "右滑查看原因并决定下一步" : post.kind === "result" ? "右滑查看完整结果" : session?.status === "running" ? "Agent 继续执行，重要变化会再次出现" : "等待下一条重要更新");
   return (
-    <article className={`feed-post post-${post.kind} template-${post.template} ${post.actionRequired ? "is-attention" : ""}`}>
+    <article className={`feed-post post-${post.kind} template-${post.template} ${needsAction ? "is-attention" : ""}`}>
       <div className="post-topline">
         <div>
           <span className="post-kind">{LABELS[post.kind]}</span>
@@ -51,7 +55,7 @@ export function FeedPostView({ post, session, project, actions, send, onOpenProj
             {post.highlights.slice(0, 2).map((highlight) => <li key={highlight}>{highlight}</li>)}
           </ul>
         )}
-        {post.actionPrompt && <p className="post-action-prompt">{post.actionPrompt}</p>}
+        <p className="post-action-prompt"><span>下一步</span>{nextStep}</p>
       </div>
 
       <div className="post-footer">
@@ -60,10 +64,10 @@ export function FeedPostView({ post, session, project, actions, send, onOpenProj
           {project ? <button className="agent-project-link" onClick={(event) => { event.stopPropagation(); onOpenProject(project.id); }}>
             <span>{project.agentProfile.avatar}</span>{project.agentProfile.displayName}
           </button> : <span>{location ? `${location.kind === "project" ? "项目" : "目录"} · ${location.label}` : `未归属项目 · ${post.taskId}`}</span>}
-          {post.actionRequired && <span className="action-required-badge">需要你处理</span>}
+          {needsAction && <span className="action-required-badge">需要你处理</span>}
         </div>
 
-        {actions.map((action) => <ActionPanel key={action.actionId} action={action} send={send} compact />)}
+        {pendingActions.map((action) => <ActionPanel key={action.actionId} action={action} send={send} compact />)}
 
       </div>
     </article>

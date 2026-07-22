@@ -20,6 +20,14 @@ import {
   type DeviceCredentials,
 } from "../lib/credentials";
 import { isInternalZimloAction, normalizeFeedPost, normalizeSnapshot } from "../lib/feedCompatibility";
+import {
+  enqueueCommand,
+  isDurableCommand,
+  readCommandOutbox,
+  removeAcknowledged,
+  saveCommandOutbox,
+  type CommandOutboxEntry,
+} from "../lib/commandOutbox";
 
 const EMPTY_SNAPSHOT: Snapshot = {
   projects: [],
@@ -32,6 +40,7 @@ const EMPTY_SNAPSHOT: Snapshot = {
   seenPostIds: [],
   dismissedFeedItemIds: [],
   taskTimelineCursors: {},
+  taskPreferences: [],
   actions: [],
   sequence: 0,
   lanApprovalsEnabled: false,
@@ -72,6 +81,8 @@ interface BridgeState {
   localAdmin: boolean;
   error: string | null;
   notice: string | null;
+  pendingOutboxCount: number;
+  pendingCommandEntries: CommandOutboxEntry[];
 }
 
 function isLocalHost(): boolean {
@@ -128,6 +139,8 @@ function upsertById<T extends { id: string }>(values: T[], value: T): T[] {
 }
 
 export function useBridge() {
+  const outboxRef = useRef<CommandOutboxEntry[]>(readCommandOutbox());
+  const rawSendRef = useRef<(command: ClientCommand) => boolean>(() => false);
   const [state, setState] = useState<BridgeState>({
     snapshot: EMPTY_SNAPSHOT,
     events: {},
@@ -140,6 +153,8 @@ export function useBridge() {
     localAdmin: false,
     error: null,
     notice: null,
+    pendingOutboxCount: outboxRef.current.length,
+    pendingCommandEntries: outboxRef.current,
   });
   const sendRef = useRef<(command: ClientCommand) => void>(() => undefined);
 
@@ -148,7 +163,64 @@ export function useBridge() {
     let socket: WebSocket | null = null;
     let reconnectTimer: number | null = null;
 
+    const replaceOutbox = (entries: CommandOutboxEntry[]) => {
+      outboxRef.current = entries;
+      saveCommandOutbox(entries);
+      setState((current) => ({ ...current, pendingOutboxCount: entries.length, pendingCommandEntries: entries }));
+    };
+
+    const acknowledge = (message: ServerMessage) => {
+      const next = removeAcknowledged(outboxRef.current, (entry) => {
+        const command = entry.command;
+        switch (message.type) {
+          case "task.command.updated":
+            if (command.type === "task.command.retry") return message.command.id === command.commandId;
+            return (command.type === "task.create" || command.type === "task.follow_up" || command.type === "session.message")
+              && (message.command.idempotencyKey === command.idempotencyKey || message.command.idempotencyKey.endsWith(`:${command.idempotencyKey}`));
+          case "action.result":
+            return message.ok && command.type === "action.decide" && command.actionId === message.actionId;
+          case "session.message.result":
+            return message.ok && command.type === "session.message" && command.sessionId === message.sessionId;
+          case "feed.dismissed.updated":
+            return command.type === "feed.dismiss" && command.itemId === message.itemId;
+          case "project.updated":
+            return command.type === "agent.profile.update"
+              && command.projectId === message.project.id
+              && command.displayName === message.project.agentProfile.displayName
+              && command.avatar === message.project.agentProfile.avatar
+              && command.bio === message.project.agentProfile.bio
+              && command.defaultProvider === message.project.agentProfile.defaultProvider;
+          default:
+            return false;
+        }
+      });
+      if (next.length !== outboxRef.current.length) replaceOutbox(next);
+    };
+
+    sendRef.current = (command) => {
+      if (!isDurableCommand(command)) {
+        if (!rawSendRef.current(command)) setState((current) => ({ ...current, notice: "Bridge 尚未连接，请稍后重试。" }));
+        return;
+      }
+      const queued = enqueueCommand(outboxRef.current, command);
+      if (!saveCommandOutbox(queued.entries)) {
+        setState((current) => ({ ...current, error: "无法在本机保存这条指令，请保留当前页面后重试。" }));
+        return;
+      }
+      outboxRef.current = queued.entries;
+      const sent = rawSendRef.current(queued.entry.command);
+      setState((current) => ({
+        ...current,
+        pendingOutboxCount: queued.entries.length,
+        pendingCommandEntries: queued.entries,
+        notice: sent
+          ? (queued.added ? "指令已发送，等待 Bridge 确认。" : "这条指令已在队列中，不会重复发送。")
+          : "指令已保存在本机，将在重连后自动发送。",
+      }));
+    };
+
     const applyMessage = (message: ServerMessage) => {
+      acknowledge(message);
       setState((current) => {
         switch (message.type) {
           case "session.snapshot":
@@ -190,6 +262,8 @@ export function useBridge() {
               : { ...current, snapshot: { ...current.snapshot, dismissedFeedItemIds: [...current.snapshot.dismissedFeedItemIds, message.itemId] } };
           case "task.timeline.seen.updated":
             return { ...current, snapshot: { ...current.snapshot, taskTimelineCursors: { ...current.snapshot.taskTimelineCursors, [message.sessionId]: message.itemId } } };
+          case "task.preference.updated":
+            return { ...current, snapshot: { ...current.snapshot, taskPreferences: upsertById(current.snapshot.taskPreferences.map((preference) => ({ ...preference, id: preference.sessionId })), { ...message.preference, id: message.preference.sessionId }).map(({ id: _id, ...preference }) => preference) } };
           case "action.upsert": {
             if (isInternalZimloAction(message.action)) {
               return {
@@ -247,14 +321,14 @@ export function useBridge() {
       const deviceKey = fromBase64Url(credentials.deviceKey);
       const aad = `zimlo-ws-v1:${credentials.deviceId}`;
 
-      sendRef.current = (command) => {
+      rawSendRef.current = (command) => {
         if (!socket || socket.readyState !== WebSocket.OPEN || !clientTx) {
-          setState((current) => ({ ...current, notice: "Bridge 尚未连接，请稍后重试。" }));
-          return;
+          return false;
         }
         const counter = sendCounter;
         sendCounter += 1;
         socket.send(JSON.stringify({ type: "secure", counter, ciphertext: encryptFrame(clientTx, counter, command, aad) }));
+        return true;
       };
       socket.onopen = () => socket?.send(JSON.stringify({
         type: "auth",
@@ -271,6 +345,7 @@ export function useBridge() {
             clientTx = keys.clientTx;
             serverTx = keys.serverTx;
             setState((current) => ({ ...current, connected: true, error: null }));
+            for (const entry of outboxRef.current) rawSendRef.current(entry.command);
             return;
           }
           if (value.type !== "secure" || typeof value.counter !== "number" || typeof value.ciphertext !== "string" || !serverTx) return;
@@ -284,6 +359,7 @@ export function useBridge() {
         }
       };
       socket.onclose = (event) => {
+        rawSendRef.current = () => false;
         setState((current) => ({
           ...current,
           connected: false,
@@ -303,6 +379,7 @@ export function useBridge() {
 
     return () => {
       disposed = true;
+      rawSendRef.current = () => false;
       if (reconnectTimer !== null) window.clearTimeout(reconnectTimer);
       socket?.close();
     };

@@ -95,6 +95,7 @@ export function normalizeSnapshot(value: Snapshot): Snapshot {
     seenPostIds: Array.isArray(snapshot.seenPostIds) ? snapshot.seenPostIds : [],
     dismissedFeedItemIds: Array.isArray(snapshot.dismissedFeedItemIds) ? snapshot.dismissedFeedItemIds : [],
     taskTimelineCursors: snapshot.taskTimelineCursors && typeof snapshot.taskTimelineCursors === "object" ? snapshot.taskTimelineCursors : {},
+    taskPreferences: Array.isArray(snapshot.taskPreferences) ? snapshot.taskPreferences : [],
     actions: Array.isArray(snapshot.actions) ? snapshot.actions.filter((action) => !isInternalZimloAction(action)) : [],
     sequence: typeof snapshot.sequence === "number" ? snapshot.sequence : 0,
     lanApprovalsEnabled: snapshot.lanApprovalsEnabled === true,

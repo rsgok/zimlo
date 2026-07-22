@@ -250,7 +250,9 @@ export class BridgeServer {
         return;
       }
       case "task.command.retry": {
-        this.taskCommands.retry(command.commandId);
+        const retried = this.taskCommands.retry(command.commandId);
+        if (retried) connection.send({ type: "task.command.updated", command: retried });
+        else connection.send({ type: "error", code: "task_command_not_found", message: "这条任务指令已不存在。" });
         return;
       }
       case "feed.seen": {
@@ -266,6 +268,16 @@ export class BridgeServer {
       case "task.timeline.seen": {
         this.runtime.store.markTaskTimelineSeen(deviceId, command.sessionId, command.itemId);
         connection.send({ type: "task.timeline.seen.updated", sessionId: command.sessionId, itemId: command.itemId });
+        return;
+      }
+      case "task.pin": {
+        if (!this.runtime.store.getSession(command.sessionId)) return connection.send({ type: "error", code: "session_not_found", message: "这个任务已不存在。" });
+        connection.send({ type: "task.preference.updated", preference: this.runtime.store.setTaskPinned(command.sessionId, command.pinned) });
+        return;
+      }
+      case "task.archive": {
+        if (!this.runtime.store.getSession(command.sessionId)) return connection.send({ type: "error", code: "session_not_found", message: "这个任务已不存在。" });
+        connection.send({ type: "task.preference.updated", preference: this.runtime.store.setTaskArchived(command.sessionId, command.archived) });
         return;
       }
       case "agent.profile.update": {

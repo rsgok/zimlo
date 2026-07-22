@@ -50,7 +50,7 @@ describe("TasksView", () => {
   it("uses a meaningful task reason instead of a generated runtime title", () => {
     expect(taskTitle(session, task)).toBe("优化任务搜索与语义标题");
     expect(taskTitle({ ...session, correlationUncertain: true }, task)).toBe("Codex · zimlo");
-    const markup = renderToStaticMarkup(<TasksView projects={[project]} sessions={[session]} tasks={[task]} onOpen={vi.fn()} />);
+    const markup = renderToStaticMarkup(<TasksView projects={[project]} sessions={[session]} tasks={[task]} preferences={[]} send={vi.fn()} onOpen={vi.fn()} />);
     expect(markup).toContain("1 个项目");
     expect(markup).toContain("1 个任务 · 1 个进行中");
     expect(markup).toContain("1 个任务 · 3 张卡");
@@ -72,8 +72,16 @@ describe("TasksView", () => {
   it("keeps group order stable when only last activity changes", () => {
     const older = { ...session, id: "older", title: "较早创建", createdAt: "2026-07-22T08:00:00.000Z", lastActivityAt: "2026-07-22T12:00:00.000Z" };
     const newer = { ...session, id: "newer", title: "较晚创建", createdAt: "2026-07-22T09:00:00.000Z", lastActivityAt: "2026-07-22T10:00:00.000Z" };
-    const markup = renderToStaticMarkup(<TasksView projects={[project]} sessions={[older, newer]} tasks={[]} onOpen={vi.fn()} />);
+    const markup = renderToStaticMarkup(<TasksView projects={[project]} sessions={[older, newer]} tasks={[]} preferences={[]} send={vi.fn()} onOpen={vi.fn()} />);
     expect(markup.indexOf("较晚创建")).toBeLessThan(markup.indexOf("较早创建"));
     expect(markup).toContain("Codex · CLI");
+  });
+
+  it("keeps pinned tasks ahead of their stable creation order", () => {
+    const older = { ...session, id: "older", title: "较早创建", createdAt: "2026-07-22T08:00:00.000Z" };
+    const newer = { ...session, id: "newer", title: "较晚创建", createdAt: "2026-07-22T09:00:00.000Z" };
+    const markup = renderToStaticMarkup(<TasksView projects={[project]} sessions={[older, newer]} tasks={[]} preferences={[{ sessionId: "older", pinnedAt: "2026-07-23T00:00:00.000Z", archivedAt: null }]} send={vi.fn()} onOpen={vi.fn()} />);
+    expect(markup.indexOf("较早创建")).toBeLessThan(markup.indexOf("较晚创建"));
+    expect(markup).toContain("已置顶");
   });
 });

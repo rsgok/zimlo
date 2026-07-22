@@ -301,6 +301,13 @@ export const FeedCardSchema = z.object({
 });
 export type FeedCard = z.infer<typeof FeedCardSchema>;
 
+export const TaskPreferenceSchema = z.object({
+  sessionId: z.string(),
+  pinnedAt: z.string().nullable(),
+  archivedAt: z.string().nullable(),
+});
+export type TaskPreference = z.infer<typeof TaskPreferenceSchema>;
+
 export const SnapshotSchema = z.object({
   projects: z.array(ProjectSchema),
   sessions: z.array(SessionSchema),
@@ -312,6 +319,7 @@ export const SnapshotSchema = z.object({
   seenPostIds: z.array(z.string()),
   dismissedFeedItemIds: z.array(z.string()),
   taskTimelineCursors: z.record(z.string(), z.string()),
+  taskPreferences: z.array(TaskPreferenceSchema),
   actions: z.array(PendingActionSchema),
   sequence: z.number().int().nonnegative(),
   lanApprovalsEnabled: z.boolean(),
@@ -356,6 +364,8 @@ export const ClientCommandSchema = z.discriminatedUnion("type", [
   z.object({ type: z.literal("feed.seen"), postId: z.string() }),
   z.object({ type: z.literal("feed.dismiss"), itemId: z.string().min(1).max(240) }),
   z.object({ type: z.literal("task.timeline.seen"), sessionId: z.string(), itemId: z.string().min(1).max(240) }),
+  z.object({ type: z.literal("task.pin"), sessionId: z.string(), pinned: z.boolean() }),
+  z.object({ type: z.literal("task.archive"), sessionId: z.string(), archived: z.boolean() }),
   z.object({
     type: z.literal("agent.profile.update"),
     projectId: z.string(),
@@ -389,6 +399,7 @@ export type ServerMessage =
   | { type: "feed.seen.updated"; postId: string }
   | { type: "feed.dismissed.updated"; itemId: string }
   | { type: "task.timeline.seen.updated"; sessionId: string; itemId: string }
+  | { type: "task.preference.updated"; preference: TaskPreference }
   | { type: "action.upsert"; action: PendingAction }
   | { type: "action.result"; actionId: string; ok: boolean; message: string }
   | { type: "session.message.result"; sessionId: string; ok: boolean; message: string }
