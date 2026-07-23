@@ -1,4 +1,5 @@
-import type { FeedAction, FeedPost, FeedPostKind, FeedTemplate, Project, Snapshot } from "@zimlo/protocol";
+import { USER_AVATAR_IDS } from "@zimlo/protocol";
+import type { FeedAction, FeedPost, FeedPostKind, FeedTemplate, Project, Snapshot, UserAvatarId } from "@zimlo/protocol";
 
 const KINDS = new Set<FeedPostKind>(["progress", "decision", "attention", "result", "failure"]);
 const TEMPLATES = new Set<FeedTemplate>(["paper", "grid", "sticky", "marker", "poster"]);
@@ -71,7 +72,14 @@ export function normalizeFeedPost(value: unknown): FeedPost | null {
 
 export function normalizeSnapshot(value: Snapshot): Snapshot {
   const snapshot = value as Partial<Snapshot>;
+  const avatarId = USER_AVATAR_IDS.includes(snapshot.userProfile?.avatarId as UserAvatarId)
+    ? snapshot.userProfile!.avatarId
+    : USER_AVATAR_IDS[0];
   return {
+    userProfile: {
+      avatarId,
+      updatedAt: snapshot.userProfile?.updatedAt ?? "",
+    },
     projects: Array.isArray(snapshot.projects) ? snapshot.projects.map((project): Project => ({
       ...project,
       agentProfile: project.agentProfile ?? {

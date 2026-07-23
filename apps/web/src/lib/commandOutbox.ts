@@ -9,6 +9,7 @@ const DURABLE_COMMAND_TYPES = new Set<ClientCommand["type"]>([
   "task.follow_up",
   "task.command.retry",
   "feed.dismiss",
+  "user.profile.update",
   "agent.profile.update",
 ]);
 
@@ -48,6 +49,8 @@ export function commandSemanticKey(command: ClientCommand): string {
       return `${command.type}:${command.itemId}`;
     case "agent.profile.update":
       return `${command.type}:${command.projectId}`;
+    case "user.profile.update":
+      return command.type;
     default:
       return `${command.type}:${JSON.stringify(command)}`;
   }
@@ -95,7 +98,7 @@ export function enqueueCommand(
   const semanticKey = commandSemanticKey(command);
   const existing = entries.find((entry) => entry.semanticKey === semanticKey);
   if (existing) {
-    if (command.type === "agent.profile.update") {
+    if (command.type === "agent.profile.update" || command.type === "user.profile.update") {
       const replacement = { ...existing, command, enqueuedAt: now };
       return { entries: entries.map((entry) => entry.id === existing.id ? replacement : entry), entry: replacement, added: false };
     }

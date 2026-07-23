@@ -8,6 +8,7 @@ import { ProfileView } from "./components/ProfileView";
 import { SessionDetail } from "./components/SessionDetail";
 import { TasksView } from "./components/TasksView";
 import { TaskComposer } from "./components/TaskComposer";
+import { UserAvatar, ZimloAvatar } from "./components/UserAvatar";
 import { useBridge } from "./hooks/useBridge";
 
 type Tab = "feed" | "tasks" | "agents" | "settings";
@@ -88,7 +89,7 @@ export function App() {
     <div className={`app-shell tab-${tab}`}>
       <header className="app-header">
         <div className="brand-lockup">
-          <span className="brand-mark">Z</span>
+          <ZimloAvatar className="brand-mark" />
           <div><strong>Zimlo</strong><small>coding agents, at a glance</small></div>
         </div>
         <div className="header-actions">
@@ -117,6 +118,7 @@ export function App() {
             codexPlugin={bridge.codexPlugin}
             integrations={bridge.integrations}
             sessions={bridge.snapshot.sessions}
+            userProfile={bridge.snapshot.userProfile}
             lanApprovalsEnabled={bridge.snapshot.lanApprovalsEnabled}
             send={bridge.send}
             forgetDevice={bridge.forgetDevice}
@@ -134,6 +136,10 @@ export function App() {
           aria-label="布置新任务"
         ><span>＋</span><strong>新任务</strong></button>
         <button aria-current={tab === "agents" ? "page" : undefined} className={tab === "agents" ? "active" : ""} onClick={() => setTab("agents")}><span>◉</span>Agents</button>
+        <button aria-current={tab === "settings" ? "page" : undefined} className={tab === "settings" ? "active" : ""} onClick={openSettings} aria-label="个人设置">
+          <UserAvatar avatarId={bridge.snapshot.userProfile.avatarId} className="bottom-nav-avatar" alt="" />
+          <span className="bottom-nav-label">设置</span>
+        </button>
       </nav>
 
       {bridge.notice && <div className="toast" role="status">{bridge.notice}</div>}
@@ -143,6 +149,7 @@ export function App() {
           sessions={bridge.snapshot.sessions.filter((session) => session.projectId === selectedProject.id)}
           posts={bridge.snapshot.posts.filter((post) => post.projectId === selectedProject.id)}
           commands={commands}
+          userAvatarId={bridge.snapshot.userProfile.avatarId}
           send={bridge.send}
           onOpenTask={openSession}
           onNewTask={openNewTask}
@@ -158,6 +165,7 @@ export function App() {
           posts={bridge.snapshot.posts.filter((post) => post.sessionId === selectedSession.id)}
           commands={commands.filter((command) => command.sessionId === selectedSession.id)}
           task={[...bridge.snapshot.tasks].filter((task) => task.sessionId === selectedSession.id).sort((left, right) => right.updatedAt.localeCompare(left.updatedAt))[0]}
+          userAvatarId={bridge.snapshot.userProfile.avatarId}
           timelineCursor={bridge.snapshot.taskTimelineCursors[selectedSession.id]}
           send={bridge.send}
           onClose={() => setSelectedSessionId(null)}

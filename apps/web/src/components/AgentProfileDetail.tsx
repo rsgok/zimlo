@@ -1,14 +1,16 @@
 import { useMemo, useState } from "react";
-import type { ClientCommand, FeedPost, Project, Session, TaskCommand } from "@zimlo/protocol";
+import type { ClientCommand, FeedPost, Project, Session, TaskCommand, UserAvatarId } from "@zimlo/protocol";
 import { FormattedText } from "./FormattedText";
 import { agentAvatarStyle } from "./AgentsView";
 import { runtimeLabel, sessionRuntimeLabel } from "./sessionPresentation";
+import { UserAvatar } from "./UserAvatar";
 
 interface AgentProfileDetailProps {
   project: Project;
   sessions: Session[];
   posts: FeedPost[];
   commands: TaskCommand[];
+  userAvatarId: UserAvatarId;
   send: (command: ClientCommand) => boolean;
   onOpenTask: (sessionId: string) => void;
   onNewTask: (projectId: string) => void;
@@ -24,7 +26,7 @@ function relativeTime(value: string): string {
   return new Intl.DateTimeFormat("zh-CN", { month: "short", day: "numeric" }).format(new Date(value));
 }
 
-export function AgentProfileDetail({ project, sessions, posts, commands, send, onOpenTask, onNewTask, onClose }: AgentProfileDetailProps) {
+export function AgentProfileDetail({ project, sessions, posts, commands, userAvatarId, send, onOpenTask, onNewTask, onClose }: AgentProfileDetailProps) {
   const [editing, setEditing] = useState(false);
   const [displayName, setDisplayName] = useState(project.agentProfile.displayName);
   const [avatar, setAvatar] = useState(project.agentProfile.avatar);
@@ -78,16 +80,22 @@ export function AgentProfileDetail({ project, sessions, posts, commands, send, o
             if (item.type === "command") {
               const session = item.command.sessionId ? sessionById.get(item.command.sessionId) : undefined;
               return <article className="agent-timeline-item is-user" key={`command:${item.id}`}>
-                <div className="agent-timeline-meta"><strong>你</strong><time>{relativeTime(item.at)}</time></div>
-                <FormattedText text={item.command.text} />
-                <div className="agent-timeline-footer"><span>{item.command.state === "running" ? "执行中" : item.command.state === "queued" ? "已排队" : item.command.state === "failed" ? "发送失败" : "已发送"}</span>{session && <button onClick={() => onOpenTask(session.id)}>查看 Task Detail →</button>}</div>
+                <UserAvatar avatarId={userAvatarId} className="agent-timeline-avatar" alt="" />
+                <div className="agent-timeline-content">
+                  <div className="agent-timeline-meta"><strong>你</strong><time>{relativeTime(item.at)}</time></div>
+                  <FormattedText text={item.command.text} />
+                  <div className="agent-timeline-footer"><span>{item.command.state === "running" ? "执行中" : item.command.state === "queued" ? "已排队" : item.command.state === "failed" ? "发送失败" : "已发送"}</span>{session && <button onClick={() => onOpenTask(session.id)}>查看 Task Detail →</button>}</div>
+                </div>
               </article>;
             }
             const session = item.post.sessionId ? sessionById.get(item.post.sessionId) : undefined;
             return <article className={`agent-timeline-item timeline-${item.post.kind}`} key={`post:${item.id}`}>
-              <div className="agent-timeline-meta"><strong>{project.agentProfile.displayName}</strong><time>{relativeTime(item.at)}</time></div>
-              <h3>{item.post.headline}</h3><FormattedText text={item.post.takeaway} />
-              <div className="agent-timeline-footer"><span>{session ? `由 ${sessionRuntimeLabel(session)} 执行` : "重要动态"}</span>{session && <button onClick={() => onOpenTask(session.id)}>查看 Task Detail →</button>}</div>
+              <div className={`agent-timeline-avatar ${agentAvatarStyle(project.id)}`} aria-hidden="true">{project.agentProfile.avatar}</div>
+              <div className="agent-timeline-content">
+                <div className="agent-timeline-meta"><strong>{project.agentProfile.displayName}</strong><time>{relativeTime(item.at)}</time></div>
+                <h3>{item.post.headline}</h3><FormattedText text={item.post.takeaway} />
+                <div className="agent-timeline-footer"><span>{session ? `由 ${sessionRuntimeLabel(session)} 执行` : "重要动态"}</span>{session && <button onClick={() => onOpenTask(session.id)}>查看 Task Detail →</button>}</div>
+              </div>
             </article>;
           })}
           {timeline.length === 0 && <div className="timeline-empty"><strong>还没有 Agent 动态</strong><p>布置第一个任务后，重要进展会汇总在这里。</p></div>}

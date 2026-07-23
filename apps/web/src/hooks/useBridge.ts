@@ -30,6 +30,7 @@ import {
 } from "../lib/commandOutbox";
 
 const EMPTY_SNAPSHOT: Snapshot = {
+  userProfile: { avatarId: "user-01", updatedAt: "" },
   projects: [],
   sessions: [],
   cards: [],
@@ -190,6 +191,8 @@ export function useBridge() {
               && command.avatar === message.project.agentProfile.avatar
               && command.bio === message.project.agentProfile.bio
               && command.defaultProvider === message.project.agentProfile.defaultProvider;
+          case "user.profile.updated":
+            return command.type === "user.profile.update" && command.avatarId === message.userProfile.avatarId;
           default:
             return false;
         }
@@ -229,6 +232,8 @@ export function useBridge() {
             return { ...current, snapshot: normalizeSnapshot(message.snapshot), error: null };
           case "project.updated":
             return { ...current, snapshot: { ...current.snapshot, projects: upsertById(current.snapshot.projects, message.project) } };
+          case "user.profile.updated":
+            return { ...current, snapshot: { ...current.snapshot, userProfile: message.userProfile } };
           case "session.updated":
             return { ...current, snapshot: { ...current.snapshot, sessions: upsertById(current.snapshot.sessions, message.session) } };
           case "session.removed":

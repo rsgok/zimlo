@@ -47,6 +47,7 @@ describe("Feed compatibility", () => {
     expect(snapshot.dismissedFeedItemIds).toEqual([]);
     expect(snapshot.taskTimelineCursors).toEqual({});
     expect(snapshot.taskPreferences).toEqual([]);
+    expect(snapshot.userProfile.avatarId).toBe("user-01");
   });
 
   it("marks sessions from an older Bridge with an unknown surface", () => {

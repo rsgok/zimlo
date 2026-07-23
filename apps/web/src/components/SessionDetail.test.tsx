@@ -98,7 +98,7 @@ const post: FeedPost = {
 describe("SessionDetail", () => {
   it("shows task input and curated timeline without tool events", () => {
     const markup = renderToStaticMarkup(
-      <SessionDetail session={session} events={events} actions={[]} posts={[post]} commands={[command]} send={vi.fn()} onClose={vi.fn()} />,
+      <SessionDetail session={session} events={events} actions={[]} posts={[post]} commands={[command]} userAvatarId="user-01" send={vi.fn()} onClose={vi.fn()} />,
     );
 
     expect(markup).toContain("左滑进入当前任务详情");
@@ -134,7 +134,7 @@ describe("SessionDetail", () => {
 
   it("keeps task-attributed diffs inside the timeline", () => {
     const markup = renderToStaticMarkup(
-      <SessionDetail session={session} events={events} actions={[]} posts={[post]} commands={[]} send={vi.fn()} onClose={vi.fn()} />,
+      <SessionDetail session={session} events={events} actions={[]} posts={[post]} commands={[]} userAvatarId="user-01" send={vi.fn()} onClose={vi.fn()} />,
     );
 
     expect(markup).toContain("查看任务 Diff");
@@ -150,7 +150,7 @@ describe("SessionDetail", () => {
       payload: { message: "RAW_DUPLICATE_COMPLETION" }, provenance: "verified",
     };
     const markup = renderToStaticMarkup(
-      <SessionDetail session={session} events={[...events, completed]} actions={[]} posts={[post]} commands={[]} send={vi.fn()} onClose={vi.fn()} />,
+      <SessionDetail session={session} events={[...events, completed]} actions={[]} posts={[post]} commands={[]} userAvatarId="user-01" send={vi.fn()} onClose={vi.fn()} />,
     );
     expect(markup).toContain("详情页已经重构");
     expect(markup).not.toContain("RAW_DUPLICATE_COMPLETION");
@@ -158,7 +158,7 @@ describe("SessionDetail", () => {
 
   it("falls back to the session title when a discovered task has no instruction event", () => {
     const markup = renderToStaticMarkup(
-      <SessionDetail session={session} events={[]} actions={[]} posts={[]} commands={[]} send={vi.fn()} onClose={vi.fn()} />,
+      <SessionDetail session={session} events={[]} actions={[]} posts={[]} commands={[]} userAvatarId="user-01" send={vi.fn()} onClose={vi.fn()} />,
     );
 
     expect(markup).toContain("修复 Feed 交互");
@@ -173,6 +173,7 @@ describe("SessionDetail", () => {
         actions={[]}
         posts={[]}
         commands={[]}
+        userAvatarId="user-01"
         send={vi.fn()}
         onClose={vi.fn()}
       />,

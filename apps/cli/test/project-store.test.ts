@@ -158,4 +158,17 @@ describe("persistent project model", () => {
     expect(reopened.getProject(first.projectId!)?.agentProfile.displayName).toBe("股票研究");
     reopened.close();
   });
+
+  it("assigns one preset user avatar and persists later choices", () => {
+    const { database } = fixture();
+    const store = new ZimloStore(database);
+    expect(store.getUserProfile().avatarId).toMatch(/^user-(?:0[1-9]|1[0-9]|2[0-4])$/u);
+    expect(store.updateUserProfile("user-24").avatarId).toBe("user-24");
+    expect(store.snapshot(false, "", []).userProfile.avatarId).toBe("user-24");
+    store.close();
+
+    const reopened = new ZimloStore(database);
+    expect(reopened.getUserProfile().avatarId).toBe("user-24");
+    reopened.close();
+  });
 });

@@ -51,4 +51,11 @@ describe("persistent command outbox", () => {
     const failingStorage = { getItem: () => null, setItem: () => { throw new Error("quota exceeded"); } };
     expect(saveCommandOutbox(enqueueCommand([], followUp("retryable")).entries, failingStorage)).toBe(false);
   });
+
+  it("keeps only the latest preset avatar choice while offline", () => {
+    const first = enqueueCommand([], { type: "user.profile.update", avatarId: "user-01" }, "2026-07-23T01:00:00.000Z");
+    const latest = enqueueCommand(first.entries, { type: "user.profile.update", avatarId: "user-24" }, "2026-07-23T01:01:00.000Z");
+    expect(latest.entries).toHaveLength(1);
+    expect(latest.entry.command).toEqual({ type: "user.profile.update", avatarId: "user-24" });
+  });
 });

@@ -1,8 +1,9 @@
-import { randomUUID } from "node:crypto";
+import { randomInt, randomUUID } from "node:crypto";
 import { chmodSync, existsSync, mkdirSync } from "node:fs";
 import { dirname } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { redactText, redactUnknown } from "@zimlo/adapters";
+import { USER_AVATAR_IDS } from "@zimlo/protocol";
 import type {
   FeedCard,
   FeedPost,
@@ -18,6 +19,8 @@ import type {
   TaskRecord,
   TrustedWorkspace,
   UnifiedEvent,
+  UserAvatarId,
+  UserProfile,
 } from "@zimlo/protocol";
 import { persistableProjectForCwd } from "./project-context.js";
 import { sanitizeEventPayload } from "./sanitization.js";
@@ -282,6 +285,12 @@ export class ZimloStore {
         can_approve INTEGER NOT NULL DEFAULT 0
       );
 
+      CREATE TABLE IF NOT EXISTS user_profile (
+        id INTEGER PRIMARY KEY CHECK (id = 1),
+        avatar_id TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      );
+
       CREATE TABLE IF NOT EXISTS idempotency (
         key TEXT PRIMARY KEY,
         action_id TEXT NOT NULL,
@@ -320,6 +329,8 @@ export class ZimloStore {
     if (!deviceColumns.some((column) => column.name === "can_approve")) {
       this.database.exec("ALTER TABLE devices ADD COLUMN can_approve INTEGER NOT NULL DEFAULT 0");
     }
+    this.database.prepare("INSERT OR IGNORE INTO user_profile(id, avatar_id, updated_at) VALUES (1, ?, ?)")
+      .run(USER_AVATAR_IDS[randomInt(USER_AVATAR_IDS.length)] ?? USER_AVATAR_IDS[0], new Date().toISOString());
     this.backfillProjects();
     this.migrateFeedV2();
     this.database.prepare("UPDATE task_commands SET state = 'queued', updated_at = ?, error = NULL WHERE state IN ('dispatching', 'running')")
@@ -1204,9 +1215,26 @@ export class ZimloStore {
     return this.getDevice(id);
   }
 
+  getUserProfile(): UserProfile {
+    const row = this.database.prepare("SELECT avatar_id, updated_at FROM user_profile WHERE id = 1")
+      .get() as { avatar_id: string; updated_at: string } | undefined;
+    const avatarId = USER_AVATAR_IDS.includes(row?.avatar_id as UserAvatarId)
+      ? row!.avatar_id as UserAvatarId
+      : USER_AVATAR_IDS[0];
+    return { avatarId, updatedAt: row?.updated_at ?? new Date(0).toISOString() };
+  }
+
+  updateUserProfile(avatarId: UserAvatarId): UserProfile {
+    const updatedAt = new Date().toISOString();
+    this.database.prepare("UPDATE user_profile SET avatar_id = ?, updated_at = ? WHERE id = 1")
+      .run(avatarId, updatedAt);
+    return { avatarId, updatedAt };
+  }
+
   snapshot(_lanApprovalsEnabled: boolean, deviceId: string, workspaces: TrustedWorkspace[]): Snapshot {
     const device = deviceId ? this.getDevice(deviceId) : null;
     return {
+      userProfile: this.getUserProfile(),
       projects: this.listProjects(),
       sessions: this.listSessions(),
       cards: [],

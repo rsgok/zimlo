@@ -1,10 +1,11 @@
 import { useEffect, useMemo, useState } from "react";
-import type { ClientCommand, FeedPost, PendingAction, Project, Session, TaskCommand, TaskRecord, UnifiedEvent } from "@zimlo/protocol";
+import type { ClientCommand, FeedPost, PendingAction, Project, Session, TaskCommand, TaskRecord, UnifiedEvent, UserAvatarId } from "@zimlo/protocol";
 import { ActionPanel } from "./ActionPanel";
 import { FormattedText } from "./FormattedText";
 import { VoiceInput } from "./VoiceInput";
 import { agentAvatarStyle } from "./AgentsView";
 import { conciseTaskInput, sessionLocation, sessionRuntimeLabel } from "./sessionPresentation";
+import { UserAvatar, ZimloAvatar } from "./UserAvatar";
 
 interface SessionDetailProps {
   session: Session;
@@ -15,6 +16,7 @@ interface SessionDetailProps {
   commands: TaskCommand[];
   task?: TaskRecord | undefined;
   timelineCursor?: string | undefined;
+  userAvatarId: UserAvatarId;
   send: (command: ClientCommand) => boolean;
   onClose: () => void;
 }
@@ -245,7 +247,7 @@ function TimelineEventDetails({ events }: { events: UnifiedEvent[] }) {
   );
 }
 
-export function SessionDetail({ session, project, events, actions, posts, commands, task, timelineCursor, send, onClose }: SessionDetailProps) {
+export function SessionDetail({ session, project, events, actions, posts, commands, task, timelineCursor, userAvatarId, send, onClose }: SessionDetailProps) {
   const draftKey = `zimlo:task-draft:${session.id}`;
   const [message, setMessage] = useState(() => typeof localStorage === "undefined" ? "" : localStorage.getItem(draftKey) ?? "");
   const instructions = [...events]
@@ -320,7 +322,9 @@ export function SessionDetail({ session, project, events, actions, posts, comman
 
         <section className="task-profile-header">
           <div className="task-profile-identity">
-            <div className={`task-runtime-avatar ${project ? agentAvatarStyle(project.id) : `provider-${session.provider}`}`} aria-hidden="true">{project?.agentProfile.avatar ?? (session.provider === "codex" ? "C" : "CC")}</div>
+            {project
+              ? <div className={`task-runtime-avatar ${agentAvatarStyle(project.id)}`} aria-hidden="true">{project.agentProfile.avatar}</div>
+              : <ZimloAvatar className="task-runtime-avatar" alt="" />}
             <div>
               <strong>{project?.agentProfile.displayName ?? (session.provider === "codex" ? "Codex" : "Claude Code")}</strong>
               <span>{sessionRuntimeLabel(session)} · {location.label}</span>
@@ -356,7 +360,9 @@ export function SessionDetail({ session, project, events, actions, posts, comman
               const detailCount = item.details.length + item.post.highlights.length + (item.post.proof ? 1 : 0) + (item.post.actionPrompt ? 1 : 0);
               return (
               <article className={`task-timeline-item timeline-${item.post.kind}`} data-timeline-level="primary" key={`post:${item.id}`}>
-                <div className={`timeline-avatar ${project ? agentAvatarStyle(project.id) : `provider-${session.provider}`}`} aria-hidden="true">{project?.agentProfile.avatar ?? "A"}</div>
+                {project
+                  ? <div className={`timeline-avatar ${agentAvatarStyle(project.id)}`} aria-hidden="true">{project.agentProfile.avatar}</div>
+                  : <ZimloAvatar className="timeline-avatar timeline-avatar-agent" alt="" />}
                 <div className="timeline-content">
                   <div className="timeline-meta"><strong>{project?.agentProfile.displayName ?? item.post.agentId.toUpperCase()}</strong><span>{POST_LABELS[item.post.kind]}</span><time>· {readableDate(item.at)}</time></div>
                   <h3>{item.post.headline}</h3><FormattedText text={item.post.takeaway} />
@@ -375,7 +381,7 @@ export function SessionDetail({ session, project, events, actions, posts, comman
             }
             if (item.type === "command") return (
               <article className={`task-timeline-item timeline-command timeline-command-${item.command.state}`} data-timeline-level="primary" key={`command:${item.id}`}>
-                <div className="timeline-avatar timeline-avatar-user" aria-hidden="true">你</div>
+                <UserAvatar avatarId={userAvatarId} className="timeline-avatar timeline-avatar-user" alt="" />
                 <div className="timeline-content">
                   <div className="timeline-meta"><strong>你</strong><span>{item.command.kind === "create" ? "创建任务" : "追加指令"}</span><time>· {readableDate(item.at)}</time></div>
                   <div className="timeline-command-text"><FormattedText text={conciseInstruction(item.command.text)} /></div><span className="timeline-state-pill">{COMMAND_LABELS[item.command.state]}</span>
@@ -389,7 +395,11 @@ export function SessionDetail({ session, project, events, actions, posts, comman
             const failedEvent = item.details.find((event) => ["tests_failed", "failed", "blocked"].includes(event.kind));
             return (
               <article className={`task-timeline-item timeline-${failedEvent || ["tests_failed", "failed", "blocked"].includes(item.event.kind) ? "failure" : "progress"}`} data-timeline-level="primary" key={`turn:${item.id}`}>
-                <div className={`timeline-avatar ${item.instruction ? "timeline-avatar-user" : "timeline-avatar-agent"}`} aria-hidden="true">{item.instruction ? "你" : "A"}</div>
+                {item.instruction
+                  ? <UserAvatar avatarId={userAvatarId} className="timeline-avatar timeline-avatar-user" alt="" />
+                  : project
+                    ? <div className={`timeline-avatar ${agentAvatarStyle(project.id)}`} aria-hidden="true">{project.agentProfile.avatar}</div>
+                    : <ZimloAvatar className="timeline-avatar timeline-avatar-agent" alt="" />}
                 <div className="timeline-content">
                   <div className="timeline-meta"><strong>{item.instruction ? "你" : "Agent"}</strong><span>{item.instruction ? "本轮指令" : EVENT_LABELS[item.event.kind]}</span><time>· {readableDate(item.at)}</time></div>
                   {summary && <div className="timeline-turn-summary"><FormattedText text={summary.length > 420 ? `${summary.slice(0, 420)}…` : summary} /></div>}

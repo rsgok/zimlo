@@ -137,6 +137,11 @@ export class BridgeServer {
       case "snapshot.request":
         connection.send({ type: "session.snapshot", snapshot: this.runtime.snapshot(deviceId) });
         return;
+      case "user.profile.update": {
+        const userProfile = this.runtime.store.updateUserProfile(command.avatarId);
+        this.broadcast({ type: "user.profile.updated", userProfile });
+        return;
+      }
       case "session.events.request":
         connection.send({
           type: "session.events",

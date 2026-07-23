@@ -216,6 +216,22 @@ export const AgentProfileSchema = z.object({
 });
 export type AgentProfile = z.infer<typeof AgentProfileSchema>;
 
+export const USER_AVATAR_IDS = [
+  "user-01", "user-02", "user-03", "user-04", "user-05", "user-06",
+  "user-07", "user-08", "user-09", "user-10", "user-11", "user-12",
+  "user-13", "user-14", "user-15", "user-16", "user-17", "user-18",
+  "user-19", "user-20", "user-21", "user-22", "user-23", "user-24",
+] as const;
+
+export const UserAvatarIdSchema = z.enum(USER_AVATAR_IDS);
+export type UserAvatarId = z.infer<typeof UserAvatarIdSchema>;
+
+export const UserProfileSchema = z.object({
+  avatarId: UserAvatarIdSchema,
+  updatedAt: z.string(),
+});
+export type UserProfile = z.infer<typeof UserProfileSchema>;
+
 export const ProjectSchema = z.object({
   id: z.string(),
   name: z.string(),
@@ -309,6 +325,7 @@ export const TaskPreferenceSchema = z.object({
 export type TaskPreference = z.infer<typeof TaskPreferenceSchema>;
 
 export const SnapshotSchema = z.object({
+  userProfile: UserProfileSchema,
   projects: z.array(ProjectSchema),
   sessions: z.array(SessionSchema),
   cards: z.array(FeedCardSchema),
@@ -366,6 +383,7 @@ export const ClientCommandSchema = z.discriminatedUnion("type", [
   z.object({ type: z.literal("task.timeline.seen"), sessionId: z.string(), itemId: z.string().min(1).max(240) }),
   z.object({ type: z.literal("task.pin"), sessionId: z.string(), pinned: z.boolean() }),
   z.object({ type: z.literal("task.archive"), sessionId: z.string(), archived: z.boolean() }),
+  z.object({ type: z.literal("user.profile.update"), avatarId: UserAvatarIdSchema }),
   z.object({
     type: z.literal("agent.profile.update"),
     projectId: z.string(),
@@ -388,6 +406,7 @@ export type ClientCommand = z.infer<typeof ClientCommandSchema>;
 
 export type ServerMessage =
   | { type: "session.snapshot"; snapshot: Snapshot }
+  | { type: "user.profile.updated"; userProfile: UserProfile }
   | { type: "project.updated"; project: Project }
   | { type: "session.updated"; session: Session }
   | { type: "session.removed"; sessionId: string }

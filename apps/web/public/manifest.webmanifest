@@ -5,8 +5,8 @@
   "start_url": "/",
   "scope": "/",
   "display": "standalone",
-  "background_color": "#f3f0e8",
-  "theme_color": "#f3f0e8",
+  "background_color": "#1d201a",
+  "theme_color": "#1d201a",
   "icons": [
     {
       "src": "/zimlo-icon-512.png",

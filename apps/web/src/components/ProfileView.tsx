@@ -1,6 +1,9 @@
-import type { ClientCommand, IntegrationStatus, Session } from "@zimlo/protocol";
+import { useEffect, useState } from "react";
+import { USER_AVATAR_IDS } from "@zimlo/protocol";
+import type { ClientCommand, IntegrationStatus, Session, UserProfile } from "@zimlo/protocol";
 import type { CodexPluginInfo, DeviceInfo, PairingInfo } from "../hooks/useBridge";
 import { surfaceLabel } from "./sessionPresentation";
+import { UserAvatar } from "./UserAvatar";
 
 interface ProfileViewProps {
   localAdmin: boolean;
@@ -10,11 +13,14 @@ interface ProfileViewProps {
   codexPlugin: CodexPluginInfo | null;
   integrations: IntegrationStatus[];
   sessions: Session[];
-  send: (command: ClientCommand) => void;
+  userProfile: UserProfile;
+  send: (command: ClientCommand) => boolean;
   forgetDevice: () => Promise<void>;
 }
 
-export function ProfileView({ localAdmin, devices, pairing, lanApprovalsEnabled, codexPlugin, integrations, sessions, send, forgetDevice }: ProfileViewProps) {
+export function ProfileView({ localAdmin, devices, pairing, lanApprovalsEnabled, codexPlugin, integrations, sessions, userProfile, send, forgetDevice }: ProfileViewProps) {
+  const [selectedAvatarId, setSelectedAvatarId] = useState(userProfile.avatarId);
+  useEffect(() => setSelectedAvatarId(userProfile.avatarId), [userProfile.avatarId]);
   const runtimeSummary = (["codex", "claude"] as const).map((provider) => {
     const runtimeSessions = sessions.filter((session) => session.provider === provider);
     return {
@@ -33,6 +39,27 @@ export function ProfileView({ localAdmin, devices, pairing, lanApprovalsEnabled,
       <div className="section-heading">
         <p className="eyebrow">SETTINGS</p>
         <h2>{localAdmin ? "设备、接入与安全" : "当前设备设置"}</h2>
+      </div>
+      <div className="settings-card user-avatar-card">
+        <div className="user-avatar-heading">
+          <UserAvatar avatarId={selectedAvatarId} className="user-avatar-current" />
+          <div><h3>你的头像</h3><p>从 24 个 Zimlo 预置头像中选择。头像会同步到所有已配对设备，不支持上传外部图片。</p></div>
+        </div>
+        <div className="user-avatar-picker" role="list" aria-label="选择用户头像">
+          {USER_AVATAR_IDS.map((avatarId, index) => (
+            <button
+              type="button"
+              role="listitem"
+              className={avatarId === selectedAvatarId ? "selected" : ""}
+              aria-label={`选择头像 ${index + 1}`}
+              aria-pressed={avatarId === selectedAvatarId}
+              key={avatarId}
+              onClick={() => {
+                if (send({ type: "user.profile.update", avatarId })) setSelectedAvatarId(avatarId);
+              }}
+            ><UserAvatar avatarId={avatarId} alt="" /></button>
+          ))}
+        </div>
       </div>
       <div className="settings-card">
         <div>

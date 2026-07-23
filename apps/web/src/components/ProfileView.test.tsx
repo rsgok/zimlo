@@ -21,6 +21,7 @@ describe("ProfileView", () => {
         codexPlugin={null}
         integrations={integrations}
         sessions={[]}
+        userProfile={{ avatarId: "user-01", updatedAt: "2026-07-23T00:00:00.000Z" }}
         send={vi.fn()}
         forgetDevice={vi.fn()}
       />,
@@ -30,5 +31,8 @@ describe("ProfileView", () => {
     expect(markup).toContain("Claude Code · GUI");
     expect(markup).toContain("共享配置");
     expect(markup).toContain("不会在启动时静默修改 Agent 配置");
+    expect(markup).toContain("从 24 个 Zimlo 预置头像中选择");
+    expect(markup.match(/aria-label="选择头像 /gu)).toHaveLength(24);
+    expect(markup).not.toContain("上传头像");
   });
 });
