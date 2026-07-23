@@ -1,7 +1,7 @@
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it, vi } from "vitest";
 import { EMPTY_CAPABILITIES, type FeedPost, type Session, type TaskCommand, type UnifiedEvent } from "@zimlo/protocol";
-import { SessionDetail } from "./SessionDetail";
+import { buildTaskTimeline, conciseInstruction, SessionDetail } from "./SessionDetail";
 
 const session: Session = {
   id: "session-a",
@@ -108,8 +108,28 @@ describe("SessionDetail", () => {
     expect(markup).toContain("继续补充移动端验证");
     expect(markup).toContain("查看任务 Diff");
     expect(markup).toContain("- old");
+    expect(markup.match(/data-timeline-level="primary"/g)).toHaveLength(3);
+    expect(markup.match(/data-timeline-level="secondary"/g)).toHaveLength(1);
     expect(markup).not.toContain("SECRET_TOOL_COMMAND");
     expect(markup).not.toContain("command started");
+  });
+
+  it("groups one provider turn into a single primary item with second-level execution details", () => {
+    const turnEvents = events.map((event) => ({ ...event, turnId: "turn-a" }));
+    const matchingCommand = { ...command, text: "左滑进入当前任务详情" };
+    const timeline = buildTaskTimeline([], [matchingCommand], turnEvents);
+
+    expect(timeline).toHaveLength(1);
+    expect(timeline[0]?.type).toBe("command");
+    expect(timeline[0]?.details.map((event) => event.id)).toEqual(["diff-event"]);
+    expect(timeline[0]?.aliases).toContain("event:instruction");
+    expect(timeline[0]?.aliases).toContain("event:diff-event");
+  });
+
+  it("removes attachment wrappers and local paths from first-level instruction copy", () => {
+    const display = conciseInstruction("# Files mentioned by the user:\n\n## codex-clipboard.png: /private/tmp/codex-clipboard.png\n\n## My request for Codex:\n请优化 Timeline 的一级信息");
+
+    expect(display).toBe("请优化 Timeline 的一级信息");
   });
 
   it("keeps task-attributed diffs inside the timeline", () => {

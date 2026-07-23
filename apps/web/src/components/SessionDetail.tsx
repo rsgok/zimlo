@@ -88,6 +88,10 @@ function cleanDisplayText(value: string): string {
     .trim();
 }
 
+export function conciseInstruction(value: string, maxLength = 420): string {
+  return conciseTaskInput(cleanDisplayText(value), maxLength);
+}
+
 function readablePayload(payload: unknown): string {
   if (typeof payload === "string") return cleanDisplayText(payload).slice(0, 800);
   if (Array.isArray(payload)) return payload.map(readablePayload).filter(Boolean).join(" ").slice(0, 800);
@@ -124,9 +128,122 @@ function eventCoveredByAgentPost(event: UnifiedEvent, posts: FeedPost[]): boolea
 }
 
 type TimelineItem =
-  | { type: "post"; id: string; at: string; post: FeedPost }
-  | { type: "event"; id: string; at: string; event: UnifiedEvent }
-  | { type: "command"; id: string; at: string; command: TaskCommand };
+  | { type: "post"; id: string; at: string; post: FeedPost; details: UnifiedEvent[]; aliases: string[] }
+  | { type: "command"; id: string; at: string; command: TaskCommand; details: UnifiedEvent[]; aliases: string[] }
+  | { type: "turn"; id: string; at: string; instruction: UnifiedEvent | null; event: UnifiedEvent; details: UnifiedEvent[]; aliases: string[] };
+
+function groupEventsByTurn(events: UnifiedEvent[]): UnifiedEvent[][] {
+  const groups = new Map<string, UnifiedEvent[]>();
+  let legacyTurn = 0;
+  for (const event of [...events].sort((left, right) => left.sequence - right.sequence || left.occurredAt.localeCompare(right.occurredAt))) {
+    if (!event.turnId && event.kind === "user_instruction") legacyTurn += 1;
+    const key = event.turnId ? `provider:${event.turnId}` : `legacy:${legacyTurn}`;
+    const group = groups.get(key) ?? [];
+    group.push(event);
+    groups.set(key, group);
+  }
+  return [...groups.values()];
+}
+
+function eventDistance(left: string, right: string): number {
+  return Math.abs(new Date(left).getTime() - new Date(right).getTime());
+}
+
+export function buildTaskTimeline(posts: FeedPost[], commands: TaskCommand[], events: UnifiedEvent[]): TimelineItem[] {
+  const filteredEvents = events
+    .filter((event) => EVENT_LABELS[event.kind])
+    .filter((event) => !eventCoveredByAgentPost(event, posts))
+    .filter((event) => event.kind !== "completed" || readablePayload(event.payload));
+  const timeline: TimelineItem[] = [
+    ...posts.map((post): TimelineItem => ({
+      type: "post",
+      id: post.id,
+      at: post.createdAt,
+      post,
+      details: [],
+      aliases: [`post:${post.id}`],
+    })),
+    ...commands.map((command): TimelineItem => ({
+      type: "command",
+      id: command.id,
+      at: command.createdAt,
+      command,
+      details: [],
+      aliases: [`command:${command.id}`],
+    })),
+  ];
+
+  for (const group of groupEventsByTurn(filteredEvents)) {
+    const instruction = group.find((event) => event.kind === "user_instruction") ?? null;
+    const matchingCommand = instruction
+      ? timeline
+        .filter((item): item is Extract<TimelineItem, { type: "command" }> => item.type === "command" && item.command.text.trim() === instructionText(instruction).trim())
+        .sort((left, right) => eventDistance(left.at, instruction.occurredAt) - eventDistance(right.at, instruction.occurredAt))[0]
+      : undefined;
+    const supportingEvents = group.filter((event) => event !== instruction);
+
+    if (matchingCommand) {
+      matchingCommand.details.push(...supportingEvents);
+      matchingCommand.aliases.push(...group.map((event) => `event:${event.id}`));
+      continue;
+    }
+
+    if (instruction) {
+      const latest = group.at(-1) ?? instruction;
+      timeline.push({
+        type: "turn",
+        id: instruction.turnId ?? instruction.id,
+        at: instruction.occurredAt,
+        instruction,
+        event: latest,
+        details: supportingEvents,
+        aliases: [`turn:${instruction.turnId ?? instruction.id}`, ...group.map((event) => `event:${event.id}`)],
+      });
+      continue;
+    }
+
+    const latest = group.at(-1);
+    if (!latest) continue;
+    const nearestPrimary = [...timeline]
+      .sort((left, right) => eventDistance(left.at, latest.occurredAt) - eventDistance(right.at, latest.occurredAt))[0];
+    if (nearestPrimary && eventDistance(nearestPrimary.at, latest.occurredAt) <= 6 * 60 * 60 * 1_000) {
+      nearestPrimary.details.push(...group);
+      nearestPrimary.aliases.push(...group.map((event) => `event:${event.id}`));
+      continue;
+    }
+    timeline.push({
+      type: "turn",
+      id: latest.turnId ?? latest.id,
+      at: latest.occurredAt,
+      instruction: null,
+      event: latest,
+      details: group.filter((event) => event.id !== latest.id),
+      aliases: [`turn:${latest.turnId ?? latest.id}`, ...group.map((event) => `event:${event.id}`)],
+    });
+  }
+
+  return timeline.sort((left, right) => right.at.localeCompare(left.at));
+}
+
+function TimelineEventDetails({ events }: { events: UnifiedEvent[] }) {
+  if (events.length === 0) return null;
+  return (
+    <div className="timeline-detail-list">
+      {events.map((event) => {
+        const summary = event.kind === "user_instruction" ? conciseInstruction(instructionText(event), 360) : readablePayload(event.payload);
+        const diff = event.kind === "files_changed" && event.source !== "process" ? attributedDiff(event.payload) : "";
+        const failed = ["tests_failed", "failed", "blocked"].includes(event.kind);
+        return (
+          <div className={`timeline-detail-row ${failed ? "is-failure" : ""}`} data-timeline-level="secondary" key={event.id}>
+            <div className="timeline-detail-meta"><strong>{EVENT_LABELS[event.kind]}</strong><time>{readableDate(event.occurredAt)}</time></div>
+            {summary && <FormattedText text={summary.length > 360 ? `${summary.slice(0, 360)}…` : summary} compact />}
+            {diff && <details className="timeline-diff"><summary>查看任务 Diff</summary><pre>{diff}</pre></details>}
+          </div>
+        );
+      })}
+    </div>
+  );
+}
 
 export function SessionDetail({ session, project, events, actions, posts, commands, task, timelineCursor, send, onClose }: SessionDetailProps) {
   const draftKey = `zimlo:task-draft:${session.id}`;
@@ -136,7 +253,7 @@ export function SessionDetail({ session, project, events, actions, posts, comman
     .sort((left, right) => left.sequence - right.sequence);
   const firstInstruction = instructions[0];
   const rawTaskInput = cleanDisplayText(firstInstruction ? instructionText(firstInstruction) || session.title : session.title);
-  const taskInput = conciseTaskInput(rawTaskInput);
+  const taskInput = conciseTaskInput(rawTaskInput, 220);
   const location = sessionLocation(session);
   const pendingAction = actions.find((action) => action.state === "pending");
   const pendingActions = actions.filter((action) => action.state === "pending");
@@ -164,18 +281,9 @@ export function SessionDetail({ session, project, events, actions, posts, comman
   const duplicateActive = activeQueue.some((command) => command.text.trim() === message.trim());
   const latestPost = [...posts].sort((left, right) => right.createdAt.localeCompare(left.createdAt))[0];
 
-  const timeline = useMemo<TimelineItem[]>(() => [
-    ...posts.map((post): TimelineItem => ({ type: "post", id: post.id, at: post.createdAt, post })),
-    ...commands.map((command): TimelineItem => ({ type: "command", id: command.id, at: command.createdAt, command })),
-    ...events
-      .filter((event) => EVENT_LABELS[event.kind])
-      .filter((event) => !eventCoveredByAgentPost(event, posts))
-      .filter((event) => event.kind !== "user_instruction" || !commands.some((command) => command.text === instructionText(event)))
-      .filter((event) => event.kind !== "completed" || readablePayload(event.payload))
-      .map((event): TimelineItem => ({ type: "event", id: event.id, at: event.occurredAt, event })),
-  ].sort((left, right) => right.at.localeCompare(left.at)), [commands, events, posts]);
+  const timeline = useMemo(() => buildTaskTimeline(posts, commands, events), [commands, events, posts]);
   const timelineIds = timeline.map((item) => `${item.type}:${item.id}`);
-  const cursorIndex = timelineCursor ? timelineIds.indexOf(timelineCursor) : -1;
+  const cursorIndex = timelineCursor ? timeline.findIndex((item) => item.aliases.includes(timelineCursor)) : -1;
   const unreadCount = timeline.length === 0 || timelineCursor === timelineIds[0] ? 0 : cursorIndex >= 0 ? cursorIndex : timeline.length;
 
   useEffect(() => {
@@ -207,24 +315,31 @@ export function SessionDetail({ session, project, events, actions, posts, comman
       <section className="detail-panel" role="dialog" aria-modal="true" aria-labelledby="detail-title">
         <header className="detail-nav">
           <button className="detail-back-button" onClick={onClose} aria-label="返回 Feed">←</button>
-          <div><strong id="detail-title">{session.title}</strong><small>Task Detail · {timeline.length} 条动态</small></div>
+          <div><strong id="detail-title">{project?.agentProfile.displayName ?? session.title}</strong><small>{timeline.length} 条关键动态</small></div>
         </header>
 
         <section className="task-profile-header">
-          <div className={`task-runtime-avatar ${project ? agentAvatarStyle(project.id) : `provider-${session.provider}`}`} aria-hidden="true">{project?.agentProfile.avatar ?? (session.provider === "codex" ? "C" : "CC")}</div>
+          <div className="task-profile-identity">
+            <div className={`task-runtime-avatar ${project ? agentAvatarStyle(project.id) : `provider-${session.provider}`}`} aria-hidden="true">{project?.agentProfile.avatar ?? (session.provider === "codex" ? "C" : "CC")}</div>
+            <div>
+              <strong>{project?.agentProfile.displayName ?? (session.provider === "codex" ? "Codex" : "Claude Code")}</strong>
+              <span>{sessionRuntimeLabel(session)} · {location.label}</span>
+            </div>
+            <span className={`task-status task-status-${currentState}`}>{STATUS_LABELS[currentState] ?? currentState}</span>
+          </div>
           <div className="task-profile-copy">
-            <p className="eyebrow">Task Input</p>
+            <p className="task-profile-label">Task Input</p>
             <div className="task-input"><FormattedText text={taskInput} compact /></div>
             {rawTaskInput.trim() !== taskInput.trim() && <details className="task-input-full"><summary>查看完整输入</summary><FormattedText text={rawTaskInput} /></details>}
           </div>
-          <div className="task-profile-meta" aria-label="任务信息">
-            <span className={`provider provider-${session.provider}`}>{sessionRuntimeLabel(session)}</span>
-            <span>{location.kind === "project" ? "项目" : "目录"} · {location.label}</span>
-            <span className={`task-status task-status-${currentState}`}>{STATUS_LABELS[currentState] ?? currentState}</span>
-            <span>开始 · {readableDate(session.createdAt)}</span>
+          <div className="task-profile-summary">
+            {latestPost && <div className="task-latest-result"><span>最新结论</span><strong>{latestPost.headline}</strong></div>}
+            <div className="task-next-action"><span>现在需要你</span><strong>{nextAction}</strong></div>
           </div>
-          <div className="task-next-action"><span>现在需要你</span><strong>{nextAction}</strong></div>
-          {latestPost && <div className="task-latest-result"><span>最新结论</span><strong>{latestPost.headline}</strong><FormattedText text={latestPost.takeaway} compact /></div>}
+          <div className="task-profile-meta" aria-label="任务信息">
+            <span>{location.kind === "project" ? "项目" : "目录"} · {location.label}</span>
+            <span>开始于 {readableDate(session.createdAt)}</span>
+          </div>
           {session.correlationUncertain && <p className="task-profile-note">当前任务关联仍待确认，因此保持只读，避免把指令发到其他 Session。</p>}
           {pendingActions.length > 0 && (
             <section className="profile-attention-panel" aria-label="当前待处理事项">
@@ -235,40 +350,51 @@ export function SessionDetail({ session, project, events, actions, posts, comman
         </section>
 
         <section className="task-timeline" aria-label="任务 Timeline">
-          <header className="timeline-heading"><h2>Timeline</h2><span>{unreadCount > 0 ? `${unreadCount} 条未读 · 已定位` : "最新动态在上"}</span></header>
+          <header className="timeline-heading"><h2>动态</h2><span>{unreadCount > 0 ? `${unreadCount} 条未读 · 已定位` : "关键轮次在第一层"}</span></header>
           {timeline.map((item) => {
-            if (item.type === "post") return (
-              <article className={`task-timeline-item timeline-${item.post.kind}`} key={`post:${item.id}`}>
-                <div className="timeline-marker" aria-hidden="true" />
+            if (item.type === "post") {
+              const detailCount = item.details.length + item.post.highlights.length + (item.post.proof ? 1 : 0) + (item.post.actionPrompt ? 1 : 0);
+              return (
+              <article className={`task-timeline-item timeline-${item.post.kind}`} data-timeline-level="primary" key={`post:${item.id}`}>
+                <div className={`timeline-avatar ${project ? agentAvatarStyle(project.id) : `provider-${session.provider}`}`} aria-hidden="true">{project?.agentProfile.avatar ?? "A"}</div>
                 <div className="timeline-content">
-                  <div className="timeline-meta"><strong>{POST_LABELS[item.post.kind]} · {item.post.agentId.toUpperCase()}</strong><time>{readableDate(item.at)}</time></div>
+                  <div className="timeline-meta"><strong>{project?.agentProfile.displayName ?? item.post.agentId.toUpperCase()}</strong><span>{POST_LABELS[item.post.kind]}</span><time>· {readableDate(item.at)}</time></div>
                   <h3>{item.post.headline}</h3><FormattedText text={item.post.takeaway} />
-                  {item.post.highlights.length > 0 && <ul>{item.post.highlights.map((highlight) => <li key={highlight}>{highlight}</li>)}</ul>}
-                  {item.post.proof && <p className="timeline-proof"><span>已验证</span>{item.post.proof}</p>}
-                  {item.post.actionPrompt && <p className="timeline-action-prompt">{item.post.actionPrompt}</p>}
+                  {detailCount > 0 && <details className="timeline-thread">
+                    <summary>查看 {detailCount} 项执行细节</summary>
+                    <div className="timeline-thread-panel">
+                      {item.post.highlights.length > 0 && <ul>{item.post.highlights.map((highlight) => <li key={highlight}>{highlight}</li>)}</ul>}
+                      {item.post.proof && <p className="timeline-proof"><span>已验证</span>{item.post.proof}</p>}
+                      {item.post.actionPrompt && <p className="timeline-action-prompt">{item.post.actionPrompt}</p>}
+                      <TimelineEventDetails events={item.details} />
+                    </div>
+                  </details>}
                 </div>
               </article>
-            );
+              );
+            }
             if (item.type === "command") return (
-              <article className={`task-timeline-item timeline-command timeline-command-${item.command.state}`} key={`command:${item.id}`}>
-                <div className="timeline-marker" aria-hidden="true" />
+              <article className={`task-timeline-item timeline-command timeline-command-${item.command.state}`} data-timeline-level="primary" key={`command:${item.id}`}>
+                <div className="timeline-avatar timeline-avatar-user" aria-hidden="true">你</div>
                 <div className="timeline-content">
-                  <div className="timeline-meta"><strong>{item.command.kind === "create" ? "你创建了任务" : "你追加了指令"}</strong><time>{readableDate(item.at)}</time></div>
-                  <FormattedText text={item.command.text} /><span className="timeline-state-pill">{COMMAND_LABELS[item.command.state]}</span>
+                  <div className="timeline-meta"><strong>你</strong><span>{item.command.kind === "create" ? "创建任务" : "追加指令"}</span><time>· {readableDate(item.at)}</time></div>
+                  <div className="timeline-command-text"><FormattedText text={conciseInstruction(item.command.text)} /></div><span className="timeline-state-pill">{COMMAND_LABELS[item.command.state]}</span>
                   {item.command.error && <div className="timeline-command-error"><FormattedText text={item.command.error} compact /></div>}
                   {item.command.state === "failed" && <button className="timeline-retry" onClick={() => send({ type: "task.command.retry", commandId: item.command.id, idempotencyKey: crypto.randomUUID() })}>重试</button>}
+                  {item.details.length > 0 && <details className="timeline-thread"><summary>查看 {item.details.length} 项执行细节</summary><div className="timeline-thread-panel"><TimelineEventDetails events={item.details} /></div></details>}
                 </div>
               </article>
             );
-            const summary = item.event.kind === "user_instruction" ? instructionText(item.event) : readablePayload(item.event.payload);
-            const diff = item.event.kind === "files_changed" && item.event.source !== "process" ? attributedDiff(item.event.payload) : "";
+            const summary = item.instruction ? conciseInstruction(instructionText(item.instruction)) : readablePayload(item.event.payload);
+            const failedEvent = item.details.find((event) => ["tests_failed", "failed", "blocked"].includes(event.kind));
             return (
-              <article className={`task-timeline-item timeline-${["tests_failed", "failed", "blocked"].includes(item.event.kind) ? "failure" : "progress"}`} key={`event:${item.id}`}>
-                <div className="timeline-marker" aria-hidden="true" />
+              <article className={`task-timeline-item timeline-${failedEvent || ["tests_failed", "failed", "blocked"].includes(item.event.kind) ? "failure" : "progress"}`} data-timeline-level="primary" key={`turn:${item.id}`}>
+                <div className={`timeline-avatar ${item.instruction ? "timeline-avatar-user" : "timeline-avatar-agent"}`} aria-hidden="true">{item.instruction ? "你" : "A"}</div>
                 <div className="timeline-content">
-                  <div className="timeline-meta"><strong>{EVENT_LABELS[item.event.kind]}</strong><time>{readableDate(item.at)}</time></div>
-                  {summary && <FormattedText text={summary.length > 800 ? `${summary.slice(0, 800)}…` : summary} />}
-                  {diff && <details className="timeline-diff"><summary>查看任务 Diff</summary><pre>{diff}</pre></details>}
+                  <div className="timeline-meta"><strong>{item.instruction ? "你" : "Agent"}</strong><span>{item.instruction ? "本轮指令" : EVENT_LABELS[item.event.kind]}</span><time>· {readableDate(item.at)}</time></div>
+                  {summary && <div className="timeline-turn-summary"><FormattedText text={summary.length > 420 ? `${summary.slice(0, 420)}…` : summary} /></div>}
+                  {failedEvent && <p className="timeline-turn-alert">{EVENT_LABELS[failedEvent.kind]} · {readablePayload(failedEvent.payload) || "本轮需要进一步处理"}</p>}
+                  {item.details.length > 0 && <details className="timeline-thread"><summary>查看本轮 {item.details.length} 项执行细节</summary><div className="timeline-thread-panel"><TimelineEventDetails events={item.details} /></div></details>}
                 </div>
               </article>
             );
