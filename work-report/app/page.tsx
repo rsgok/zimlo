@@ -8,7 +8,7 @@ const capabilities = [
   {
     index: "02",
     title: "Task Profile 是任务真相页",
-    copy: "右滑卡片进入对应任务。Header 固定回答：任务是什么、现在什么状态、最新结论是什么、你下一步要做什么。",
+    copy: "左滑卡片进入对应任务。Header 固定回答：任务是什么、现在什么状态、最新结论是什么、你下一步要做什么。",
     facts: ["紧凑 Timeline，最新动态在上", "Diff、测试、证据和完整结果在这里展开", "过滤原始工具输出与重复完成消息"],
   },
   {
@@ -32,7 +32,7 @@ const implementationGroups = [
   },
   {
     title: "手势与移动布局",
-    items: ["纵向 scroll-snap 一次聚焦一张卡", "右滑进入 Task Profile", "左滑从当前与历史 Feed 移除", "方向锁与 82px 阈值隔离横纵手势", "底部岛与 iPhone 安全区适配"],
+    items: ["纵向 scroll-snap 一次聚焦一张卡", "左滑进入 Task Profile", "右滑从当前与历史 Feed 移除", "方向锁与 82px 阈值隔离横纵手势", "底部岛与 iPhone 安全区适配"],
   },
   {
     title: "可靠任务队列",
@@ -100,7 +100,7 @@ export default function Home() {
             </article>
             <div className="phone-nav"><b>Feed</b><span>Tasks</span><span>＋</span><span>Agents</span></div>
           </div>
-          <span className="swipe-note">右滑 → Task Profile</span>
+          <span className="swipe-note">左滑 → Task Profile</span>
         </div>
       </header>
 
@@ -136,7 +136,7 @@ export default function Home() {
         <ol>
           <li><span>00:00</span><div><strong>看到第一张卡</strong><p>未处理审批、待回复和失败永远先于普通结果。</p></div></li>
           <li><span>00:03</span><div><strong>理解结论与影响</strong><p>卡片只保留两条事实和一个明确下一步。</p></div></li>
-          <li><span>00:10</span><div><strong>处理或右滑深入</strong><p>卡内直接审批/回复；完整上下文进入 Task Profile。</p></div></li>
+          <li><span>00:10</span><div><strong>处理或左滑深入</strong><p>卡内直接审批/回复；完整上下文进入 Task Profile。</p></div></li>
           <li><span>00:20</span><div><strong>继续工作</strong><p>追加指令进入持久队列，或使用最近 Project Agent 开新任务。</p></div></li>
         </ol>
       </section>
@@ -213,7 +213,7 @@ export default function Home() {
         </div>
         <div className="proof-grid">
           <article className="proof-main"><strong>98</strong><span>自动化测试全部通过</span><small>31 个测试文件</small></article>
-          <article><strong>390 × 844</strong><span>真实移动视口</span><small>首卡、右滑、详情、Tasks、新任务</small></article>
+          <article><strong>390 × 844</strong><span>真实移动视口</span><small>首卡、左滑、详情、Tasks、新任务</small></article>
           <article><strong>0</strong><span>横向溢出</span><small>安全区与底部操作区已验证</small></article>
           <article><strong>v2</strong><span>Bridge 协议健康</span><small>生产构建已重启</small></article>
         </div>

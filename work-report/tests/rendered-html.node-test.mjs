@@ -25,6 +25,7 @@ test("server-renders the complete Zimlo work report", async () => {
   assert.match(html, /Project Agent/);
   assert.match(html, /98/);
   assert.match(html, /0631957/);
-  assert.match(html, /右滑/);
+  assert.match(html, /左滑/);
+  assert.match(html, /og\.png/);
   assert.doesNotMatch(html, /Your site is taking shape|Building your site/);
 });

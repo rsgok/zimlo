@@ -42,7 +42,7 @@ export function FeedPostView({ post, session, project, actions, send, onOpenProj
   const canReply = Boolean(session?.cwd && !session.correlationUncertain);
   const directReply = needsAction && pendingActions.length === 0 && post.actions.includes("reply");
   const nextStep = (needsAction ? post.actionPrompt : null)
-    ?? (post.kind === "failure" ? "右滑查看原因并决定下一步" : post.kind === "result" ? "右滑查看完整结果" : session?.status === "running" ? "Agent 继续执行，重要变化会再次出现" : "等待下一条重要更新");
+    ?? (post.kind === "failure" ? "左滑查看原因并决定下一步" : post.kind === "result" ? "左滑查看完整结果" : session?.status === "running" ? "Agent 继续执行，重要变化会再次出现" : "等待下一条重要更新");
 
   useEffect(() => {
     if (reply) localStorage.setItem(draftKey, reply);

@@ -16,11 +16,11 @@ interface GestureStart {
 const SWIPE_THRESHOLD = 82;
 
 export function shouldOpenTaskSwipe(deltaX: number, deltaY: number): boolean {
-  return deltaX >= SWIPE_THRESHOLD && Math.abs(deltaX) > Math.abs(deltaY) * 1.2;
+  return deltaX <= -SWIPE_THRESHOLD && Math.abs(deltaX) > Math.abs(deltaY) * 1.2;
 }
 
 export function shouldDismissFeedSwipe(deltaX: number, deltaY: number): boolean {
-  return deltaX <= -SWIPE_THRESHOLD && Math.abs(deltaX) > Math.abs(deltaY) * 1.2;
+  return deltaX >= SWIPE_THRESHOLD && Math.abs(deltaX) > Math.abs(deltaY) * 1.2;
 }
 
 export function SwipeToTask({ children, sessionId, onOpen, onDismiss }: SwipeToTaskProps) {
@@ -45,7 +45,7 @@ export function SwipeToTask({ children, sessionId, onOpen, onDismiss }: SwipeToT
     const deltaX = event.clientX - origin.x;
     const deltaY = event.clientY - origin.y;
     if (!dragging && (Math.abs(deltaX) < 10 || Math.abs(deltaX) <= Math.abs(deltaY))) return;
-    if (deltaX > 0 && !sessionId) return setOffset(0);
+    if (deltaX < 0 && !sessionId) return setOffset(0);
     if (!dragging) {
       event.currentTarget.setPointerCapture(event.pointerId);
       setDragging(true);
@@ -68,7 +68,7 @@ export function SwipeToTask({ children, sessionId, onOpen, onDismiss }: SwipeToT
 
   const handleKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
     if (event.target !== event.currentTarget) return;
-    if (sessionId && (event.key === "Enter" || event.key === "ArrowRight")) {
+    if (sessionId && (event.key === "Enter" || event.key === "ArrowLeft")) {
       event.preventDefault();
       onOpen(sessionId);
     } else if (event.key === "Delete" || event.key === "Backspace") {
@@ -81,7 +81,7 @@ export function SwipeToTask({ children, sessionId, onOpen, onDismiss }: SwipeToT
     <div
       className={`swipe-task ${dragging ? "is-dragging" : ""}`}
       tabIndex={0}
-      aria-label={sessionId ? "右滑查看 Task Profile，左滑移出 Feed" : "左滑移出 Feed"}
+      aria-label={sessionId ? "左滑查看 Task Profile，右滑移出 Feed" : "右滑移出 Feed"}
       onKeyDown={handleKeyDown}
       onPointerDown={handlePointerDown}
       onPointerMove={handlePointerMove}

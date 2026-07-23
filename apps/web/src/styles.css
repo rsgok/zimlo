@@ -132,8 +132,8 @@ code, pre { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
   color: #fff;
 }
 .swipe-task-reveal strong { font-size: 12px; }
-.swipe-task-reveal-dismiss { right: 0; background: #a4493e; }
-.swipe-task-reveal-profile { left: 0; background: #23261f; }
+.swipe-task-reveal-dismiss { left: 0; background: #a4493e; }
+.swipe-task-reveal-profile { right: 0; background: #23261f; }
 .swipe-task-content { position: relative; z-index: 1; height: 100%; transition: transform .2s ease; will-change: transform; }
 .swipe-task.is-dragging .swipe-task-content { transition: none; }
 .swipe-task .feed-post { width: 100%; height: 100%; min-height: 0; }
