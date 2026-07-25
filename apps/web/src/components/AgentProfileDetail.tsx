@@ -1,9 +1,10 @@
 import { useMemo, useState } from "react";
+import { USER_AVATAR_IDS } from "@zimlo/protocol";
 import type { ClientCommand, FeedPost, Project, Session, TaskCommand, UserAvatarId } from "@zimlo/protocol";
 import { FormattedText } from "./FormattedText";
 import { agentAvatarStyle } from "./AgentsView";
 import { runtimeLabel, sessionRuntimeLabel } from "./sessionPresentation";
-import { UserAvatar } from "./UserAvatar";
+import { AgentAvatar, UserAvatar } from "./UserAvatar";
 
 interface AgentProfileDetailProps {
   project: Project;
@@ -49,7 +50,7 @@ export function AgentProfileDetail({ project, sessions, posts, commands, userAva
           <div><strong id="agent-profile-title">{project.agentProfile.displayName}</strong><small>Project Agent Profile</small></div>
         </header>
         <section className="agent-profile-header">
-          <span className={`agent-avatar agent-profile-avatar ${agentAvatarStyle(project.id)}`}>{project.agentProfile.avatar}</span>
+          <AgentAvatar avatar={project.agentProfile.avatar} className={`agent-avatar agent-profile-avatar ${agentAvatarStyle(project.id)}`} alt="" />
           <div className="agent-profile-actions">
             <button className="secondary-button" onClick={() => setEditing((value) => !value)}>{editing ? "取消" : "编辑"}</button>
             <button className="primary-button" onClick={() => onNewTask(project.id)}>布置任务</button>
@@ -66,10 +67,25 @@ export function AgentProfileDetail({ project, sessions, posts, commands, userAva
               event.preventDefault();
               if (send({ type: "agent.profile.update", projectId: project.id, displayName: displayName.trim(), avatar: avatar.trim(), bio: bio.trim(), defaultProvider: defaultProvider || null })) setEditing(false);
             }}>
-              <label><span>头像（Emoji 或文字）</span><input value={avatar} maxLength={16} onChange={(event) => setAvatar(event.target.value)} /></label>
+              <div className="agent-avatar-field">
+                <span>头像</span>
+                <div className="agent-avatar-picker" role="list" aria-label="选择 Agent 头像">
+                  {USER_AVATAR_IDS.map((avatarId, index) => (
+                    <button
+                      type="button"
+                      role="listitem"
+                      className={avatarId === avatar ? "selected" : ""}
+                      aria-label={`选择 Agent 头像 ${index + 1}`}
+                      aria-pressed={avatarId === avatar}
+                      key={avatarId}
+                      onClick={() => setAvatar(avatarId)}
+                    ><UserAvatar avatarId={avatarId} alt="" /></button>
+                  ))}
+                </div>
+              </div>
               <label><span>Agent 名称</span><input value={displayName} maxLength={80} onChange={(event) => setDisplayName(event.target.value)} /></label>
-              <label><span>一句话简介</span><textarea value={bio} maxLength={280} rows={3} onChange={(event) => setBio(event.target.value)} /></label>
               <label><span>默认 Runtime</span><select value={defaultProvider} onChange={(event) => setDefaultProvider(event.target.value as "codex" | "claude" | "")}><option value="">自动选择</option><option value="codex">Codex</option><option value="claude">Claude Code</option></select></label>
+              <label><span>一句话简介</span><textarea value={bio} maxLength={280} rows={3} onChange={(event) => setBio(event.target.value)} /></label>
               <button className="primary-button" disabled={!displayName.trim() || !avatar.trim()}>保存 Agent Profile</button>
             </form>
           )}
@@ -90,7 +106,7 @@ export function AgentProfileDetail({ project, sessions, posts, commands, userAva
             }
             const session = item.post.sessionId ? sessionById.get(item.post.sessionId) : undefined;
             return <article className={`agent-timeline-item timeline-${item.post.kind}`} key={`post:${item.id}`}>
-              <div className={`agent-timeline-avatar ${agentAvatarStyle(project.id)}`} aria-hidden="true">{project.agentProfile.avatar}</div>
+              <AgentAvatar avatar={project.agentProfile.avatar} className={`agent-timeline-avatar ${agentAvatarStyle(project.id)}`} alt="" />
               <div className="agent-timeline-content">
                 <div className="agent-timeline-meta"><strong>{project.agentProfile.displayName}</strong><time>{relativeTime(item.at)}</time></div>
                 <h3>{item.post.headline}</h3><FormattedText text={item.post.takeaway} />

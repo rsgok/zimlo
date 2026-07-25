@@ -1,6 +1,7 @@
 import { useMemo, useState } from "react";
 import type { Project, Session } from "@zimlo/protocol";
 import { runtimeLabel } from "./sessionPresentation";
+import { AgentAvatar } from "./UserAvatar";
 
 interface AgentsViewProps {
   projects: Project[];
@@ -45,7 +46,7 @@ export function AgentsView({ projects, sessions, onOpen, onNewTask }: AgentsView
           return (
             <article className="agent-directory-card" key={project.id}>
               <button className="agent-card-main" onClick={() => onOpen(project.id)}>
-                <span className={`agent-avatar ${agentAvatarStyle(project.id)}`}>{project.agentProfile.avatar}</span>
+                <AgentAvatar avatar={project.agentProfile.avatar} className={`agent-avatar ${agentAvatarStyle(project.id)}`} alt="" />
                 <span className="agent-card-copy">
                   <strong>{project.agentProfile.displayName}</strong>
                   <small>{project.agentProfile.bio}</small>

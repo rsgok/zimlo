@@ -5,7 +5,7 @@ import { FormattedText } from "./FormattedText";
 import { VoiceInput } from "./VoiceInput";
 import { agentAvatarStyle } from "./AgentsView";
 import { conciseTaskInput, sessionLocation, sessionRuntimeLabel } from "./sessionPresentation";
-import { UserAvatar, ZimloAvatar } from "./UserAvatar";
+import { AgentAvatar, UserAvatar, ZimloAvatar } from "./UserAvatar";
 
 interface SessionDetailProps {
   session: Session;
@@ -323,7 +323,7 @@ export function SessionDetail({ session, project, events, actions, posts, comman
         <section className="task-profile-header">
           <div className="task-profile-identity">
             {project
-              ? <div className={`task-runtime-avatar ${agentAvatarStyle(project.id)}`} aria-hidden="true">{project.agentProfile.avatar}</div>
+              ? <AgentAvatar avatar={project.agentProfile.avatar} className={`task-runtime-avatar ${agentAvatarStyle(project.id)}`} alt="" />
               : <ZimloAvatar className="task-runtime-avatar" alt="" />}
             <div>
               <strong>{project?.agentProfile.displayName ?? (session.provider === "codex" ? "Codex" : "Claude Code")}</strong>
@@ -361,7 +361,7 @@ export function SessionDetail({ session, project, events, actions, posts, comman
               return (
               <article className={`task-timeline-item timeline-${item.post.kind}`} data-timeline-level="primary" key={`post:${item.id}`}>
                 {project
-                  ? <div className={`timeline-avatar ${agentAvatarStyle(project.id)}`} aria-hidden="true">{project.agentProfile.avatar}</div>
+                  ? <AgentAvatar avatar={project.agentProfile.avatar} className={`timeline-avatar ${agentAvatarStyle(project.id)}`} alt="" />
                   : <ZimloAvatar className="timeline-avatar timeline-avatar-agent" alt="" />}
                 <div className="timeline-content">
                   <div className="timeline-meta"><strong>{project?.agentProfile.displayName ?? item.post.agentId.toUpperCase()}</strong><span>{POST_LABELS[item.post.kind]}</span><time>· {readableDate(item.at)}</time></div>
@@ -398,7 +398,7 @@ export function SessionDetail({ session, project, events, actions, posts, comman
                 {item.instruction
                   ? <UserAvatar avatarId={userAvatarId} className="timeline-avatar timeline-avatar-user" alt="" />
                   : project
-                    ? <div className={`timeline-avatar ${agentAvatarStyle(project.id)}`} aria-hidden="true">{project.agentProfile.avatar}</div>
+                    ? <AgentAvatar avatar={project.agentProfile.avatar} className={`timeline-avatar ${agentAvatarStyle(project.id)}`} alt="" />
                     : <ZimloAvatar className="timeline-avatar timeline-avatar-agent" alt="" />}
                 <div className="timeline-content">
                   <div className="timeline-meta"><strong>{item.instruction ? "你" : "Agent"}</strong><span>{item.instruction ? "本轮指令" : EVENT_LABELS[item.event.kind]}</span><time>· {readableDate(item.at)}</time></div>

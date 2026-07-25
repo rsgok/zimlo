@@ -92,8 +92,7 @@ struct TaskDetailView: View {
     private var compactHeader: some View {
         VStack(alignment: .leading, spacing: 13) {
             HStack(spacing: 10) {
-                Text(project?.agentProfile.avatar ?? "Z").font(.system(size: 25))
-                    .frame(width: 42, height: 42).background(ZColor.acid.opacity(0.4)).clipShape(Circle())
+                AgentAvatar(value: project?.agentProfile.avatar ?? "Z", size: 42)
                 VStack(alignment: .leading, spacing: 2) {
                     Text(project?.agentProfile.displayName ?? session.provider.label).font(.system(size: 16, weight: .black))
                     Text("\(session.runtimeLabel) · \(session.projectName ?? session.cwd?.split(separator: "/").last.map(String.init) ?? "未归属")")
@@ -272,8 +271,7 @@ private struct TimelineRow: View {
         case .command, .event:
             UserAvatar(id: userAvatar, size: 36)
         default:
-            Text(project?.agentProfile.avatar ?? "Z").font(.system(size: 18))
-                .frame(width: 36, height: 36).background(ZColor.acid.opacity(0.35)).clipShape(Circle())
+            AgentAvatar(value: project?.agentProfile.avatar ?? "Z", size: 36)
         }
     }
     private var author: String {

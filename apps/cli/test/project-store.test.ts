@@ -2,7 +2,7 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { EMPTY_CAPABILITIES, type FeedPost, type Session } from "@zimlo/protocol";
+import { EMPTY_CAPABILITIES, USER_AVATAR_IDS, type FeedPost, type Session } from "@zimlo/protocol";
 import { ZimloStore } from "../src/store.js";
 
 const roots: string[] = [];
@@ -47,6 +47,7 @@ describe("persistent project model", () => {
     const second = store.upsertSession(session("b", join(projectRoot, "packages/core"), "2026-07-23T01:00:00.000Z"));
     expect(first.projectId).toBeTruthy();
     expect(second.projectId).toBe(first.projectId);
+    expect(USER_AVATAR_IDS).toContain(store.getProject(first.projectId!)?.agentProfile.avatar);
 
     const post: FeedPost = {
       id: "post-a",
@@ -73,6 +74,10 @@ describe("persistent project model", () => {
     ]);
     expect(store.snapshot(false, "", []).projects).toHaveLength(1);
     store.close();
+
+    const reopened = new ZimloStore(database);
+    expect(USER_AVATAR_IDS).toContain(reopened.getProject(first.projectId!)?.agentProfile.avatar);
+    reopened.close();
   });
 
   it("idempotently restores project links on startup without guessing broad roots", () => {
@@ -157,6 +162,28 @@ describe("persistent project model", () => {
     const reopened = new ZimloStore(database);
     expect(reopened.getProject(first.projectId!)?.agentProfile.displayName).toBe("股票研究");
     reopened.close();
+  });
+
+  it("backfills a preset avatar only for Agents that were never customized", () => {
+    const { projectRoot, database } = fixture();
+    const store = new ZimloStore(database);
+    const created = store.upsertSession(session("agent-avatar", projectRoot, "2026-07-23T00:00:00.000Z"));
+    store.database.prepare("UPDATE projects SET agent_avatar = NULL WHERE id = ?").run(created.projectId);
+    store.close();
+
+    const reopened = new ZimloStore(database);
+    expect(USER_AVATAR_IDS).toContain(reopened.getProject(created.projectId!)?.agentProfile.avatar);
+    reopened.updateAgentProfile(created.projectId!, {
+      displayName: "自定义 Agent",
+      avatar: "📈",
+      bio: "",
+      defaultProvider: null,
+    });
+    reopened.close();
+
+    const customized = new ZimloStore(database);
+    expect(customized.getProject(created.projectId!)?.agentProfile.avatar).toBe("📈");
+    customized.close();
   });
 
   it("assigns one preset user avatar and persists later choices", () => {

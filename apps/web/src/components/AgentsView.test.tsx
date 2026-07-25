@@ -24,4 +24,12 @@ describe("AgentsView", () => {
     expect(markup).toContain("stocks · 4 个任务");
     expect(markup).toContain("Codex");
   });
+
+  it("renders preset Agent avatars from the bundled library", () => {
+    const markup = renderToStaticMarkup(
+      <AgentsView projects={[{ ...project, agentProfile: { ...project.agentProfile, avatar: "user-07" } }]} sessions={[]} onOpen={vi.fn()} onNewTask={vi.fn()} />,
+    );
+
+    expect(markup).toContain('/avatars/user-07.png');
+  });
 });

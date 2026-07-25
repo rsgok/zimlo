@@ -4,6 +4,7 @@ import { ActionPanel } from "./ActionPanel";
 import { FormattedText } from "./FormattedText";
 import { VoiceInput } from "./VoiceInput";
 import { sessionLocation, sessionRuntimeLabel } from "./sessionPresentation";
+import { AgentAvatar } from "./UserAvatar";
 
 interface FeedPostViewProps {
   post: FeedPost;
@@ -82,7 +83,7 @@ export function FeedPostView({ post, session, project, actions, send, onOpenProj
         <div className="session-meta">
           <span className={`provider provider-${session?.provider ?? post.agentId}`}>{session ? sessionRuntimeLabel(session) : post.agentId}</span>
           {project ? <button className="agent-project-link" onClick={(event) => { event.stopPropagation(); onOpenProject(project.id); }}>
-            <span>{project.agentProfile.avatar}</span>{project.agentProfile.displayName}
+            <AgentAvatar avatar={project.agentProfile.avatar} className="agent-project-avatar" alt="" />{project.agentProfile.displayName}
           </button> : <span>{location ? `${location.kind === "project" ? "项目" : "目录"} · ${location.label}` : `未归属项目 · ${post.taskId}`}</span>}
           {needsAction && <span className="action-required-badge">需要你处理</span>}
         </div>

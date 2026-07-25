@@ -32,6 +32,31 @@ struct UserAvatar: View {
     }
 }
 
+struct AgentAvatar: View {
+    let value: String
+    var size: CGFloat = 38
+
+    private var isPreset: Bool {
+        guard value.hasPrefix("user-"),
+              let number = Int(value.dropFirst("user-".count)) else { return false }
+        return (1...24).contains(number) && value == String(format: "user-%02d", number)
+    }
+
+    var body: some View {
+        Group {
+            if isPreset {
+                UserAvatar(id: value, size: size)
+            } else {
+                Text(value)
+                    .font(.system(size: size * 0.45, weight: .bold))
+                    .frame(width: size, height: size)
+                    .background(ZColor.acid.opacity(0.35))
+                    .clipShape(Circle())
+            }
+        }
+    }
+}
+
 struct BundleImage: View {
     let name: String
 

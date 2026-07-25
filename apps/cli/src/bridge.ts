@@ -293,7 +293,9 @@ export class BridgeServer {
           defaultProvider: command.defaultProvider,
         });
         if (!project) return connection.send({ type: "error", code: "project_not_found", message: "这个 Project 已不存在。" });
-        connection.send({ type: "project.updated", project });
+        // Project Agent identity is shared by every task Timeline for this
+        // project, so every connected device must receive the new profile.
+        this.broadcast({ type: "project.updated", project });
         return;
       }
       case "pairing.create": {

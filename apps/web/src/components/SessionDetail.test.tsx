@@ -1,6 +1,6 @@
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it, vi } from "vitest";
-import { EMPTY_CAPABILITIES, type FeedPost, type Session, type TaskCommand, type UnifiedEvent } from "@zimlo/protocol";
+import { EMPTY_CAPABILITIES, type FeedPost, type Project, type Session, type TaskCommand, type UnifiedEvent } from "@zimlo/protocol";
 import { buildTaskTimeline, conciseInstruction, SessionDetail } from "./SessionDetail";
 
 const session: Session = {
@@ -95,6 +95,25 @@ const post: FeedPost = {
   createdAt: "2026-07-22T10:00:00.000Z",
 };
 
+const project: Project = {
+  id: "project-zimlo",
+  name: "zimlo",
+  primaryPath: "/Users/kai/Code/zimlo",
+  paths: ["/Users/kai/Code/zimlo"],
+  providers: ["claude"],
+  sessionCount: 1,
+  postCount: 1,
+  agentProfile: {
+    displayName: "Zimlo Agent",
+    avatar: "🪄",
+    bio: "负责 Zimlo 项目",
+    defaultProvider: "claude",
+    updatedAt: "2026-07-24T00:00:00.000Z",
+  },
+  createdAt: "2026-07-22T09:00:00.000Z",
+  lastUsedAt: "2026-07-24T00:00:00.000Z",
+};
+
 describe("SessionDetail", () => {
   it("shows task input and curated timeline without tool events", () => {
     const markup = renderToStaticMarkup(
@@ -141,6 +160,15 @@ describe("SessionDetail", () => {
     expect(markup).toContain("- old");
     expect(markup).toContain("+ new");
     expect(markup).not.toContain("SECRET_TOOL_COMMAND");
+  });
+
+  it("uses the saved Project Agent avatar for each agent Timeline item", () => {
+    const markup = renderToStaticMarkup(
+      <SessionDetail session={{ ...session, projectId: project.id }} project={project} events={events} actions={[]} posts={[post]} commands={[]} userAvatarId="user-24" send={vi.fn()} onClose={vi.fn()} />,
+    );
+
+    expect(markup).toContain("🪄");
+    expect(markup).toContain('/avatars/user-24.png');
   });
 
   it("hides a raw completion message when an Agent result already covers it", () => {

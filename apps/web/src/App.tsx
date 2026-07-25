@@ -6,6 +6,7 @@ import { AgentsView } from "./components/AgentsView";
 import { PairingRequired } from "./components/PairingRequired";
 import { ProfileView } from "./components/ProfileView";
 import { SessionDetail } from "./components/SessionDetail";
+import { SystemNotices } from "./components/SystemNotices";
 import { TasksView } from "./components/TasksView";
 import { TaskComposer } from "./components/TaskComposer";
 import { UserAvatar, ZimloAvatar } from "./components/UserAvatar";
@@ -98,15 +99,9 @@ export function App() {
         </div>
       </header>
 
-      {(!online || bridge.pendingOutboxCount > 0) && (
-        <div className="sync-banner" role="status">
-          {!online ? "当前离线，操作会保存在本机" : "正在同步本机指令"}
-          {bridge.pendingOutboxCount > 0 && <strong>{bridge.pendingOutboxCount} 条待确认</strong>}
-        </div>
-      )}
+      <SystemNotices online={online} pendingCount={bridge.pendingOutboxCount} error={bridge.error} />
 
       <main className={`main-content ${tab === "feed" ? "feed-main" : ""}`}>
-        {bridge.error && <div className="error-banner">{bridge.error}</div>}
         {tab === "feed" && <FeedView projects={bridge.snapshot.projects} posts={bridge.snapshot.posts} sessions={bridge.snapshot.sessions} actions={bridge.snapshot.actions} commands={commands} tasks={bridge.snapshot.tasks} seenPostIds={bridge.snapshot.seenPostIds} dismissedFeedItemIds={bridge.snapshot.dismissedFeedItemIds} send={bridge.send} onOpen={openSession} onOpenProject={openAgent} onNewTask={() => openNewTask()} />}
         {tab === "tasks" && <TasksView projects={bridge.snapshot.projects} sessions={bridge.snapshot.sessions} tasks={bridge.snapshot.tasks} preferences={bridge.snapshot.taskPreferences} send={bridge.send} onOpen={openSession} />}
         {tab === "agents" && <AgentsView projects={bridge.snapshot.projects} sessions={bridge.snapshot.sessions} onOpen={openAgent} onNewTask={openNewTask} />}

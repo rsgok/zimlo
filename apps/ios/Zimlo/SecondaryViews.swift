@@ -22,7 +22,7 @@ struct TasksDirectoryView: View {
                     ForEach(projectGroups, id: \.project.id) { group in
                         VStack(alignment: .leading, spacing: 0) {
                             HStack {
-                                Text(group.project.agentProfile.avatar).font(.title2)
+                                AgentAvatar(value: group.project.agentProfile.avatar, size: 32)
                                 VStack(alignment: .leading) {
                                     Text(group.project.agentProfile.displayName).font(.system(size: 16, weight: .black))
                                     Text(group.project.name).font(.system(size: 10, weight: .medium)).foregroundStyle(ZColor.muted)
@@ -120,8 +120,7 @@ struct AgentsDirectoryView: View {
                     ForEach(agents) { project in
                         Button { model.openAgent(projectId: project.id) } label: {
                             VStack(alignment: .leading, spacing: 10) {
-                                Text(project.agentProfile.avatar).font(.system(size: 36))
-                                    .frame(width: 56, height: 56).background(ZColor.acid.opacity(0.34)).clipShape(Circle())
+                                AgentAvatar(value: project.agentProfile.avatar, size: 56)
                                 Text(project.agentProfile.displayName).font(.system(size: 16, weight: .black)).lineLimit(1)
                                 Text(project.agentProfile.bio.isEmpty ? project.primaryPath : project.agentProfile.bio)
                                     .font(.system(size: 11, weight: .medium)).foregroundStyle(ZColor.muted).lineLimit(3)
@@ -172,8 +171,7 @@ struct AgentDetailView: View {
             ScrollView {
                 VStack(alignment: .leading, spacing: 0) {
                     HStack(alignment: .top, spacing: 14) {
-                        Text(project.agentProfile.avatar).font(.system(size: 40))
-                            .frame(width: 70, height: 70).background(ZColor.acid.opacity(0.4)).clipShape(Circle())
+                        AgentAvatar(value: project.agentProfile.avatar, size: 70)
                         VStack(alignment: .leading, spacing: 5) {
                             Text(project.agentProfile.displayName).font(.system(size: 25, weight: .black))
                             Text(project.name).font(.system(size: 11, weight: .semibold)).foregroundStyle(ZColor.muted)
@@ -193,7 +191,7 @@ struct AgentDetailView: View {
                             if let sessionId = post.sessionId { model.openTask(sessionId: sessionId) }
                         } label: {
                             HStack(alignment: .top, spacing: 10) {
-                                Text(project.agentProfile.avatar).font(.title3)
+                                AgentAvatar(value: project.agentProfile.avatar, size: 28)
                                 VStack(alignment: .leading, spacing: 5) {
                                     HStack {
                                         Text(project.agentProfile.displayName).font(.system(size: 13, weight: .black))
@@ -250,8 +248,24 @@ private struct AgentEditorView: View {
     var body: some View {
         NavigationStack {
             Form {
+                Section("头像") {
+                    HStack {
+                        Spacer()
+                        AgentAvatar(value: avatar, size: 72)
+                        Spacer()
+                    }
+                    LazyVGrid(columns: Array(repeating: GridItem(.flexible()), count: 6), spacing: 10) {
+                        ForEach(1...24, id: \.self) { number in
+                            let id = String(format: "user-%02d", number)
+                            Button { avatar = id } label: {
+                                UserAvatar(id: id, size: 42)
+                                    .overlay(Circle().stroke(id == avatar ? ZColor.coral : Color.clear, lineWidth: 3))
+                            }
+                            .buttonStyle(.plain)
+                        }
+                    }
+                }
                 Section("身份") {
-                    TextField("头像（Emoji 或文字）", text: $avatar)
                     TextField("Agent 名称", text: $displayName)
                     TextField("一句话简介", text: $bio, axis: .vertical).lineLimit(3...6)
                 }

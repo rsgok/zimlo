@@ -32,31 +32,87 @@ Zimlo 是 Codex 与 Claude Code 的本地移动状态层。它自动发现 Mac �
 - Codex CLI 与/或 Claude Code（由用户自行安装、登录）
 - 源码开发使用 pnpm 10
 
-## 从源码运行
+## 快速启动
+
+### 在本仓库中首次启动
+
+先安装依赖、构建并检查本机环境：
 
 ```bash
 pnpm install
 pnpm build
 node apps/cli/dist/index.js doctor
-node apps/cli/dist/index.js start
 ```
 
-打开 `http://127.0.0.1:4747`。手机访问时运行：
+如果要在手机浏览器或原生 iOS App 使用 Zimlo，推荐这样启动：
 
 ```bash
 node apps/cli/dist/index.js start --lan
 ```
 
-然后在 Mac 本机右上角 Settings 生成 2 分钟、单次使用的二维码。手机审批必须由 Mac 在已知设备列表中逐台授权，授权会跨 Bridge 重启持久保留；高风险操作仍要求确认短语。
+终端出现以下信息就表示启动成功：
+
+```text
+Zimlo 已启动：http://127.0.0.1:4747
+可信局域网：http://<你的 Mac 局域网地址>:4747
+按 Ctrl-C 停止。
+```
+
+保持这个终端窗口运行，然后：
+
+1. Mac 打开 [http://127.0.0.1:4747](http://127.0.0.1:4747)；
+2. 在右上角 **Settings → 配对手机 Safari** 生成二维码；
+3. 手机与 Mac 连接同一个可信局域网，用 Safari 扫码完成配对；
+4. 原生 iOS App 也连接这个 `--lan` Bridge，构建与运行见 [iOS README](apps/ios/README.md)。
+
+手机审批必须由 Mac 在已知设备列表中逐台授权；授权会跨 Bridge 重启保留，高风险操作仍要求确认短语。
+
+### 只在 Mac 本机使用
+
+不需要手机访问时可以省略 `--lan`：
+
+```bash
+node apps/cli/dist/index.js start
+```
+
+此时只监听 `127.0.0.1`，同一局域网内的手机无法连接。
+
+### 以后每天怎么启动
+
+依赖和代码没有变化时，不需要重复 `pnpm install` 或 `pnpm build`，直接运行：
+
+```bash
+node apps/cli/dist/index.js start --lan
+```
+
+拉取新代码、切换分支或修改 Web/CLI 源码后，先重新执行 `pnpm build`。使用 `Ctrl-C` 可以安全停止 Bridge。
+
+### 已全局安装 CLI
+
+如果已经通过 npm 安装 `@zimlo/cli`，对应命令更短：
+
+```bash
+zimlo doctor
+zimlo start --lan
+```
+
+常用启动方式：
+
+```text
+zimlo start                         # 仅 Mac 本机
+zimlo start --lan                   # Mac + 手机，推荐
+zimlo start --lan --port 4748       # 使用自定义端口
+zimlo open                          # 打开默认端口的本机管理页
+```
+
+Codex GUI 插件在调用 Zimlo MCP 时可以自动拉起仅本机 Bridge，但不会自动开放局域网。需要手机访问时，仍应在终端显式运行 `zimlo start --lan`。
 
 ## npm CLI
 
-三个可发布包分别是 `@zimlo/protocol`、`@zimlo/adapters` 和 `@zimlo/cli`。构建后的 `pnpm pack` 会把 workspace 依赖固定为当前版本；发布后用户可运行：
+三个可发布包分别是 `@zimlo/protocol`、`@zimlo/adapters` 和 `@zimlo/cli`。构建后的 `pnpm pack` 会把 workspace 依赖固定为当前版本；发布后用户可安装：
 
 ```bash
 npm install --global @zimlo/cli
-zimlo doctor
-zimlo start
 ```
 
 CLI 命令：

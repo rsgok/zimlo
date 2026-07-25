@@ -332,6 +332,7 @@ export class ZimloStore {
     this.database.prepare("INSERT OR IGNORE INTO user_profile(id, avatar_id, updated_at) VALUES (1, ?, ?)")
       .run(USER_AVATAR_IDS[randomInt(USER_AVATAR_IDS.length)] ?? USER_AVATAR_IDS[0], new Date().toISOString());
     this.backfillProjects();
+    this.backfillAgentAvatars();
     this.migrateFeedV2();
     this.database.prepare("UPDATE task_commands SET state = 'queued', updated_at = ?, error = NULL WHERE state IN ('dispatching', 'running')")
       .run(new Date().toISOString());
@@ -346,14 +347,15 @@ export class ZimloStore {
     const location = this.database.prepare("SELECT project_id FROM project_locations WHERE path = ?").get(identity.root) as { project_id: string } | undefined;
     const matched = this.database.prepare("SELECT id FROM projects WHERE identity_key = ?").get(identity.identityKey) as { id: string } | undefined;
     const projectId = location?.project_id ?? matched?.id ?? `project:${randomUUID()}`;
+    const avatar = USER_AVATAR_IDS[randomInt(USER_AVATAR_IDS.length)] ?? USER_AVATAR_IDS[0];
     this.database.prepare(`
-      INSERT INTO projects(id, name, identity_key, created_at, last_used_at) VALUES (?, ?, ?, ?, ?)
+      INSERT INTO projects(id, name, identity_key, agent_avatar, created_at, last_used_at) VALUES (?, ?, ?, ?, ?, ?)
       ON CONFLICT(id) DO UPDATE SET
         name = excluded.name,
         identity_key = COALESCE(projects.identity_key, excluded.identity_key),
         created_at = CASE WHEN excluded.created_at < projects.created_at THEN excluded.created_at ELSE projects.created_at END,
         last_used_at = CASE WHEN excluded.last_used_at > projects.last_used_at THEN excluded.last_used_at ELSE projects.last_used_at END
-    `).run(projectId, identity.name, identity.identityKey, createdAt, seenAt);
+    `).run(projectId, identity.name, identity.identityKey, avatar, createdAt, seenAt);
     this.database.prepare(`
       INSERT INTO project_locations(path, project_id, first_seen_at, last_seen_at) VALUES (?, ?, ?, ?)
       ON CONFLICT(path) DO UPDATE SET
@@ -412,6 +414,15 @@ export class ZimloStore {
       )
       WHERE cwd <> '' AND EXISTS (SELECT 1 FROM project_locations WHERE project_locations.path = task_commands.cwd)
     `).run();
+  }
+
+  private backfillAgentAvatars(): void {
+    const projects = this.database.prepare("SELECT id FROM projects WHERE agent_avatar IS NULL OR trim(agent_avatar) = ''")
+      .all() as Array<{ id: string }>;
+    const update = this.database.prepare("UPDATE projects SET agent_avatar = ? WHERE id = ?");
+    for (const project of projects) {
+      update.run(USER_AVATAR_IDS[randomInt(USER_AVATAR_IDS.length)] ?? USER_AVATAR_IDS[0], project.id);
+    }
   }
 
   private clearInactiveActionLinks(): void {
@@ -1303,7 +1314,7 @@ export class ZimloStore {
       postCount: Number(postCount.count),
       agentProfile: {
         displayName: row.agent_display_name ? String(row.agent_display_name) : String(row.name),
-        avatar: row.agent_avatar ? String(row.agent_avatar) : String(row.name).slice(0, 1).toLocaleUpperCase(),
+        avatar: row.agent_avatar ? String(row.agent_avatar) : USER_AVATAR_IDS[0],
         bio: row.agent_bio ? String(row.agent_bio) : `负责 ${String(row.name)} 项目的长期工作与上下文。`,
         defaultProvider: row.agent_default_provider === "codex" || row.agent_default_provider === "claude" ? row.agent_default_provider : null,
         updatedAt: row.agent_updated_at ? String(row.agent_updated_at) : String(row.created_at),

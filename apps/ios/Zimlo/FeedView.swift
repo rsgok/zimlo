@@ -201,7 +201,7 @@ private struct PostCard: View {
             HStack(spacing: 8) {
                 if let project {
                     Button { model.openAgent(projectId: project.id) } label: {
-                        Text(project.agentProfile.avatar)
+                        AgentAvatar(value: project.agentProfile.avatar, size: 20)
                         Text(project.agentProfile.displayName).fontWeight(.bold)
                     }
                 } else {
