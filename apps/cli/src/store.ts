@@ -3,21 +3,28 @@ import { chmodSync, existsSync, mkdirSync } from "node:fs";
 import { dirname } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { redactText, redactUnknown } from "@zimlo/adapters";
-import { USER_AVATAR_IDS } from "@zimlo/protocol";
+import { FEATURE_CAPABILITIES, USER_AVATAR_IDS } from "@zimlo/protocol";
 import type {
+  ApprovalCategory,
   FeedCard,
   FeedPost,
   FeedPostKind,
   FeedTemplate,
+  NotificationSettings,
   PendingAction,
   Project,
+  ProjectTrustPolicy,
+  PushDeviceRegistration,
+  ReviewBundle,
   Session,
   SessionCapabilities,
   Snapshot,
   TaskCommand,
   TaskPreference,
   TaskRecord,
+  TaskReview,
   TrustedWorkspace,
+  TrustAuditEntry,
   UnifiedEvent,
   UserAvatarId,
   UserProfile,
@@ -34,6 +41,7 @@ interface DeviceRow {
   revoked_at: string | null;
   is_local_admin: number;
   can_approve: number;
+  can_manage_trust: number;
 }
 
 export interface DeviceRecord {
@@ -45,6 +53,7 @@ export interface DeviceRecord {
   revokedAt: string | null;
   isLocalAdmin: boolean;
   canApprove: boolean;
+  canManageTrust: boolean;
 }
 
 export type FeedDecisionKind = "post" | "skip" | "implicit_skip";
@@ -282,7 +291,66 @@ export class ZimloStore {
         last_seen_at TEXT NOT NULL,
         revoked_at TEXT,
         is_local_admin INTEGER NOT NULL DEFAULT 0,
-        can_approve INTEGER NOT NULL DEFAULT 0
+        can_approve INTEGER NOT NULL DEFAULT 0,
+        can_manage_trust INTEGER NOT NULL DEFAULT 0
+      );
+
+      CREATE TABLE IF NOT EXISTS task_reviews (
+        id TEXT PRIMARY KEY,
+        task_id TEXT NOT NULL,
+        session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+        post_id TEXT NOT NULL REFERENCES feed_posts(id) ON DELETE CASCADE,
+        version INTEGER NOT NULL,
+        state TEXT NOT NULL,
+        bundle_json TEXT NOT NULL,
+        decision_note TEXT,
+        decided_by_device_id TEXT,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        legacy INTEGER NOT NULL DEFAULT 0,
+        UNIQUE(session_id, version)
+      );
+      CREATE INDEX IF NOT EXISTS task_reviews_attention_idx ON task_reviews(state, updated_at DESC);
+
+      CREATE TABLE IF NOT EXISTS project_trust_policies (
+        project_id TEXT PRIMARY KEY REFERENCES projects(id) ON DELETE CASCADE,
+        preset TEXT NOT NULL,
+        auto_allow_json TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        updated_by_device_id TEXT NOT NULL
+      );
+
+      CREATE TABLE IF NOT EXISTS trust_audit (
+        id TEXT PRIMARY KEY,
+        project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+        session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+        device_id TEXT NOT NULL,
+        category TEXT NOT NULL,
+        decision TEXT NOT NULL,
+        reason TEXT NOT NULL,
+        action_summary TEXT NOT NULL,
+        created_at TEXT NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS trust_audit_created_idx ON trust_audit(created_at DESC);
+
+      CREATE TABLE IF NOT EXISTS notification_settings (
+        device_id TEXT PRIMARY KEY REFERENCES devices(id) ON DELETE CASCADE,
+        enabled INTEGER NOT NULL DEFAULT 0,
+        approvals INTEGER NOT NULL DEFAULT 1,
+        failures INTEGER NOT NULL DEFAULT 1,
+        reviews INTEGER NOT NULL DEFAULT 1,
+        show_task_title INTEGER NOT NULL DEFAULT 0,
+        updated_at TEXT NOT NULL
+      );
+
+      CREATE TABLE IF NOT EXISTS push_devices (
+        device_id TEXT PRIMARY KEY REFERENCES devices(id) ON DELETE CASCADE,
+        platform TEXT NOT NULL,
+        endpoint TEXT NOT NULL,
+        public_key TEXT NOT NULL,
+        active INTEGER NOT NULL DEFAULT 1,
+        registered_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
       );
 
       CREATE TABLE IF NOT EXISTS user_profile (
@@ -328,6 +396,13 @@ export class ZimloStore {
     const deviceColumns = this.database.prepare("PRAGMA table_info(devices)").all() as Array<{ name: string }>;
     if (!deviceColumns.some((column) => column.name === "can_approve")) {
       this.database.exec("ALTER TABLE devices ADD COLUMN can_approve INTEGER NOT NULL DEFAULT 0");
+    }
+    if (!deviceColumns.some((column) => column.name === "can_manage_trust")) {
+      this.database.exec("ALTER TABLE devices ADD COLUMN can_manage_trust INTEGER NOT NULL DEFAULT 0");
+    }
+    const actionColumns = this.database.prepare("PRAGMA table_info(actions)").all() as Array<{ name: string }>;
+    if (!actionColumns.some((column) => column.name === "approval_context_json")) {
+      this.database.exec("ALTER TABLE actions ADD COLUMN approval_context_json TEXT");
     }
     this.database.prepare("INSERT OR IGNORE INTO user_profile(id, avatar_id, updated_at) VALUES (1, ?, ?)")
       .run(USER_AVATAR_IDS[randomInt(USER_AVATAR_IDS.length)] ?? USER_AVATAR_IDS[0], new Date().toISOString());
@@ -849,6 +924,15 @@ export class ZimloStore {
     return row ? this.feedPostFromRow(row) : null;
   }
 
+  latestResultFeedPost(sessionId: string): FeedPost | null {
+    const row = this.database.prepare(`
+      SELECT * FROM feed_posts
+      WHERE session_id = ? AND source = 'agent' AND kind = 'result'
+      ORDER BY created_at DESC LIMIT 1
+    `).get(sessionId) as Record<string, unknown> | undefined;
+    return row ? this.feedPostFromRow(row) : null;
+  }
+
   linkPendingAction(sessionId: string, actionId: string): FeedPost | null {
     const row = this.database.prepare(`
       SELECT * FROM feed_posts
@@ -1029,6 +1113,226 @@ export class ZimloStore {
       .map((row) => ({ sessionId: row.session_id, pinnedAt: row.pinned_at, archivedAt: row.archived_at }));
   }
 
+  createTaskReview(input: {
+    taskId: string;
+    sessionId: string;
+    postId: string;
+    bundle: ReviewBundle;
+    createdAt: string;
+    legacy?: boolean;
+  }): TaskReview {
+    const existing = this.database.prepare("SELECT * FROM task_reviews WHERE post_id = ?").get(input.postId) as Record<string, unknown> | undefined;
+    if (existing) return this.taskReviewFromRow(existing);
+    const current = this.database.prepare("SELECT COALESCE(MAX(version), 0) AS version FROM task_reviews WHERE session_id = ?")
+      .get(input.sessionId) as { version: number };
+    this.database.prepare("UPDATE task_reviews SET state = 'superseded', updated_at = ? WHERE session_id = ? AND state = 'unreviewed'")
+      .run(input.createdAt, input.sessionId);
+    const review: TaskReview = {
+      id: `review:${randomUUID()}`,
+      taskId: input.taskId,
+      sessionId: input.sessionId,
+      postId: input.postId,
+      version: Number(current.version) + 1,
+      state: "unreviewed",
+      bundle: input.bundle,
+      createdAt: input.createdAt,
+      updatedAt: input.createdAt,
+      legacy: input.legacy ?? false,
+    };
+    this.database.prepare(`
+      INSERT INTO task_reviews(
+        id, task_id, session_id, post_id, version, state, bundle_json,
+        decision_note, decided_by_device_id, created_at, updated_at, legacy
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, NULL, NULL, ?, ?, ?)
+    `).run(
+      review.id,
+      review.taskId,
+      review.sessionId,
+      review.postId,
+      review.version,
+      review.state,
+      JSON.stringify(review.bundle),
+      review.createdAt,
+      review.updatedAt,
+      review.legacy ? 1 : 0,
+    );
+    return review;
+  }
+
+  getTaskReview(id: string): TaskReview | null {
+    const row = this.database.prepare("SELECT * FROM task_reviews WHERE id = ?").get(id) as Record<string, unknown> | undefined;
+    return row ? this.taskReviewFromRow(row) : null;
+  }
+
+  getTaskReviewByPost(postId: string): TaskReview | null {
+    const row = this.database.prepare("SELECT * FROM task_reviews WHERE post_id = ?").get(postId) as Record<string, unknown> | undefined;
+    return row ? this.taskReviewFromRow(row) : null;
+  }
+
+  listTaskReviews(sessionId?: string): TaskReview[] {
+    const rows = sessionId
+      ? this.database.prepare("SELECT * FROM task_reviews WHERE session_id = ? ORDER BY version DESC").all(sessionId)
+      : this.database.prepare("SELECT * FROM task_reviews ORDER BY updated_at DESC LIMIT 200").all();
+    return (rows as Record<string, unknown>[]).map((row) => this.taskReviewFromRow(row));
+  }
+
+  respondToTaskReview(input: {
+    reviewId: string;
+    decision: "accept" | "request_changes";
+    note?: string;
+    deviceId: string;
+    updatedAt: string;
+  }): TaskReview | null {
+    const review = this.getTaskReview(input.reviewId);
+    if (!review || review.state !== "unreviewed") return review;
+    const state = input.decision === "accept" ? "accepted" : "changes_requested";
+    this.database.prepare(`
+      UPDATE task_reviews SET state = ?, decision_note = ?, decided_by_device_id = ?, updated_at = ? WHERE id = ?
+    `).run(state, input.note?.trim() || null, input.deviceId, input.updatedAt, input.reviewId);
+    return this.getTaskReview(input.reviewId);
+  }
+
+  getTrustPolicy(projectId: string): ProjectTrustPolicy {
+    const row = this.database.prepare("SELECT * FROM project_trust_policies WHERE project_id = ?")
+      .get(projectId) as Record<string, unknown> | undefined;
+    if (!row) {
+      return { projectId, preset: "ask", autoAllow: [], updatedAt: new Date(0).toISOString(), updatedByDeviceId: "" };
+    }
+    return this.trustPolicyFromRow(row);
+  }
+
+  listTrustPolicies(): ProjectTrustPolicy[] {
+    const stored = new Map((this.database.prepare("SELECT * FROM project_trust_policies").all() as Record<string, unknown>[])
+      .map((row) => {
+        const policy = this.trustPolicyFromRow(row);
+        return [policy.projectId, policy] as const;
+      }));
+    return this.listProjects().map((project) => stored.get(project.id) ?? this.getTrustPolicy(project.id));
+  }
+
+  updateTrustPolicy(projectId: string, preset: ProjectTrustPolicy["preset"], deviceId: string): ProjectTrustPolicy {
+    const updatedAt = new Date().toISOString();
+    const autoAllow: ApprovalCategory[] = preset === "safe_automation" ? ["read", "search", "test", "build"] : [];
+    this.database.prepare(`
+      INSERT INTO project_trust_policies(project_id, preset, auto_allow_json, updated_at, updated_by_device_id)
+      VALUES (?, ?, ?, ?, ?)
+      ON CONFLICT(project_id) DO UPDATE SET
+        preset = excluded.preset,
+        auto_allow_json = excluded.auto_allow_json,
+        updated_at = excluded.updated_at,
+        updated_by_device_id = excluded.updated_by_device_id
+    `).run(projectId, preset, JSON.stringify(autoAllow), updatedAt, deviceId);
+    return { projectId, preset, autoAllow, updatedAt, updatedByDeviceId: deviceId };
+  }
+
+  insertTrustAudit(entry: TrustAuditEntry): TrustAuditEntry {
+    this.database.prepare(`
+      INSERT OR IGNORE INTO trust_audit(
+        id, project_id, session_id, device_id, category, decision, reason, action_summary, created_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(
+      entry.id,
+      entry.projectId,
+      entry.sessionId,
+      entry.deviceId,
+      entry.category,
+      entry.decision,
+      entry.reason,
+      entry.actionSummary,
+      entry.createdAt,
+    );
+    return entry;
+  }
+
+  listTrustAudit(projectId?: string, limit = 100): TrustAuditEntry[] {
+    const rows = projectId
+      ? this.database.prepare("SELECT * FROM trust_audit WHERE project_id = ? ORDER BY created_at DESC LIMIT ?").all(projectId, limit)
+      : this.database.prepare("SELECT * FROM trust_audit ORDER BY created_at DESC LIMIT ?").all(limit);
+    return (rows as Record<string, unknown>[]).map((row) => this.trustAuditFromRow(row));
+  }
+
+  getNotificationSettings(deviceId: string): NotificationSettings {
+    const row = deviceId
+      ? this.database.prepare("SELECT * FROM notification_settings WHERE device_id = ?").get(deviceId) as Record<string, unknown> | undefined
+      : undefined;
+    return row ? this.notificationSettingsFromRow(row) : {
+      enabled: false,
+      approvals: true,
+      failures: true,
+      reviews: true,
+      showTaskTitle: false,
+      updatedAt: new Date(0).toISOString(),
+    };
+  }
+
+  updateNotificationSettings(deviceId: string, settings: Omit<NotificationSettings, "updatedAt">): NotificationSettings {
+    const updatedAt = new Date().toISOString();
+    this.database.prepare(`
+      INSERT INTO notification_settings(device_id, enabled, approvals, failures, reviews, show_task_title, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(device_id) DO UPDATE SET
+        enabled = excluded.enabled,
+        approvals = excluded.approvals,
+        failures = excluded.failures,
+        reviews = excluded.reviews,
+        show_task_title = excluded.show_task_title,
+        updated_at = excluded.updated_at
+    `).run(
+      deviceId,
+      settings.enabled ? 1 : 0,
+      settings.approvals ? 1 : 0,
+      settings.failures ? 1 : 0,
+      settings.reviews ? 1 : 0,
+      settings.showTaskTitle ? 1 : 0,
+      updatedAt,
+    );
+    return { ...settings, updatedAt };
+  }
+
+  upsertPushDevice(deviceId: string, endpoint: string, publicKey: string): PushDeviceRegistration {
+    const now = new Date().toISOString();
+    const existing = this.database.prepare("SELECT registered_at FROM push_devices WHERE device_id = ?")
+      .get(deviceId) as { registered_at: string } | undefined;
+    this.database.prepare(`
+      INSERT INTO push_devices(device_id, platform, endpoint, public_key, active, registered_at, updated_at)
+      VALUES (?, 'ios', ?, ?, 1, ?, ?)
+      ON CONFLICT(device_id) DO UPDATE SET
+        endpoint = excluded.endpoint,
+        public_key = excluded.public_key,
+        active = 1,
+        updated_at = excluded.updated_at
+    `).run(deviceId, endpoint, publicKey, existing?.registered_at ?? now, now);
+    return this.getPushDevice(deviceId)!;
+  }
+
+  getPushDevice(deviceId: string): PushDeviceRegistration | null {
+    const row = this.database.prepare("SELECT * FROM push_devices WHERE device_id = ?").get(deviceId) as Record<string, unknown> | undefined;
+    return row ? this.pushDeviceFromRow(row) : null;
+  }
+
+  listPushDevices(deviceId = ""): PushDeviceRegistration[] {
+    if (!deviceId) return [];
+    const registration = this.getPushDevice(deviceId);
+    return registration ? [registration] : [];
+  }
+
+  listActivePushDevices(): Array<{ registration: PushDeviceRegistration; settings: NotificationSettings }> {
+    const rows = this.database.prepare(`
+      SELECT push_devices.* FROM push_devices
+      JOIN devices ON devices.id = push_devices.device_id
+      WHERE push_devices.active = 1 AND devices.revoked_at IS NULL
+    `).all() as Record<string, unknown>[];
+    return rows.map((row) => ({
+      registration: this.pushDeviceFromRow(row),
+      settings: this.getNotificationSettings(String(row.device_id)),
+    }));
+  }
+
+  unregisterPushDevice(deviceId: string): void {
+    this.database.prepare("UPDATE push_devices SET active = 0, updated_at = ? WHERE device_id = ?")
+      .run(new Date().toISOString(), deviceId);
+  }
+
   lanApprovalsEnabled(): boolean {
     const row = this.database.prepare("SELECT value FROM metadata WHERE key = 'lan_approvals_enabled'").get() as { value: string } | undefined;
     return row?.value === "1";
@@ -1123,13 +1427,14 @@ export class ZimloStore {
 
   upsertAction(action: PendingAction): PendingAction {
     this.database.prepare(`
-      INSERT INTO actions (action_id, session_id, upstream_request_id, kind, title, detail, decisions_json, expires_at, state, created_at, resolved_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      INSERT INTO actions (action_id, session_id, upstream_request_id, kind, title, detail, decisions_json, expires_at, state, created_at, resolved_at, approval_context_json)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       ON CONFLICT(action_id) DO UPDATE SET
         decisions_json = excluded.decisions_json,
         expires_at = excluded.expires_at,
         state = excluded.state,
-        resolved_at = excluded.resolved_at
+        resolved_at = excluded.resolved_at,
+        approval_context_json = excluded.approval_context_json
     `).run(
       action.actionId,
       action.sessionId,
@@ -1142,6 +1447,7 @@ export class ZimloStore {
       action.state,
       action.createdAt,
       action.resolvedAt ?? null,
+      action.approvalContext ? JSON.stringify(action.approvalContext) : null,
     );
     return action;
   }
@@ -1187,11 +1493,11 @@ export class ZimloStore {
 
   upsertDevice(device: DeviceRecord): DeviceRecord {
     this.database.prepare(`
-      INSERT INTO devices(id, name, key_base64, created_at, last_seen_at, revoked_at, is_local_admin, can_approve)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+      INSERT INTO devices(id, name, key_base64, created_at, last_seen_at, revoked_at, is_local_admin, can_approve, can_manage_trust)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
       ON CONFLICT(id) DO UPDATE SET name = excluded.name, key_base64 = excluded.key_base64,
         last_seen_at = excluded.last_seen_at, revoked_at = excluded.revoked_at, is_local_admin = excluded.is_local_admin,
-        can_approve = excluded.can_approve
+        can_approve = excluded.can_approve, can_manage_trust = excluded.can_manage_trust
     `).run(
       device.id,
       device.name,
@@ -1201,6 +1507,7 @@ export class ZimloStore {
       device.revokedAt,
       device.isLocalAdmin ? 1 : 0,
       device.canApprove ? 1 : 0,
+      device.canManageTrust ? 1 : 0,
     );
     return device;
   }
@@ -1222,6 +1529,12 @@ export class ZimloStore {
 
   setDeviceApproval(id: string, enabled: boolean): DeviceRecord | null {
     this.database.prepare("UPDATE devices SET can_approve = ? WHERE id = ? AND revoked_at IS NULL AND is_local_admin = 0")
+      .run(enabled ? 1 : 0, id);
+    return this.getDevice(id);
+  }
+
+  setDeviceTrustManagement(id: string, enabled: boolean): DeviceRecord | null {
+    this.database.prepare("UPDATE devices SET can_manage_trust = ? WHERE id = ? AND revoked_at IS NULL AND is_local_admin = 0")
       .run(enabled ? 1 : 0, id);
     return this.getDevice(id);
   }
@@ -1258,6 +1571,12 @@ export class ZimloStore {
       taskTimelineCursors: this.listTaskTimelineCursors(deviceId),
       taskPreferences: this.listTaskPreferences(),
       actions: this.listActions(),
+      reviews: this.listTaskReviews(),
+      trustPolicies: this.listTrustPolicies(),
+      trustAudit: this.listTrustAudit(),
+      notificationSettings: this.getNotificationSettings(deviceId),
+      pushDevices: this.listPushDevices(deviceId),
+      features: FEATURE_CAPABILITIES,
       sequence: this.latestSequence(),
       lanApprovalsEnabled: device?.isLocalAdmin === true || device?.canApprove === true,
     };
@@ -1271,6 +1590,7 @@ export class ZimloStore {
     this.database.prepare("DELETE FROM feed_checkpoints WHERE started_at < ?").run(cutoff);
     this.database.prepare("DELETE FROM actions WHERE created_at < ?").run(cutoff);
     this.database.prepare("DELETE FROM idempotency WHERE created_at < ?").run(cutoff);
+    this.database.prepare("DELETE FROM trust_audit WHERE created_at < ?").run(new Date(Date.now() - 30 * 86_400_000).toISOString());
   }
 
   private sessionFromRow(row: Record<string, unknown>): Session {
@@ -1428,6 +1748,70 @@ export class ZimloStore {
     };
   }
 
+  private taskReviewFromRow(row: Record<string, unknown>): TaskReview {
+    return {
+      id: String(row.id),
+      taskId: String(row.task_id),
+      sessionId: String(row.session_id),
+      postId: String(row.post_id),
+      version: Number(row.version),
+      state: row.state as TaskReview["state"],
+      bundle: json<ReviewBundle>(String(row.bundle_json)),
+      ...(row.decision_note ? { decisionNote: String(row.decision_note) } : {}),
+      ...(row.decided_by_device_id ? { decidedByDeviceId: String(row.decided_by_device_id) } : {}),
+      createdAt: String(row.created_at),
+      updatedAt: String(row.updated_at),
+      legacy: Number(row.legacy) === 1,
+    };
+  }
+
+  private trustPolicyFromRow(row: Record<string, unknown>): ProjectTrustPolicy {
+    return {
+      projectId: String(row.project_id),
+      preset: row.preset as ProjectTrustPolicy["preset"],
+      autoAllow: json<ApprovalCategory[]>(String(row.auto_allow_json)),
+      updatedAt: String(row.updated_at),
+      updatedByDeviceId: String(row.updated_by_device_id),
+    };
+  }
+
+  private trustAuditFromRow(row: Record<string, unknown>): TrustAuditEntry {
+    return {
+      id: String(row.id),
+      projectId: String(row.project_id),
+      sessionId: String(row.session_id),
+      deviceId: String(row.device_id),
+      category: row.category as TrustAuditEntry["category"],
+      decision: row.decision as TrustAuditEntry["decision"],
+      reason: String(row.reason),
+      actionSummary: String(row.action_summary),
+      createdAt: String(row.created_at),
+    };
+  }
+
+  private notificationSettingsFromRow(row: Record<string, unknown>): NotificationSettings {
+    return {
+      enabled: Number(row.enabled) === 1,
+      approvals: Number(row.approvals) === 1,
+      failures: Number(row.failures) === 1,
+      reviews: Number(row.reviews) === 1,
+      showTaskTitle: Number(row.show_task_title) === 1,
+      updatedAt: String(row.updated_at),
+    };
+  }
+
+  private pushDeviceFromRow(row: Record<string, unknown>): PushDeviceRegistration {
+    return {
+      deviceId: String(row.device_id),
+      platform: "ios",
+      endpoint: String(row.endpoint),
+      publicKey: String(row.public_key),
+      active: Number(row.active) === 1,
+      registeredAt: String(row.registered_at),
+      updatedAt: String(row.updated_at),
+    };
+  }
+
   private actionFromRow(row: Record<string, unknown>): PendingAction {
     return {
       actionId: String(row.action_id),
@@ -1441,6 +1825,7 @@ export class ZimloStore {
       state: row.state as PendingAction["state"],
       createdAt: String(row.created_at),
       ...(row.resolved_at === null ? {} : { resolvedAt: String(row.resolved_at) }),
+      ...(row.approval_context_json ? { approvalContext: json(String(row.approval_context_json)) } : {}),
     };
   }
 
@@ -1454,6 +1839,7 @@ export class ZimloStore {
       revokedAt: row.revoked_at,
       isLocalAdmin: row.is_local_admin === 1,
       canApprove: row.can_approve === 1,
+      canManageTrust: row.can_manage_trust === 1,
     };
   }
 }

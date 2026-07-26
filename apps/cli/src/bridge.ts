@@ -5,7 +5,7 @@ import Fastify, { type FastifyInstance } from "fastify";
 import fastifyStatic from "@fastify/static";
 import fastifyWebsocket from "@fastify/websocket";
 import QRCode from "qrcode";
-import type { ClientCommand, ServerMessage } from "@zimlo/protocol";
+import { FEATURE_CAPABILITIES, type ClientCommand, type ServerMessage } from "@zimlo/protocol";
 import { ActionBroker } from "./action-broker.js";
 import { codexPluginDeepLink, inspectCodexPlugin, installCodexPlugin } from "./codex-plugin.js";
 import { DeviceManager } from "./device-manager.js";
@@ -65,7 +65,7 @@ export class BridgeServer {
       }
     });
 
-    app.get("/healthz", async () => ({ ok: true, version: "0.2.0", protocolVersion: 2 }));
+    app.get("/healthz", async () => ({ ok: true, version: "0.2.0", protocolVersion: 2, features: FEATURE_CAPABILITIES }));
     app.get("/api/local-bootstrap", async (request, reply) => {
       if (!isLoopbackAddress(request.ip)) return reply.code(403).send({ error: "Loopback only" });
       const device = this.devices.localAdmin();
@@ -172,6 +172,13 @@ export class BridgeServer {
       case "device.approvals.set": {
         if (!connection.isLocalAdmin) return connection.send({ type: "error", code: "forbidden", message: "仅 Mac 本机管理页可授权手机审批。" });
         const device = this.runtime.store.setDeviceApproval(command.deviceId, command.enabled);
+        if (!device) return connection.send({ type: "error", code: "device_not_found", message: "设备不存在或已撤销。" });
+        connection.send({ type: "devices.list", devices: this.devicesList() });
+        return;
+      }
+      case "device.trust.set": {
+        if (!connection.isLocalAdmin) return connection.send({ type: "error", code: "forbidden", message: "仅 Mac 本机管理页可授权自动化策略管理。" });
+        const device = this.runtime.store.setDeviceTrustManagement(command.deviceId, command.enabled);
         if (!device) return connection.send({ type: "error", code: "device_not_found", message: "设备不存在或已撤销。" });
         connection.send({ type: "devices.list", devices: this.devicesList() });
         return;
@@ -285,6 +292,88 @@ export class BridgeServer {
         connection.send({ type: "task.preference.updated", preference: this.runtime.store.setTaskArchived(command.sessionId, command.archived) });
         return;
       }
+      case "review.list":
+        connection.send({ type: "reviews.list", reviews: this.runtime.store.listTaskReviews(command.sessionId) });
+        return;
+      case "review.respond": {
+        const storageKey = `${deviceId}:${command.idempotencyKey}`;
+        const prior = this.runtime.store.getIdempotentResult(storageKey);
+        if (prior) {
+          const existing = this.runtime.store.getTaskReview(command.reviewId);
+          if (existing) connection.send({ type: "review.updated", review: existing });
+          return;
+        }
+        const current = this.runtime.store.getTaskReview(command.reviewId);
+        if (!current) return connection.send({ type: "error", code: "review_not_found", message: "这份结果审阅已不存在。" });
+        if (current.legacy || current.state !== "unreviewed") {
+          return connection.send({ type: "error", code: "review_not_actionable", message: "这份结果已经处理或被新版本替代。" });
+        }
+        if (command.decision === "request_changes" && !command.note?.trim()) {
+          return connection.send({ type: "error", code: "review_note_required", message: "请说明需要修改的内容。" });
+        }
+        if (command.decision === "request_changes") {
+          const queued = this.taskCommands.followUp({
+            deviceId,
+            sessionId: current.sessionId,
+            text: command.note!.trim(),
+            idempotencyKey: `review:${command.idempotencyKey}`,
+          });
+          if (queued.state === "failed") {
+            return connection.send({ type: "error", code: "review_follow_up_failed", message: queued.error ?? "修改要求未能进入任务队列。" });
+          }
+        }
+        const review = this.runtime.store.respondToTaskReview({
+          reviewId: command.reviewId,
+          decision: command.decision,
+          ...(command.note ? { note: command.note } : {}),
+          deviceId,
+          updatedAt: new Date().toISOString(),
+        });
+        if (!review) return connection.send({ type: "error", code: "review_not_found", message: "这份结果审阅已不存在。" });
+        this.runtime.store.saveIdempotentResult(storageKey, review.id, { ok: true });
+        this.broadcast({ type: "review.updated", review });
+        return;
+      }
+      case "trust.policy.get":
+        connection.send({
+          type: "trust.policies",
+          policies: command.projectId ? [this.runtime.store.getTrustPolicy(command.projectId)] : this.runtime.store.listTrustPolicies(),
+          audit: this.runtime.store.listTrustAudit(command.projectId),
+        });
+        return;
+      case "trust.policy.update": {
+        const device = this.runtime.store.getDevice(deviceId);
+        if (!connection.isLocalAdmin && !device?.canManageTrust) {
+          return connection.send({ type: "error", code: "forbidden", message: "这台设备没有修改自动化策略的权限。" });
+        }
+        if (!this.runtime.store.getProject(command.projectId)) {
+          return connection.send({ type: "error", code: "project_not_found", message: "这个 Project 已不存在。" });
+        }
+        const policy = this.runtime.store.updateTrustPolicy(command.projectId, command.preset, deviceId);
+        this.runtime.store.saveIdempotentResult(`${deviceId}:${command.idempotencyKey}`, policy.projectId, { ok: true });
+        this.broadcast({ type: "trust.policy.updated", policy });
+        return;
+      }
+      case "notification.settings.get":
+        connection.send({ type: "notification.settings.updated", settings: this.runtime.store.getNotificationSettings(deviceId) });
+        return;
+      case "notification.settings.update": {
+        const settings = this.runtime.store.updateNotificationSettings(deviceId, command.settings);
+        this.runtime.store.saveIdempotentResult(`${deviceId}:${command.idempotencyKey}`, deviceId, { ok: true });
+        connection.send({ type: "notification.settings.updated", settings });
+        return;
+      }
+      case "notification.device.register": {
+        const registration = this.runtime.store.upsertPushDevice(deviceId, command.endpoint, command.publicKey);
+        this.runtime.store.saveIdempotentResult(`${deviceId}:${command.idempotencyKey}`, deviceId, { ok: true });
+        connection.send({ type: "notification.device.updated", registration });
+        return;
+      }
+      case "notification.device.unregister":
+        this.runtime.store.unregisterPushDevice(deviceId);
+        this.runtime.store.saveIdempotentResult(`${deviceId}:${command.idempotencyKey}`, deviceId, { ok: true });
+        connection.send({ type: "notification.device.updated", registration: null });
+        return;
       case "agent.profile.update": {
         const project = this.runtime.store.updateAgentProfile(command.projectId, {
           displayName: command.displayName,

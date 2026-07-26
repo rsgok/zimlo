@@ -118,6 +118,7 @@ export const PendingActionSchema = z.object({
   state: z.enum(["pending", "submitted", "resolved", "expired"]),
   createdAt: z.string(),
   resolvedAt: z.string().optional(),
+  approvalContext: z.lazy(() => ApprovalContextSchema).optional(),
 });
 export type PendingAction = z.infer<typeof PendingActionSchema>;
 
@@ -324,6 +325,136 @@ export const TaskPreferenceSchema = z.object({
 });
 export type TaskPreference = z.infer<typeof TaskPreferenceSchema>;
 
+export const ReviewStateSchema = z.enum(["unreviewed", "accepted", "changes_requested", "superseded"]);
+export type ReviewState = z.infer<typeof ReviewStateSchema>;
+
+export const ReviewEvidenceSourceSchema = z.enum(["app_server", "hook", "agent_reported"]);
+export type ReviewEvidenceSource = z.infer<typeof ReviewEvidenceSourceSchema>;
+
+export const ReviewEvidenceSchema = z.object({
+  source: ReviewEvidenceSourceSchema,
+  label: z.string(),
+  detail: z.string(),
+});
+export type ReviewEvidence = z.infer<typeof ReviewEvidenceSchema>;
+
+export const ReviewBundleSchema = z.object({
+  conclusion: z.string(),
+  impact: z.string().optional(),
+  changedFiles: z.array(z.string()),
+  diffSummary: z.string().optional(),
+  tests: z.array(ReviewEvidenceSchema),
+  links: z.array(z.object({ label: z.string(), url: z.string() })),
+  evidenceSource: ReviewEvidenceSourceSchema,
+});
+export type ReviewBundle = z.infer<typeof ReviewBundleSchema>;
+
+export const TaskReviewSchema = z.object({
+  id: z.string(),
+  taskId: z.string(),
+  sessionId: z.string(),
+  postId: z.string(),
+  version: z.number().int().positive(),
+  state: ReviewStateSchema,
+  bundle: ReviewBundleSchema,
+  decisionNote: z.string().optional(),
+  decidedByDeviceId: z.string().optional(),
+  createdAt: z.string(),
+  updatedAt: z.string(),
+  legacy: z.boolean(),
+});
+export type TaskReview = z.infer<typeof TaskReviewSchema>;
+
+export const ReviewDecisionSchema = z.enum(["accept", "request_changes"]);
+export type ReviewDecision = z.infer<typeof ReviewDecisionSchema>;
+
+export const ApprovalCategorySchema = z.enum([
+  "read",
+  "search",
+  "test",
+  "build",
+  "write",
+  "network",
+  "install",
+  "git_publish",
+  "destructive",
+  "unknown",
+]);
+export type ApprovalCategory = z.infer<typeof ApprovalCategorySchema>;
+
+export const ApprovalContextSchema = z.object({
+  category: ApprovalCategorySchema,
+  projectId: z.string().nullable(),
+  cwd: z.string().nullable(),
+  command: z.string().optional(),
+  segments: z.array(z.string()).default([]),
+  withinProject: z.boolean(),
+  reason: z.string(),
+});
+export type ApprovalContext = z.infer<typeof ApprovalContextSchema>;
+
+export const ProjectTrustPolicySchema = z.object({
+  projectId: z.string(),
+  preset: z.enum(["ask", "safe_automation"]),
+  autoAllow: z.array(ApprovalCategorySchema),
+  updatedAt: z.string(),
+  updatedByDeviceId: z.string(),
+});
+export type ProjectTrustPolicy = z.infer<typeof ProjectTrustPolicySchema>;
+
+export const TrustAuditEntrySchema = z.object({
+  id: z.string(),
+  projectId: z.string(),
+  sessionId: z.string(),
+  deviceId: z.string(),
+  category: ApprovalCategorySchema,
+  decision: z.enum(["auto_allowed", "asked", "denied"]),
+  reason: z.string(),
+  actionSummary: z.string(),
+  createdAt: z.string(),
+});
+export type TrustAuditEntry = z.infer<typeof TrustAuditEntrySchema>;
+
+export const NotificationSettingsSchema = z.object({
+  enabled: z.boolean(),
+  approvals: z.boolean(),
+  failures: z.boolean(),
+  reviews: z.boolean(),
+  showTaskTitle: z.boolean(),
+  updatedAt: z.string(),
+});
+export type NotificationSettings = z.infer<typeof NotificationSettingsSchema>;
+
+export const PushDeviceRegistrationSchema = z.object({
+  deviceId: z.string(),
+  platform: z.literal("ios"),
+  endpoint: z.string(),
+  publicKey: z.string(),
+  active: z.boolean(),
+  registeredAt: z.string(),
+  updatedAt: z.string(),
+});
+export type PushDeviceRegistration = z.infer<typeof PushDeviceRegistrationSchema>;
+
+export const FeatureCapabilitiesSchema = z.object({
+  taskReview: z.boolean(),
+  projectTrustPolicy: z.boolean(),
+  pushNotifications: z.boolean(),
+});
+export type FeatureCapabilities = z.infer<typeof FeatureCapabilitiesSchema>;
+
+export const FEATURE_CAPABILITIES: FeatureCapabilities = {
+  taskReview: true,
+  projectTrustPolicy: true,
+  pushNotifications: true,
+};
+
+export const EMPTY_FEATURE_CAPABILITIES: FeatureCapabilities = {
+  taskReview: false,
+  projectTrustPolicy: false,
+  pushNotifications: false,
+};
+
 export const SnapshotSchema = z.object({
   userProfile: UserProfileSchema,
   projects: z.array(ProjectSchema),
@@ -338,6 +469,12 @@ export const SnapshotSchema = z.object({
   taskTimelineCursors: z.record(z.string(), z.string()),
   taskPreferences: z.array(TaskPreferenceSchema),
   actions: z.array(PendingActionSchema),
+  reviews: z.array(TaskReviewSchema),
+  trustPolicies: z.array(ProjectTrustPolicySchema),
+  trustAudit: z.array(TrustAuditEntrySchema),
+  notificationSettings: NotificationSettingsSchema,
+  pushDevices: z.array(PushDeviceRegistrationSchema),
+  features: FeatureCapabilitiesSchema,
   sequence: z.number().int().nonnegative(),
   lanApprovalsEnabled: z.boolean(),
 });
@@ -383,6 +520,37 @@ export const ClientCommandSchema = z.discriminatedUnion("type", [
   z.object({ type: z.literal("task.timeline.seen"), sessionId: z.string(), itemId: z.string().min(1).max(240) }),
   z.object({ type: z.literal("task.pin"), sessionId: z.string(), pinned: z.boolean() }),
   z.object({ type: z.literal("task.archive"), sessionId: z.string(), archived: z.boolean() }),
+  z.object({
+    type: z.literal("review.respond"),
+    reviewId: z.string(),
+    decision: ReviewDecisionSchema,
+    note: z.string().max(2_000).optional(),
+    idempotencyKey: z.string(),
+  }),
+  z.object({ type: z.literal("review.list"), sessionId: z.string().optional() }),
+  z.object({ type: z.literal("trust.policy.get"), projectId: z.string().optional() }),
+  z.object({
+    type: z.literal("trust.policy.update"),
+    projectId: z.string(),
+    preset: z.enum(["ask", "safe_automation"]),
+    idempotencyKey: z.string(),
+  }),
+  z.object({ type: z.literal("notification.settings.get") }),
+  z.object({
+    type: z.literal("notification.settings.update"),
+    settings: NotificationSettingsSchema.omit({ updatedAt: true }),
+    idempotencyKey: z.string(),
+  }),
+  z.object({
+    type: z.literal("notification.device.register"),
+    endpoint: z.string().min(1).max(2_000),
+    publicKey: z.string().min(1).max(2_000),
+    idempotencyKey: z.string(),
+  }),
+  z.object({
+    type: z.literal("notification.device.unregister"),
+    idempotencyKey: z.string(),
+  }),
   z.object({ type: z.literal("user.profile.update"), avatarId: UserAvatarIdSchema }),
   z.object({
     type: z.literal("agent.profile.update"),
@@ -397,6 +565,7 @@ export const ClientCommandSchema = z.discriminatedUnion("type", [
   z.object({ type: z.literal("integrations.request") }),
   z.object({ type: z.literal("integrations.cli.install") }),
   z.object({ type: z.literal("device.approvals.set"), deviceId: z.string(), enabled: z.boolean() }),
+  z.object({ type: z.literal("device.trust.set"), deviceId: z.string(), enabled: z.boolean() }),
   z.object({ type: z.literal("codex.plugin.request") }),
   z.object({ type: z.literal("codex.plugin.install") }),
   z.object({ type: z.literal("pairing.create") }),
@@ -419,6 +588,12 @@ export type ServerMessage =
   | { type: "feed.dismissed.updated"; itemId: string }
   | { type: "task.timeline.seen.updated"; sessionId: string; itemId: string }
   | { type: "task.preference.updated"; preference: TaskPreference }
+  | { type: "review.updated"; review: TaskReview }
+  | { type: "reviews.list"; reviews: TaskReview[] }
+  | { type: "trust.policy.updated"; policy: ProjectTrustPolicy }
+  | { type: "trust.policies"; policies: ProjectTrustPolicy[]; audit: TrustAuditEntry[] }
+  | { type: "notification.settings.updated"; settings: NotificationSettings }
+  | { type: "notification.device.updated"; registration: PushDeviceRegistration | null }
   | { type: "action.upsert"; action: PendingAction }
   | { type: "action.result"; actionId: string; ok: boolean; message: string }
   | { type: "session.message.result"; sessionId: string; ok: boolean; message: string }
@@ -434,6 +609,7 @@ export type ServerMessage =
         revokedAt: string | null;
         isLocalAdmin: boolean;
         canApprove: boolean;
+        canManageTrust: boolean;
       }>;
     }
   | { type: "pairing.created"; pairUrl: string; qrDataUrl: string; expiresAt: string }

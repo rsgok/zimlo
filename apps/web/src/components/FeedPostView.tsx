@@ -1,9 +1,10 @@
 import { useEffect, useState } from "react";
-import type { ClientCommand, FeedPost, PendingAction, Project, Session } from "@zimlo/protocol";
+import type { ClientCommand, FeedPost, PendingAction, Project, Session, TaskReview } from "@zimlo/protocol";
 import { ActionPanel } from "./ActionPanel";
 import { FormattedText } from "./FormattedText";
 import { VoiceInput } from "./VoiceInput";
-import { sessionLocation, sessionRuntimeLabel } from "./sessionPresentation";
+import { sessionLocation } from "./sessionPresentation";
+import { ProviderBadge } from "./ProviderBadge";
 import { AgentAvatar } from "./UserAvatar";
 
 interface FeedPostViewProps {
@@ -11,10 +12,11 @@ interface FeedPostViewProps {
   session: Session | undefined;
   project: Project | undefined;
   actions: PendingAction[];
+  review?: TaskReview | undefined;
   send: (command: ClientCommand) => boolean;
   onOpenProject: (projectId: string) => void;
   needsAction: boolean;
-  position: number;
+  position: number | null;
   total: number;
 }
 
@@ -34,12 +36,13 @@ function relativeTime(value: string): string {
   return new Intl.DateTimeFormat("zh-CN", { month: "short", day: "numeric" }).format(new Date(value));
 }
 
-export function FeedPostView({ post, session, project, actions, send, onOpenProject, needsAction, position, total }: FeedPostViewProps) {
+export function FeedPostView({ post, session, project, actions, review, send, onOpenProject, needsAction, position, total }: FeedPostViewProps) {
   const location = session ? sessionLocation(session) : null;
   const pendingActions = actions.filter((action) => action.state === "pending");
   const draftKey = `zimlo:feed-reply:${post.id}`;
   const [reply, setReply] = useState(() => typeof localStorage === "undefined" ? "" : localStorage.getItem(draftKey) ?? "");
   const [submitted, setSubmitted] = useState(false);
+  const [reviewNote, setReviewNote] = useState("");
   const canReply = Boolean(session?.cwd && !session.correlationUncertain);
   const directReply = needsAction && pendingActions.length === 0 && post.actions.includes("reply");
   const nextStep = (needsAction ? post.actionPrompt : null)
@@ -64,7 +67,7 @@ export function FeedPostView({ post, session, project, actions, send, onOpenProj
           <span className="post-kind">{LABELS[post.kind]}</span>
           <span className="post-author">{project?.agentProfile.displayName ?? post.agentId.toUpperCase()}</span>
         </div>
-        <span className="post-position">{String(position).padStart(2, "0")} / {String(total).padStart(2, "0")}</span>
+        {position !== null && <span className="post-position">{String(position).padStart(2, "0")} / {String(total).padStart(2, "0")}</span>}
       </div>
 
       <div className="post-copy">
@@ -81,7 +84,7 @@ export function FeedPostView({ post, session, project, actions, send, onOpenProj
 
       <div className="post-footer">
         <div className="session-meta">
-          <span className={`provider provider-${session?.provider ?? post.agentId}`}>{session ? sessionRuntimeLabel(session) : post.agentId}</span>
+          {session ? <ProviderBadge provider={session.provider} surface={session.surface} /> : <span>{post.agentId}</span>}
           {project ? <button className="agent-project-link" onClick={(event) => { event.stopPropagation(); onOpenProject(project.id); }}>
             <AgentAvatar avatar={project.agentProfile.avatar} className="agent-project-avatar" alt="" />{project.agentProfile.displayName}
           </button> : <span>{location ? `${location.kind === "project" ? "项目" : "目录"} · ${location.label}` : `未归属项目 · ${post.taskId}`}</span>}
@@ -101,6 +104,21 @@ export function FeedPostView({ post, session, project, actions, send, onOpenProj
                 setSubmitted(true);
               }}
             >{submitted ? "已保存待同步" : canReply ? "回复" : "请进入任务回复"}</button>
+          </div>
+        )}
+        {review?.state === "unreviewed" && (
+          <div className="feed-review-actions">
+            <button onClick={() => send({ type: "review.respond", reviewId: review.id, decision: "accept", idempotencyKey: crypto.randomUUID() })}>接受结果</button>
+            <details>
+              <summary>要求修改</summary>
+              <textarea value={reviewNote} onChange={(event) => setReviewNote(event.target.value)} rows={2} placeholder="需要修改什么…" />
+              <button
+                disabled={!reviewNote.trim()}
+                onClick={() => {
+                  if (send({ type: "review.respond", reviewId: review.id, decision: "request_changes", note: reviewNote.trim(), idempotencyKey: crypto.randomUUID() })) setReviewNote("");
+                }}
+              >发送</button>
+            </details>
           </div>
         )}
 

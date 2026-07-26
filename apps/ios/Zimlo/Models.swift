@@ -153,6 +153,16 @@ struct Decision: Codable, Hashable, Identifiable {
     var risk: String
 }
 
+struct ApprovalContext: Codable, Hashable {
+    var category: String
+    var projectId: String?
+    var cwd: String?
+    var command: String?
+    var segments: [String]
+    var withinProject: Bool
+    var reason: String
+}
+
 struct PendingAction: Codable, Hashable, Identifiable {
     var actionId: String
     var sessionId: String
@@ -165,7 +175,91 @@ struct PendingAction: Codable, Hashable, Identifiable {
     var state: String
     var createdAt: String
     var resolvedAt: String?
+    var approvalContext: ApprovalContext?
     var id: String { actionId }
+}
+
+struct ReviewEvidence: Codable, Hashable {
+    var source: String
+    var label: String
+    var detail: String
+}
+
+struct ReviewLink: Codable, Hashable {
+    var label: String
+    var url: String
+}
+
+struct ReviewBundle: Codable, Hashable {
+    var conclusion: String
+    var impact: String?
+    var changedFiles: [String]
+    var diffSummary: String?
+    var tests: [ReviewEvidence]
+    var links: [ReviewLink]
+    var evidenceSource: String
+}
+
+struct TaskReview: Codable, Hashable, Identifiable {
+    var id: String
+    var taskId: String
+    var sessionId: String
+    var postId: String
+    var version: Int
+    var state: String
+    var bundle: ReviewBundle
+    var decisionNote: String?
+    var decidedByDeviceId: String?
+    var createdAt: String
+    var updatedAt: String
+    var legacy: Bool
+}
+
+struct ProjectTrustPolicy: Codable, Hashable, Identifiable {
+    var projectId: String
+    var preset: String
+    var autoAllow: [String]
+    var updatedAt: String
+    var updatedByDeviceId: String
+    var id: String { projectId }
+}
+
+struct TrustAuditEntry: Codable, Hashable, Identifiable {
+    var id: String
+    var projectId: String
+    var sessionId: String
+    var deviceId: String
+    var category: String
+    var decision: String
+    var reason: String
+    var actionSummary: String
+    var createdAt: String
+}
+
+struct NotificationSettings: Codable, Hashable {
+    var enabled: Bool
+    var approvals: Bool
+    var failures: Bool
+    var reviews: Bool
+    var showTaskTitle: Bool
+    var updatedAt: String
+}
+
+struct PushDeviceRegistration: Codable, Hashable, Identifiable {
+    var deviceId: String
+    var platform: String
+    var endpoint: String
+    var publicKey: String
+    var active: Bool
+    var registeredAt: String
+    var updatedAt: String
+    var id: String { deviceId }
+}
+
+struct FeatureCapabilities: Codable, Hashable {
+    var taskReview: Bool
+    var projectTrustPolicy: Bool
+    var pushNotifications: Bool
 }
 
 struct TaskRecord: Codable, Hashable, Identifiable {
@@ -236,6 +330,12 @@ struct Snapshot: Codable, Hashable {
     var taskTimelineCursors: [String: String]
     var taskPreferences: [TaskPreference]
     var actions: [PendingAction]
+    var reviews: [TaskReview]
+    var trustPolicies: [ProjectTrustPolicy]
+    var trustAudit: [TrustAuditEntry]
+    var notificationSettings: NotificationSettings
+    var pushDevices: [PushDeviceRegistration]
+    var features: FeatureCapabilities
     var sequence: Int
     var lanApprovalsEnabled: Bool
 
@@ -243,13 +343,17 @@ struct Snapshot: Codable, Hashable {
         userProfile: UserProfile(avatarId: "user-01", updatedAt: ""),
         projects: [], sessions: [], posts: [], tasks: [], commands: [], workspaces: [],
         seenPostIds: [], dismissedFeedItemIds: [], taskTimelineCursors: [:],
-        taskPreferences: [], actions: [], sequence: 0, lanApprovalsEnabled: false
+        taskPreferences: [], actions: [], reviews: [], trustPolicies: [], trustAudit: [],
+        notificationSettings: NotificationSettings(enabled: false, approvals: true, failures: true, reviews: true, showTaskTitle: false, updatedAt: ""),
+        pushDevices: [], features: FeatureCapabilities(taskReview: false, projectTrustPolicy: false, pushNotifications: false),
+        sequence: 0, lanApprovalsEnabled: false
     )
 
     enum CodingKeys: String, CodingKey {
         case userProfile, projects, sessions, posts, tasks, commands, workspaces
         case seenPostIds, dismissedFeedItemIds, taskTimelineCursors, taskPreferences
-        case actions, sequence, lanApprovalsEnabled
+        case actions, reviews, trustPolicies, trustAudit, notificationSettings, pushDevices, features
+        case sequence, lanApprovalsEnabled
     }
 
     init(
@@ -258,6 +362,9 @@ struct Snapshot: Codable, Hashable {
         workspaces: [TrustedWorkspace], seenPostIds: [String],
         dismissedFeedItemIds: [String], taskTimelineCursors: [String: String],
         taskPreferences: [TaskPreference], actions: [PendingAction],
+        reviews: [TaskReview], trustPolicies: [ProjectTrustPolicy], trustAudit: [TrustAuditEntry],
+        notificationSettings: NotificationSettings, pushDevices: [PushDeviceRegistration],
+        features: FeatureCapabilities,
         sequence: Int, lanApprovalsEnabled: Bool
     ) {
         self.userProfile = userProfile
@@ -272,6 +379,12 @@ struct Snapshot: Codable, Hashable {
         self.taskTimelineCursors = taskTimelineCursors
         self.taskPreferences = taskPreferences
         self.actions = actions
+        self.reviews = reviews
+        self.trustPolicies = trustPolicies
+        self.trustAudit = trustAudit
+        self.notificationSettings = notificationSettings
+        self.pushDevices = pushDevices
+        self.features = features
         self.sequence = sequence
         self.lanApprovalsEnabled = lanApprovalsEnabled
     }
@@ -290,6 +403,12 @@ struct Snapshot: Codable, Hashable {
         taskTimelineCursors = try c.decodeIfPresent([String: String].self, forKey: .taskTimelineCursors) ?? [:]
         taskPreferences = try c.decodeIfPresent([TaskPreference].self, forKey: .taskPreferences) ?? []
         actions = try c.decodeIfPresent([PendingAction].self, forKey: .actions) ?? []
+        reviews = try c.decodeIfPresent([TaskReview].self, forKey: .reviews) ?? []
+        trustPolicies = try c.decodeIfPresent([ProjectTrustPolicy].self, forKey: .trustPolicies) ?? []
+        trustAudit = try c.decodeIfPresent([TrustAuditEntry].self, forKey: .trustAudit) ?? []
+        notificationSettings = try c.decodeIfPresent(NotificationSettings.self, forKey: .notificationSettings) ?? Snapshot.empty.notificationSettings
+        pushDevices = try c.decodeIfPresent([PushDeviceRegistration].self, forKey: .pushDevices) ?? []
+        features = try c.decodeIfPresent(FeatureCapabilities.self, forKey: .features) ?? Snapshot.empty.features
         sequence = try c.decodeIfPresent(Int.self, forKey: .sequence) ?? 0
         lanApprovalsEnabled = try c.decodeIfPresent(Bool.self, forKey: .lanApprovalsEnabled) ?? false
     }
@@ -308,6 +427,13 @@ struct ServerEnvelope: Codable {
     var postId: String?
     var itemId: String?
     var preference: TaskPreference?
+    var review: TaskReview?
+    var reviews: [TaskReview]?
+    var policy: ProjectTrustPolicy?
+    var policies: [ProjectTrustPolicy]?
+    var audit: [TrustAuditEntry]?
+    var settings: NotificationSettings?
+    var registration: PushDeviceRegistration?
     var action: PendingAction?
     var actionId: String?
     var ok: Bool?

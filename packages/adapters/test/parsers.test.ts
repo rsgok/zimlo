@@ -31,6 +31,14 @@ describe("Codex 0.144.6 fixture contract", () => {
     expect(task.events).toEqual([expect.objectContaining({ kind: "user_instruction", payload: { prompt: "优化任务列表" } })]);
     expect(context.events).toEqual([]);
   });
+
+  it("does not treat write_stdin as a file mutation", () => {
+    const state: ParserState = { provider: "codex", providerSessionId: "fallback", toolCalls: new Map() };
+    const stdin = parseCodexLine('{"type":"response_item","payload":{"type":"function_call","name":"write_stdin","call_id":"a","arguments":"{\\"session_id\\":1,\\"chars\\":\\"y\\"}"}}', state);
+    const patch = parseCodexLine('{"type":"response_item","payload":{"type":"custom_tool_call","name":"apply_patch","call_id":"b","input":{"patch":"*** Begin Patch"}}}', state);
+    expect(stdin.events.map((event) => event.kind)).toEqual([]);
+    expect(patch.events).toEqual([expect.objectContaining({ kind: "files_changed" })]);
+  });
 });
 
 describe("Claude Code 2.1.207 fixture contract", () => {

@@ -1,10 +1,11 @@
 import type { ClientCommand, TaskCommand } from "@zimlo/protocol";
+import { ProviderBadge } from "./ProviderBadge";
 import { runtimeLabel } from "./sessionPresentation";
 
 interface TaskCommandFailureCardProps {
   command: TaskCommand;
   send: (command: ClientCommand) => void;
-  position: number;
+  position: number | null;
   total: number;
 }
 
@@ -15,7 +16,7 @@ export function TaskCommandFailureCard({ command, send, position, total }: TaskC
     <article className={`feed-post ${failed ? "post-failure template-marker is-attention" : "post-progress template-paper"} command-failure-card`}>
       <div className="post-topline">
         <div><span className="post-kind">{failed ? "新任务启动失败" : "正在启动"}</span><span className="post-author">ZIMLO</span></div>
-        <span className="post-position">{String(position).padStart(2, "0")} / {String(total).padStart(2, "0")}</span>
+        {position !== null && <span className="post-position">{String(position).padStart(2, "0")} / {String(total).padStart(2, "0")}</span>}
       </div>
       <div className="post-copy">
         <p className="post-time">{failed ? "需要你处理" : "任务已经进入可靠队列"}</p>
@@ -24,7 +25,7 @@ export function TaskCommandFailureCard({ command, send, position, total }: TaskC
         <ul className="post-highlights"><li>Runtime：{runtimeLabel(command.provider)}</li><li>项目：{project}</li></ul>
       </div>
       <div className="post-footer">
-        <div className="session-meta"><span className={`provider provider-${command.provider}`}>{runtimeLabel(command.provider)}</span><span>未创建 session</span></div>
+        <div className="session-meta"><ProviderBadge provider={command.provider} labelMode="icon" /><span>未创建 session</span></div>
         {failed && <button className="primary-button" onClick={() => send({ type: "task.command.retry", commandId: command.id, idempotencyKey: crypto.randomUUID() })}>重试任务</button>}
       </div>
     </article>

@@ -47,6 +47,7 @@ export class DeviceManager {
       revokedAt: null,
       isLocalAdmin: true,
       canApprove: true,
+      canManageTrust: true,
     });
   }
 
@@ -99,6 +100,7 @@ export class DeviceManager {
       revokedAt: null,
       isLocalAdmin: false,
       canApprove: false,
+      canManageTrust: false,
     });
     this.pairings.delete(pairing.id);
     return { device, serverProof: makeProof(pairKey, `server:${device.id}`) };

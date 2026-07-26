@@ -45,6 +45,12 @@
 	<string>使用语音快速布置任务和追加指令。</string>
 	<key>NSSpeechRecognitionUsageDescription</key>
 	<string>把你的语音转换成任务输入。</string>
+	<key>ZimloPushRelayURL</key>
+	<string>$(ZIMLO_PUSH_RELAY_URL)</string>
+	<key>ZimloPushRegistrationSecret</key>
+	<string>$(ZIMLO_PUSH_REGISTRATION_SECRET)</string>
+	<key>ZimloKeychainAccessGroup</key>
+	<string>$(AppIdentifierPrefix)com.zimlo.shared</string>
 	<key>UILaunchScreen</key>
 	<dict/>
 	<key>UISupportedInterfaceOrientations</key>

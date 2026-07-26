@@ -11,6 +11,11 @@ const DURABLE_COMMAND_TYPES = new Set<ClientCommand["type"]>([
   "feed.dismiss",
   "user.profile.update",
   "agent.profile.update",
+  "review.respond",
+  "trust.policy.update",
+  "notification.settings.update",
+  "notification.device.register",
+  "notification.device.unregister",
 ]);
 
 export interface CommandOutboxEntry {
@@ -50,6 +55,14 @@ export function commandSemanticKey(command: ClientCommand): string {
     case "agent.profile.update":
       return `${command.type}:${command.projectId}`;
     case "user.profile.update":
+      return command.type;
+    case "review.respond":
+      return `${command.type}:${command.reviewId}:${command.decision}:${command.note?.trim() ?? ""}`;
+    case "trust.policy.update":
+      return `${command.type}:${command.projectId}`;
+    case "notification.settings.update":
+    case "notification.device.register":
+    case "notification.device.unregister":
       return command.type;
     default:
       return `${command.type}:${JSON.stringify(command)}`;
@@ -98,7 +111,7 @@ export function enqueueCommand(
   const semanticKey = commandSemanticKey(command);
   const existing = entries.find((entry) => entry.semanticKey === semanticKey);
   if (existing) {
-    if (command.type === "agent.profile.update" || command.type === "user.profile.update") {
+    if (command.type === "agent.profile.update" || command.type === "user.profile.update" || command.type === "trust.policy.update" || command.type === "notification.settings.update" || command.type === "notification.device.register") {
       const replacement = { ...existing, command, enqueuedAt: now };
       return { entries: entries.map((entry) => entry.id === existing.id ? replacement : entry), entry: replacement, added: false };
     }

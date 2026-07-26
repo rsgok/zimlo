@@ -10,7 +10,7 @@ interface ProcessParent {
 
 export function surfaceFromProcessChain(chain: ProcessParent[]): SessionSurface {
   if (chain.some((process) => process.tty && process.tty !== "??" && process.tty !== "?")) return "cli";
-  if (chain.some((process) => /(?:\/Applications\/[^\n]*Claude(?: Code)?\.app\/|Claude(?: Code)? Helper)/u.test(process.command))) return "gui";
+  if (chain.some((process) => /(?:\/Applications\/[^\n]*(?:Claude(?: Code)?|ChatGPT|Codex)\.app\/|(?:Claude(?: Code)?|ChatGPT|Codex) Helper)/u.test(process.command))) return "gui";
   return "unknown";
 }
 

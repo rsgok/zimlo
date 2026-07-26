@@ -4,6 +4,7 @@ struct TaskDetailView: View {
     @ObservedObject var model: AppModel
     let session: AgentSession
     @State private var followUp = ""
+    @State private var reviewChangesMode = false
 
     init(model: AppModel, session: AgentSession) {
         self.model = model
@@ -25,29 +26,11 @@ struct TaskDetailView: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            HStack(spacing: 12) {
-                Button { model.selectedSession = nil } label: {
-                    Image(systemName: "arrow.left").font(.system(size: 17, weight: .bold))
-                }
-                VStack(alignment: .leading, spacing: 1) {
-                    Text(project?.agentProfile.displayName ?? session.title)
-                        .font(.system(size: 15, weight: .black)).lineLimit(1)
-                    Text("\(timelineCount) 条关键动态")
-                        .font(.system(size: 10, weight: .medium)).foregroundStyle(ZColor.muted)
-                }
-                Spacer()
-                Text(statusLabel).font(.system(size: 10, weight: .black))
-                    .padding(.horizontal, 10).padding(.vertical, 6)
-                    .background(statusColor.opacity(0.16)).foregroundStyle(statusColor).clipShape(Capsule())
-            }
-            .foregroundStyle(ZColor.ink)
-            .padding(.horizontal, 16).frame(height: 52)
-            .background(ZColor.paper)
-
             ScrollView {
                 LazyVStack(spacing: 0) {
                     compactHeader
                     if !pendingActions.isEmpty { attentionSection }
+                    if let review = latestReview { reviewSection(review) }
                     timeline
                 }
             }
@@ -60,9 +43,15 @@ struct TaskDetailView: View {
                     Text("当前有 \(activeQueue.count) 条指令正在执行或排队")
                         .font(.system(size: 10, weight: .semibold)).foregroundStyle(ZColor.muted)
                 }
-                Button(willQueue ? "加入队列" : "发送") {
+                Button(reviewChangesMode ? "发送修改要求" : willQueue ? "加入队列" : "发送") {
                     let value = followUp.trimmingCharacters(in: .whitespacesAndNewlines)
-                    model.followUp(sessionId: session.id, text: value)
+                    if reviewChangesMode, let review = latestReview {
+                        model.respondReview(review, decision: "request_changes", note: value)
+                        reviewChangesMode = false
+                        followUp = ""
+                    } else {
+                        model.followUp(sessionId: session.id, text: value)
+                    }
                 }
                 .buttonStyle(ActionButtonStyle(primary: true))
                 .disabled(!canContinue || followUp.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || duplicateActive)
@@ -89,14 +78,65 @@ struct TaskDetailView: View {
         }
     }
 
+    private var latestReview: TaskReview? {
+        model.snapshot.reviews.filter { $0.sessionId == session.id }.max { $0.version < $1.version }
+    }
+
+    @ViewBuilder
+    private func reviewSection(_ review: TaskReview) -> some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack(alignment: .top) {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("RESULT REVIEW · V\(review.version)").font(.system(size: 9, weight: .black)).foregroundStyle(ZColor.muted)
+                    Text(review.bundle.conclusion).font(.system(size: 19, weight: .black))
+                }
+                Spacer()
+                Text(review.state == "unreviewed" ? "等待确认" : review.state == "accepted" ? "已接受" : review.state == "changes_requested" ? "已要求修改" : "已有新版本")
+                    .font(.system(size: 9, weight: .black)).foregroundStyle(ZColor.muted)
+            }
+            if let impact = review.bundle.impact {
+                Text(impact).font(.system(size: 12, weight: .medium)).foregroundStyle(ZColor.ink.opacity(0.76))
+            }
+            HStack {
+                Text(review.bundle.evidenceSource == "app_server" ? "应用已验证" : review.bundle.evidenceSource == "hook" ? "Hook 已验证" : "Agent 报告")
+                Spacer()
+                if !review.bundle.changedFiles.isEmpty { Text("\(review.bundle.changedFiles.count) 个文件") }
+            }
+            .font(.system(size: 9, weight: .bold)).foregroundStyle(ZColor.muted)
+            ForEach(review.bundle.tests, id: \.detail) { test in
+                Text("\(test.label) · \(test.detail)")
+                    .font(.system(size: 10, weight: .medium)).foregroundStyle(ZColor.ink.opacity(0.72))
+            }
+            if review.state == "unreviewed" {
+                HStack {
+                    Button("接受结果") { model.respondReview(review, decision: "accept") }
+                        .buttonStyle(ActionButtonStyle(primary: true))
+                    Button("要求修改") {
+                        reviewChangesMode = true
+                        model.notice = "请在底部输入具体修改要求"
+                    }
+                    .buttonStyle(ActionButtonStyle(primary: false))
+                }
+            }
+        }
+        .padding(16)
+        .background(ZColor.acid.opacity(0.09))
+        .overlay(RoundedRectangle(cornerRadius: 16).stroke(ZColor.line))
+        .clipShape(RoundedRectangle(cornerRadius: 16))
+        .padding(.horizontal, 14).padding(.top, 12)
+    }
+
     private var compactHeader: some View {
         VStack(alignment: .leading, spacing: 13) {
             HStack(spacing: 10) {
                 AgentAvatar(value: project?.agentProfile.avatar ?? "Z", size: 42)
                 VStack(alignment: .leading, spacing: 2) {
                     Text(project?.agentProfile.displayName ?? session.provider.label).font(.system(size: 16, weight: .black))
-                    Text("\(session.runtimeLabel) · \(session.projectName ?? session.cwd?.split(separator: "/").last.map(String.init) ?? "未归属")")
-                        .font(.system(size: 11, weight: .medium)).foregroundStyle(ZColor.muted).lineLimit(1)
+                    HStack(spacing: 6) {
+                        ProviderBadge(provider: session.provider, surface: session.surface)
+                        Text(session.projectName ?? session.cwd?.split(separator: "/").last.map(String.init) ?? "未归属")
+                            .font(.system(size: 11, weight: .medium)).foregroundStyle(ZColor.muted).lineLimit(1)
+                    }
                 }
             }
             VStack(alignment: .leading, spacing: 5) {
@@ -343,46 +383,188 @@ struct NewTaskView: View {
     @AppStorage("zimlo.lastProvider") private var lastProvider = Provider.codex.rawValue
     @AppStorage("zimlo.newTaskDraft") private var text = ""
     @State private var search = ""
+    @State private var choosingAgent = false
+    @State private var submitting = false
+
+    private var selectedWorkspace: TrustedWorkspace? {
+        model.snapshot.workspaces.first { $0.id == lastWorkspace }
+    }
+
+    private var selectedProject: Project? {
+        guard let workspace = selectedWorkspace else { return nil }
+        return model.snapshot.projects.first { $0.paths.contains(workspace.path) }
+    }
+
+    private var selectedProvider: Provider {
+        Provider(rawValue: lastProvider) ?? .codex
+    }
 
     private var visibleWorkspaces: [TrustedWorkspace] {
-        let values = search.isEmpty ? model.snapshot.workspaces : model.snapshot.workspaces.filter {
-            $0.label.localizedCaseInsensitiveContains(search) || $0.path.localizedCaseInsensitiveContains(search)
+        let values = search.isEmpty ? model.snapshot.workspaces : model.snapshot.workspaces.filter { workspace in
+            let project = model.snapshot.projects.first { project in project.paths.contains(workspace.path) }
+            return workspace.label.localizedCaseInsensitiveContains(search)
+                || workspace.path.localizedCaseInsensitiveContains(search)
+                || project?.agentProfile.displayName.localizedCaseInsensitiveContains(search) == true
         }
         return values.sorted { $0.lastUsedAt > $1.lastUsedAt }
     }
 
     var body: some View {
         NavigationStack {
-            VStack(alignment: .leading, spacing: 18) {
-                Picker("Runtime", selection: $lastProvider) {
-                    ForEach(Provider.allCases) { provider in Text(provider.label).tag(provider.rawValue) }
-                }
-                .pickerStyle(.segmented)
-                TextField("搜索 Agent、项目或路径", text: $search)
-                    .textFieldStyle(.roundedBorder).foregroundStyle(ZColor.ink)
-                Picker("Project Agent", selection: $lastWorkspace) {
-                    ForEach(visibleWorkspaces) { workspace in
-                        Text("\(workspace.label) · \(workspace.path)").tag(workspace.id)
+            VStack(spacing: 0) {
+                ScrollView {
+                    VStack(alignment: .leading, spacing: 24) {
+                        VStack(alignment: .leading, spacing: 9) {
+                            HStack {
+                                Text("你想完成什么？").font(.system(size: 14, weight: .black))
+                                Spacer()
+                                Text(text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? "草稿自动保存" : "草稿已保存")
+                                    .font(.system(size: 10, weight: .bold)).foregroundStyle(ZColor.muted)
+                            }
+                            VoiceInput(
+                                text: $text,
+                                placeholder: "例如：检查首页白屏原因，修复后跑完测试并告诉我结果…",
+                                minHeight: 150
+                            )
+                            Text("直接描述想要的结果；Agent 会自己拆解步骤，需要决定时再来找你。")
+                                .font(.system(size: 10, weight: .medium)).foregroundStyle(ZColor.muted)
+                        }
+
+                        VStack(alignment: .leading, spacing: 9) {
+                            HStack {
+                                Text("交给谁").font(.system(size: 14, weight: .black))
+                                Spacer()
+                                Text("已沿用最近选择").font(.system(size: 10, weight: .bold)).foregroundStyle(ZColor.muted)
+                            }
+                            Button {
+                                withAnimation(.easeOut(duration: 0.18)) { choosingAgent.toggle() }
+                            } label: {
+                                HStack(spacing: 11) {
+                                    AgentAvatar(value: selectedProject?.agentProfile.avatar ?? "●", size: 46)
+                                    VStack(alignment: .leading, spacing: 3) {
+                                        Text(selectedProject?.agentProfile.displayName ?? selectedWorkspace?.label ?? "选择 Agent")
+                                            .font(.system(size: 14, weight: .black)).lineLimit(1)
+                                        Text(selectedProject.map { "\($0.name) · 已记住项目上下文" } ?? selectedWorkspace?.label ?? "暂无可信项目")
+                                            .font(.system(size: 9, weight: .medium)).foregroundStyle(ZColor.muted).lineLimit(1)
+                                    }
+                                    Spacer()
+                                    ProviderBadge(provider: selectedProvider, iconOnly: true)
+                                    Text(choosingAgent ? "收起" : "更换").font(.system(size: 10, weight: .black)).foregroundStyle(ZColor.sage)
+                                }
+                                .padding(12).foregroundStyle(ZColor.ink)
+                                .background(ZColor.acid.opacity(0.08))
+                                .overlay(RoundedRectangle(cornerRadius: 16, style: .continuous).stroke(ZColor.sage.opacity(0.28)))
+                                .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+                            }
+                            .buttonStyle(.plain)
+                            .disabled(model.snapshot.workspaces.isEmpty)
+
+                            if choosingAgent {
+                                VStack(spacing: 11) {
+                                    TextField("搜索 Agent 或项目", text: $search)
+                                        .textFieldStyle(.roundedBorder).foregroundStyle(ZColor.ink)
+                                    LazyVStack(spacing: 0) {
+                                        ForEach(visibleWorkspaces) { workspace in
+                                            let project = model.snapshot.projects.first { $0.paths.contains(workspace.path) }
+                                            Button {
+                                                choose(workspace, project: project)
+                                            } label: {
+                                                HStack(spacing: 10) {
+                                                    AgentAvatar(value: project?.agentProfile.avatar ?? "●", size: 36)
+                                                    VStack(alignment: .leading, spacing: 2) {
+                                                        Text(project?.agentProfile.displayName ?? workspace.label)
+                                                            .font(.system(size: 12, weight: .black)).lineLimit(1)
+                                                        Text(project?.name ?? workspace.label)
+                                                            .font(.system(size: 9, weight: .medium)).foregroundStyle(ZColor.muted).lineLimit(1)
+                                                    }
+                                                    Spacer()
+                                                    HStack(spacing: 3) {
+                                                        ForEach(workspace.providers) { ProviderBadge(provider: $0, iconOnly: true) }
+                                                    }
+                                                    if workspace.id == lastWorkspace {
+                                                        Image(systemName: "checkmark").font(.system(size: 11, weight: .black)).foregroundStyle(ZColor.sage)
+                                                    }
+                                                }
+                                                .padding(.horizontal, 10).padding(.vertical, 8)
+                                                .foregroundStyle(ZColor.ink)
+                                                .background(workspace.id == lastWorkspace ? ZColor.acid.opacity(0.1) : Color.white.opacity(0.65))
+                                            }
+                                            .buttonStyle(.plain)
+                                            Divider()
+                                        }
+                                    }
+                                    .frame(maxHeight: 220)
+                                    .clipShape(RoundedRectangle(cornerRadius: 13, style: .continuous))
+
+                                    HStack {
+                                        Text("执行方式").font(.system(size: 10, weight: .bold)).foregroundStyle(ZColor.muted)
+                                        Spacer()
+                                        ForEach(Provider.allCases) { provider in
+                                            Button {
+                                                lastProvider = provider.rawValue
+                                            } label: {
+                                                HStack(spacing: 5) {
+                                                    ProviderIcon(provider: provider)
+                                                    Text(provider.label).font(.system(size: 10, weight: .bold))
+                                                }
+                                                .padding(.horizontal, 10).padding(.vertical, 7)
+                                                .foregroundStyle(ZColor.ink)
+                                                .background(lastProvider == provider.rawValue ? Color.white : Color.clear)
+                                                .overlay(Capsule().stroke(lastProvider == provider.rawValue ? ZColor.muted : ZColor.line))
+                                                .clipShape(Capsule())
+                                            }
+                                            .buttonStyle(.plain)
+                                            .disabled(selectedWorkspace?.providers.contains(provider) == false)
+                                            .opacity(selectedWorkspace?.providers.contains(provider) == false ? 0.32 : 1)
+                                        }
+                                    }
+                                }
+                                .padding(12)
+                                .background(ZColor.line.opacity(0.35))
+                                .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+                            }
+                        }
+
+                        if model.snapshot.workspaces.isEmpty {
+                            Text("先在 Mac 的 Codex 或 Claude Code 中打开一次项目，Zimlo 才能安全地把任务交给它。")
+                                .font(.system(size: 12, weight: .medium)).foregroundStyle(ZColor.coral)
+                        }
                     }
+                    .padding(20)
                 }
-                .pickerStyle(.menu).tint(ZColor.ink)
-                VoiceInput(text: $text, placeholder: "说出或输入你想完成什么…")
-                Spacer()
-                if model.snapshot.workspaces.isEmpty {
-                    Text("先在 Mac 的 Codex 或 Claude Code 中打开一次项目，Zimlo 才会把它加入可信列表。")
-                        .font(.system(size: 12, weight: .medium)).foregroundStyle(ZColor.coral)
+
+                HStack(spacing: 14) {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(lastWorkspace.isEmpty ? "还没有可用 Agent" : "交给 \(selectedProject?.agentProfile.displayName ?? selectedWorkspace?.label ?? "Agent")")
+                            .font(.system(size: 11, weight: .black)).lineLimit(1)
+                        Text("提交后可离开，任务会继续运行")
+                            .font(.system(size: 9, weight: .medium)).foregroundStyle(ZColor.muted)
+                    }
+                    Spacer()
+                    Button {
+                        guard !submitting else { return }
+                        submitting = true
+                        model.createTask(
+                            provider: selectedProvider,
+                            workspaceId: lastWorkspace,
+                            text: text.trimmingCharacters(in: .whitespacesAndNewlines)
+                        )
+                        text = ""
+                        dismiss()
+                    } label: {
+                        HStack { Text("开始任务"); Image(systemName: "arrow.right") }
+                    }
+                    .buttonStyle(ActionButtonStyle(primary: true))
+                    .frame(width: 142)
+                    .disabled(submitting || lastWorkspace.isEmpty || text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
                 }
-                Button("开始任务") {
-                    guard let provider = Provider(rawValue: lastProvider) else { return }
-                    model.createTask(provider: provider, workspaceId: lastWorkspace, text: text.trimmingCharacters(in: .whitespacesAndNewlines))
-                    text = ""
-                    dismiss()
-                }
-                .buttonStyle(ActionButtonStyle(primary: true))
-                .disabled(lastWorkspace.isEmpty || text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                .padding(.horizontal, 20).padding(.vertical, 13)
+                .background(ZColor.paper)
+                .overlay(alignment: .top) { Divider() }
             }
-            .padding(20).foregroundStyle(ZColor.ink).background(ZColor.paper)
-            .navigationTitle("布置新任务")
+            .foregroundStyle(ZColor.ink).background(ZColor.paper)
+            .navigationTitle("新任务")
+            .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) { Button("取消") { dismiss() }.foregroundStyle(ZColor.ink) }
             }
@@ -396,7 +578,23 @@ struct NewTaskView: View {
                 if !model.snapshot.workspaces.contains(where: { $0.id == lastWorkspace }) {
                     lastWorkspace = visibleWorkspaces.first?.id ?? ""
                 }
+                if let workspace = selectedWorkspace,
+                   !workspace.providers.contains(selectedProvider),
+                   let first = workspace.providers.first {
+                    lastProvider = first.rawValue
+                }
             }
         }
+    }
+
+    private func choose(_ workspace: TrustedWorkspace, project: Project?) {
+        lastWorkspace = workspace.id
+        if let preferred = project?.agentProfile.defaultProvider, workspace.providers.contains(preferred) {
+            lastProvider = preferred.rawValue
+        } else if !workspace.providers.contains(selectedProvider), let first = workspace.providers.first {
+            lastProvider = first.rawValue
+        }
+        search = ""
+        withAnimation(.easeOut(duration: 0.18)) { choosingAgent = false }
     }
 }

@@ -1,0 +1,141 @@
+import CryptoKit
+import Foundation
+import UIKit
+import UserNotifications
+
+@MainActor
+final class NotificationManager: NSObject, UNUserNotificationCenterDelegate {
+    static let shared = NotificationManager()
+
+    var onRegistration: ((String, String) -> Void)?
+    var onRoute: ((String) -> Void)?
+    var onError: ((String) -> Void)?
+
+    private lazy var routePrivateKey: Curve25519.KeyAgreement.PrivateKey = {
+        if let stored = KeychainStore.loadPushPrivateKey(),
+           let key = try? Curve25519.KeyAgreement.PrivateKey(rawRepresentation: stored) {
+            return key
+        }
+        let key = Curve25519.KeyAgreement.PrivateKey()
+        try? KeychainStore.savePushPrivateKey(key.rawRepresentation)
+        return key
+    }()
+
+    func configure() {
+        UNUserNotificationCenter.current().delegate = self
+    }
+
+    func requestAuthorization() async -> Bool {
+        do {
+            let allowed = try await UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .badge, .sound])
+            if allowed { UIApplication.shared.registerForRemoteNotifications() }
+            return allowed
+        } catch {
+            onError?("通知权限请求失败：\(error.localizedDescription)")
+            return false
+        }
+    }
+
+    func authorizationStatus() async -> UNAuthorizationStatus {
+        await UNUserNotificationCenter.current().notificationSettings().authorizationStatus
+    }
+
+    func didRegister(deviceToken: Data) {
+        let token = deviceToken.map { String(format: "%02x", $0) }.joined()
+        let publicKey = ZimloCrypto.base64URL(routePrivateKey.publicKey.rawRepresentation)
+        Task { await registerWithRelay(token: token, publicKey: publicKey) }
+    }
+
+    func didFailRegistration(_ error: Error) {
+        onError?("APNs 注册失败：\(error.localizedDescription)")
+    }
+
+    private func registerWithRelay(token: String, publicKey: String) async {
+        guard let rawURL = Bundle.main.object(forInfoDictionaryKey: "ZimloPushRelayURL") as? String,
+              rawURL.hasPrefix("https://"),
+              let baseURL = URL(string: rawURL) else {
+            onError?("通知服务尚未配置，请设置 ZimloPushRelayURL。")
+            return
+        }
+        var request = URLRequest(url: baseURL.appending(path: "v1/devices"))
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "content-type")
+        if let secret = Bundle.main.object(forInfoDictionaryKey: "ZimloPushRegistrationSecret") as? String, !secret.isEmpty {
+            request.setValue("Bearer \(secret)", forHTTPHeaderField: "authorization")
+        }
+        request.httpBody = try? JSONSerialization.data(withJSONObject: [
+            "platform": "ios",
+            "token": token,
+            "publicKey": publicKey,
+        ])
+        do {
+            let (data, response) = try await URLSession.shared.data(for: request)
+            guard let http = response as? HTTPURLResponse, 200..<300 ~= http.statusCode,
+                  let object = try JSONSerialization.jsonObject(with: data) as? [String: Any],
+                  let endpoint = object["endpoint"] as? String else {
+                throw URLError(.badServerResponse)
+            }
+            onRegistration?(endpoint, publicKey)
+        } catch {
+            onError?("通知设备注册失败：\(error.localizedDescription)")
+        }
+    }
+
+    nonisolated func userNotificationCenter(
+        _ center: UNUserNotificationCenter,
+        didReceive response: UNNotificationResponse
+    ) async {
+        let info = response.notification.request.content.userInfo
+        guard let route = info["route"] as? [String: String],
+              let sessionId = try? await MainActor.run(body: { try self.decryptRoute(route) }) else { return }
+        await MainActor.run { self.onRoute?(sessionId) }
+    }
+
+    private func decryptRoute(_ route: [String: String]) throws -> String {
+        guard let publicKeyText = route["ephemeralPublicKey"],
+              let nonceText = route["nonce"],
+              let ciphertextText = route["ciphertext"],
+              let publicKeyData = ZimloCrypto.fromBase64URL(publicKeyText),
+              let nonceData = ZimloCrypto.fromBase64URL(nonceText),
+              let ciphertext = ZimloCrypto.fromBase64URL(ciphertextText) else {
+            throw ZimloCryptoError.invalidCiphertext
+        }
+        let peer = try Curve25519.KeyAgreement.PublicKey(rawRepresentation: publicKeyData)
+        let shared = try routePrivateKey.sharedSecretFromKeyAgreement(with: peer)
+        let key = shared.hkdfDerivedSymmetricKey(
+            using: SHA256.self,
+            salt: Data(),
+            sharedInfo: Data("zimlo-push-route-v1".utf8),
+            outputByteCount: 32
+        )
+        guard ciphertext.count >= 16 else { throw ZimloCryptoError.invalidCiphertext }
+        let split = ciphertext.count - 16
+        let sealed = try ChaChaPoly.SealedBox(
+            nonce: ChaChaPoly.Nonce(data: nonceData),
+            ciphertext: ciphertext.prefix(split),
+            tag: ciphertext.suffix(16)
+        )
+        let data = try ChaChaPoly.open(sealed, using: key, authenticating: Data("zimlo-push-route-v1".utf8))
+        let object = try JSONSerialization.jsonObject(with: data) as? [String: Any]
+        guard let sessionId = object?["sessionId"] as? String else { throw ZimloCryptoError.invalidCiphertext }
+        return sessionId
+    }
+}
+
+final class ZimloAppDelegate: NSObject, UIApplicationDelegate {
+    func application(
+        _ application: UIApplication,
+        didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]? = nil
+    ) -> Bool {
+        Task { @MainActor in NotificationManager.shared.configure() }
+        return true
+    }
+
+    func application(_ application: UIApplication, didRegisterForRemoteNotificationsWithDeviceToken deviceToken: Data) {
+        Task { @MainActor in NotificationManager.shared.didRegister(deviceToken: deviceToken) }
+    }
+
+    func application(_ application: UIApplication, didFailToRegisterForRemoteNotificationsWithError error: Error) {
+        Task { @MainActor in NotificationManager.shared.didFailRegistration(error) }
+    }
+}

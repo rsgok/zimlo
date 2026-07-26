@@ -7,7 +7,9 @@ import {
   derivePairKey,
   encryptFrame,
   makeProof,
+  openPushRoute,
   randomBytes,
+  sealPushRoute,
   verifyProof,
 } from "../src/crypto.js";
 
@@ -30,5 +32,14 @@ describe("pairing and encrypted frames", () => {
     expect(decryptFrame(keys.clientTx, 0, ciphertext, "device-a")).toEqual({ type: "snapshot.request" });
     expect(() => decryptFrame(keys.clientTx, 1, ciphertext, "device-a")).toThrow();
     expect(() => decryptFrame(keys.serverTx, 0, ciphertext, "device-a")).toThrow();
+  });
+
+  it("seals push routes so only the registered device can read them", () => {
+    const device = createKeyPair();
+    const other = createKeyPair();
+    const envelope = sealPushRoute(device.publicKey, { sessionId: "session-a" });
+    expect(openPushRoute(device.privateKey, envelope)).toEqual({ sessionId: "session-a" });
+    expect(() => openPushRoute(other.privateKey, envelope)).toThrow();
+    expect(JSON.stringify(envelope)).not.toContain("session-a");
   });
 });

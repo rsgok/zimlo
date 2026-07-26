@@ -1,5 +1,5 @@
 import { useEffect, useRef, type ReactNode } from "react";
-import type { ClientCommand, FeedPost, PendingAction, Project, Session, TaskCommand, TaskRecord } from "@zimlo/protocol";
+import type { ClientCommand, FeedPost, PendingAction, Project, Session, TaskCommand, TaskRecord, TaskReview } from "@zimlo/protocol";
 import { FeedPostView } from "./FeedPostView";
 import { ActionFeedCard } from "./ActionFeedCard";
 import { buildFeedItems, feedItemId, type FeedItem } from "./feedItems";
@@ -13,6 +13,7 @@ interface FeedViewProps {
   actions: PendingAction[];
   commands: TaskCommand[];
   tasks: TaskRecord[];
+  reviews?: TaskReview[] | undefined;
   seenPostIds: string[];
   dismissedFeedItemIds: string[];
   send: (command: ClientCommand) => boolean;
@@ -30,6 +31,7 @@ export function updateCurrentCohort(cohort: Map<string, boolean>, items: FeedIte
     const key = feedItemId(item);
     const current = cohort.get(key);
     if (current === undefined) cohort.set(key, item.unread || item.needsAction);
+    else if (current && item.type === "post" && item.settledReview) cohort.set(key, false);
     else if (!current && item.needsAction) cohort.set(key, true);
   }
 }
@@ -66,10 +68,10 @@ function SeenFeedPage({ children, postId, seen, onSeen, pageRef, historical = fa
   }} className={`feed-page ${historical ? "feed-history-page" : ""}`} aria-label={historical ? "历史 Feed 卡片" : "Feed 卡片"}>{children}</section>;
 }
 
-export function FeedView({ projects, posts, sessions, actions, commands, tasks, seenPostIds, dismissedFeedItemIds, send, onOpen, onOpenProject, onNewTask }: FeedViewProps) {
+export function FeedView({ projects, posts, sessions, actions, commands, tasks, reviews = [], seenPostIds, dismissedFeedItemIds, send, onOpen, onOpenProject, onNewTask }: FeedViewProps) {
   const sessionById = new Map(sessions.map((session) => [session.id, session]));
   const projectById = new Map(projects.map((project) => [project.id, project]));
-  const items = buildFeedItems(posts, actions, seenPostIds, commands, dismissedFeedItemIds, tasks);
+  const items = buildFeedItems(posts, actions, seenPostIds, commands, dismissedFeedItemIds, tasks, reviews);
   const currentCohort = useRef(new Map<string, boolean>());
   const historyPage = useRef<HTMLElement>(null);
   const timelineRef = useRef<HTMLDivElement>(null);
@@ -81,7 +83,6 @@ export function FeedView({ projects, posts, sessions, actions, commands, tasks, 
   const historyItems = items
     .filter((item) => !currentCohort.current.get(feedItemId(item)))
     .sort((left, right) => right.createdAt.localeCompare(left.createdAt));
-  const orderedItems = [...currentItems, ...historyItems];
 
   useEffect(() => {
     if (positionedOnFirstCard.current || currentItems.length === 0 || !timelineRef.current) return;
@@ -93,7 +94,7 @@ export function FeedView({ projects, posts, sessions, actions, commands, tasks, 
   }, [currentItems.length]);
 
   const renderItem = (item: FeedItem, historical = false, index = -1) => {
-    const position = orderedItems.findIndex((candidate) => feedItemId(candidate) === feedItemId(item)) + 1;
+    const position = historical ? null : index + 1;
     return (
       <SeenFeedPage
         key={feedItemId(item)}
@@ -114,18 +115,19 @@ export function FeedView({ projects, posts, sessions, actions, commands, tasks, 
             session={item.post.sessionId ? sessionById.get(item.post.sessionId) : undefined}
             project={item.post.projectId ? projectById.get(item.post.projectId) : undefined}
             actions={actions.filter((action) => item.post.pendingActionIds.includes(action.actionId))}
+            review={reviews.find((review) => review.postId === item.post.id)}
             send={send}
             onOpenProject={onOpenProject}
             needsAction={item.needsAction}
             position={position}
-            total={orderedItems.length}
+            total={currentItems.length}
           /> : item.type === "action" ? <ActionFeedCard
             action={item.action}
             session={sessionById.get(item.action.sessionId)}
             send={send}
             position={position}
-            total={orderedItems.length}
-          /> : <TaskCommandFailureCard command={item.command} send={send} position={position} total={orderedItems.length} />}
+            total={currentItems.length}
+          /> : <TaskCommandFailureCard command={item.command} send={send} position={position} total={currentItems.length} />}
         </SwipeToTask>
       </SeenFeedPage>
     );
@@ -134,13 +136,14 @@ export function FeedView({ projects, posts, sessions, actions, commands, tasks, 
   return (
     <div className="feed-stage">
       <div ref={timelineRef} className="feed-timeline" aria-label="Agent Feed">
-        {currentItems.map((item) => renderItem(item))}
+        {currentItems.map((item, index) => renderItem(item, false, index))}
         <section className="feed-page feed-finished-page" aria-label="当前 Feed 已看完">
           <div className="feed-finished-card">
-            <span className="empty-mark">✓</span>
-            <p className="eyebrow">YOU'RE ALL CAUGHT UP</p>
+            <div className="feed-finished-status">
+              <span className="empty-mark">✓</span>
+              <p className="eyebrow">YOU'RE ALL CAUGHT UP</p>
+            </div>
             <h2>{currentItems.length === 0 && historyItems.length === 0 ? "Feed 已经清空" : "当前更新已经看完"}</h2>
-            <p>现在可以布置一个新任务，或者继续向下浏览历史卡片。</p>
             <div>
               <button className="primary-button" onClick={onNewTask}>＋ 新任务</button>
               {historyItems.length > 0 && <button className="secondary-button" onClick={() => historyPage.current?.scrollIntoView({ behavior: "smooth" })}>继续看历史 ↓</button>}

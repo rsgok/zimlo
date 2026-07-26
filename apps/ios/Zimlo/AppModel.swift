@@ -1,6 +1,7 @@
 import Combine
 import Foundation
 import SwiftUI
+import UserNotifications
 
 enum MainTab: String, CaseIterable {
     case feed
@@ -21,6 +22,7 @@ struct FeedEntry: Identifiable, Hashable {
     let createdAt: String
     let needsAction: Bool
     let unread: Bool
+    let settledReview: Bool
     let priority: Int
     let sessionId: String?
     let content: Content
@@ -38,6 +40,7 @@ final class AppModel: ObservableObject {
     @Published var showingNewTask = false
     @Published var newTaskProjectId: String?
     @Published var notice: String?
+    @Published var notificationPermission = "正在检查"
 
     private var bridgeObserver: AnyCancellable?
     private var outbox: [OutboxEntry] = []
@@ -50,6 +53,28 @@ final class AppModel: ObservableObject {
         )) ?? []
         bridgeObserver = bridge.objectWillChange.sink { [weak self] _ in self?.objectWillChange.send() }
         bridge.onMessage = { [weak self] message in self?.apply(message) }
+        NotificationManager.shared.onRegistration = { [weak self] endpoint, publicKey in
+            guard let self else { return }
+            _ = self.sendDurable(ClientCommand(type: "notification.device.register", [
+                "endpoint": .string(endpoint),
+                "publicKey": .string(publicKey),
+                "idempotencyKey": .string(UUID().uuidString),
+            ]))
+        }
+        NotificationManager.shared.onRoute = { [weak self] sessionId in
+            guard let self else { return }
+            if self.snapshot.sessions.contains(where: { $0.id == sessionId }) {
+                self.openTask(sessionId: sessionId)
+            } else {
+                UserDefaults.standard.set(sessionId, forKey: "zimlo.pending-push-route")
+                self.notice = "任务状态将在连接 Mac 后打开"
+            }
+        }
+        NotificationManager.shared.onError = { [weak self] message in self?.notice = message }
+        Task { [weak self] in
+            let status = await NotificationManager.shared.authorizationStatus()
+            self?.notificationPermission = Self.notificationPermissionLabel(status)
+        }
         bridge.onSecureConnection = { [weak self] in
             guard let self else { return }
             for entry in self.outbox { _ = self.bridge.send(entry.command) }
@@ -70,6 +95,7 @@ final class AppModel: ObservableObject {
         let pendingActionIds = Set(snapshot.actions.filter { $0.state == "pending" }.map(\.actionId))
         let linkedActionIds = Set(snapshot.posts.flatMap(\.pendingActionIds))
         let taskById = Dictionary(uniqueKeysWithValues: snapshot.tasks.map { ($0.id, $0) })
+        let reviewByPostId = Dictionary(uniqueKeysWithValues: snapshot.reviews.map { ($0.postId, $0) })
         var taskBySession: [String: TaskRecord] = [:]
         for task in snapshot.tasks {
             guard let sessionId = task.sessionId else { continue }
@@ -78,15 +104,19 @@ final class AppModel: ObservableObject {
 
         var entries = mergedPosts(snapshot.posts).map { post -> FeedEntry in
             let task = taskById[post.taskId] ?? post.sessionId.flatMap { taskBySession[$0] }
+            let review = reviewByPostId[post.id]
+            let settledReview = review != nil && review?.state != "unreviewed"
             let linkedPending = post.pendingActionIds.contains(where: pendingActionIds.contains)
             let directReply = post.pendingActionIds.isEmpty
                 && (task == nil || ["waiting_input", "user_review"].contains(task?.state ?? ""))
-            let needsAction = post.actionRequired && (linkedPending || directReply)
-            let unread = !seen.contains(post.id)
+            let needsAction = review?.state == "unreviewed"
+                || (post.actionRequired && (linkedPending || directReply))
+            let unread = !settledReview && !seen.contains(post.id)
             let kindPriority = ["failure": 1, "result": 2, "decision": 3, "attention": 3, "progress": 4][post.kind] ?? 5
             return FeedEntry(
                 id: "post:\(post.id)", createdAt: post.createdAt, needsAction: needsAction,
-                unread: unread, priority: needsAction ? 0 : kindPriority + (unread ? 0 : 10),
+                unread: unread, settledReview: settledReview,
+                priority: needsAction ? 0 : kindPriority + (unread ? 0 : 10),
                 sessionId: post.sessionId, content: .post(post)
             )
         }
@@ -95,7 +125,8 @@ final class AppModel: ObservableObject {
             .map {
                 FeedEntry(
                     id: "action:\($0.actionId)", createdAt: $0.createdAt, needsAction: true,
-                    unread: true, priority: 0, sessionId: $0.sessionId, content: .action($0)
+                    unread: true, settledReview: false, priority: 0,
+                    sessionId: $0.sessionId, content: .action($0)
                 )
             }
         entries += snapshot.commands
@@ -103,7 +134,8 @@ final class AppModel: ObservableObject {
             .map {
                 FeedEntry(
                     id: "command:\($0.id)", createdAt: $0.createdAt, needsAction: $0.state == "failed",
-                    unread: true, priority: $0.state == "failed" ? 0 : 5, sessionId: nil, content: .command($0)
+                    unread: true, settledReview: false,
+                    priority: $0.state == "failed" ? 0 : 5, sessionId: nil, content: .command($0)
                 )
             }
         entries += outbox
@@ -123,7 +155,8 @@ final class AppModel: ObservableObject {
                 )
                 return FeedEntry(
                     id: "command:\(command.id)", createdAt: command.createdAt, needsAction: false,
-                    unread: true, priority: 5, sessionId: nil, content: .command(command)
+                    unread: true, settledReview: false, priority: 5,
+                    sessionId: nil, content: .command(command)
                 )
             }
         return entries
@@ -218,6 +251,57 @@ final class AppModel: ObservableObject {
         _ = sendDurable(ClientCommand(type: "action.decide", values))
     }
 
+    func respondReview(_ review: TaskReview, decision: String, note: String? = nil) {
+        var values: [String: JSONValue] = [
+            "reviewId": .string(review.id),
+            "decision": .string(decision),
+            "idempotencyKey": .string(UUID().uuidString),
+        ]
+        if let note, !note.isEmpty { values["note"] = .string(note) }
+        _ = sendDurable(ClientCommand(type: "review.respond", values))
+    }
+
+    func updateTrustPolicy(projectId: String, preset: String) {
+        _ = sendDurable(ClientCommand(type: "trust.policy.update", [
+            "projectId": .string(projectId),
+            "preset": .string(preset),
+            "idempotencyKey": .string(UUID().uuidString),
+        ]))
+    }
+
+    func updateNotificationSettings(_ settings: NotificationSettings) {
+        _ = sendDurable(ClientCommand(type: "notification.settings.update", [
+            "settings": .object([
+                "enabled": .bool(settings.enabled),
+                "approvals": .bool(settings.approvals),
+                "failures": .bool(settings.failures),
+                "reviews": .bool(settings.reviews),
+                "showTaskTitle": .bool(settings.showTaskTitle),
+            ]),
+            "idempotencyKey": .string(UUID().uuidString),
+        ]))
+    }
+
+    func requestNotifications() {
+        Task {
+            let allowed = await NotificationManager.shared.requestAuthorization()
+            notificationPermission = allowed ? "系统已允许" : "系统未允许"
+            var settings = snapshot.notificationSettings
+            settings.enabled = allowed
+            updateNotificationSettings(settings)
+            if !allowed { notice = "通知未开启，可稍后在系统设置中允许。" }
+        }
+    }
+
+    private static func notificationPermissionLabel(_ status: UNAuthorizationStatus) -> String {
+        switch status {
+        case .authorized, .provisional, .ephemeral: return "系统已允许"
+        case .denied: return "系统已拒绝"
+        case .notDetermined: return "尚未请求"
+        @unknown default: return "状态未知"
+        }
+    }
+
     func submitInput(action: PendingAction, answer: String) {
         _ = sendDurable(ClientCommand(type: "action.decide", [
             "actionId": .string(action.actionId),
@@ -297,7 +381,7 @@ final class AppModel: ObservableObject {
         let key = semanticKey(command)
         if let index = outbox.firstIndex(where: { $0.semanticKey == key }) {
             let existing = outbox[index]
-            if ["user.profile.update", "agent.profile.update"].contains(command.type) {
+            if ["user.profile.update", "agent.profile.update", "trust.policy.update", "notification.settings.update", "notification.device.register"].contains(command.type) {
                 outbox[index].command = command
                 outbox[index].enqueuedAt = ISO8601DateFormatter.zimlo.string(from: Date())
                 persistOutbox()
@@ -336,6 +420,9 @@ final class AppModel: ObservableObject {
         case "task.timeline.seen": return "\(command.type):\(string("sessionId")):\(string("itemId"))"
         case "user.profile.update": return command.type
         case "agent.profile.update": return "\(command.type):\(string("projectId"))"
+        case "review.respond": return "\(command.type):\(string("reviewId")):\(string("decision")):\(string("note"))"
+        case "trust.policy.update": return "\(command.type):\(string("projectId"))"
+        case "notification.settings.update", "notification.device.register", "notification.device.unregister": return command.type
         case "task.command.retry": return "\(command.type):\(string("commandId"))"
         default: return "\(command.type):\(command.idempotencyKey ?? UUID().uuidString)"
         }
@@ -375,6 +462,16 @@ final class AppModel: ObservableObject {
                 guard let project = message.project,
                       case .string(let projectId) = entry.command.values["projectId"] else { return false }
                 return entry.command.type == "agent.profile.update" && project.id == projectId
+            case "review.updated":
+                guard let review = message.review, case .string(let reviewId) = entry.command.values["reviewId"] else { return false }
+                return entry.command.type == "review.respond" && review.id == reviewId
+            case "trust.policy.updated":
+                guard let policy = message.policy, case .string(let projectId) = entry.command.values["projectId"] else { return false }
+                return entry.command.type == "trust.policy.update" && policy.projectId == projectId
+            case "notification.settings.updated":
+                return entry.command.type == "notification.settings.update"
+            case "notification.device.updated":
+                return ["notification.device.register", "notification.device.unregister"].contains(entry.command.type)
             case "action.result":
                 guard message.ok == true, case .string(let actionId) = entry.command.values["actionId"] else { return false }
                 return entry.command.type == "action.decide" && actionId == message.actionId
@@ -388,7 +485,14 @@ final class AppModel: ObservableObject {
         acknowledge(message)
         switch message.type {
         case "session.snapshot":
-            if let snapshot = message.snapshot { self.snapshot = snapshot }
+            if let snapshot = message.snapshot {
+                self.snapshot = snapshot
+                if let sessionId = UserDefaults.standard.string(forKey: "zimlo.pending-push-route"),
+                   snapshot.sessions.contains(where: { $0.id == sessionId }) {
+                    UserDefaults.standard.removeObject(forKey: "zimlo.pending-push-route")
+                    openTask(sessionId: sessionId)
+                }
+            }
         case "user.profile.updated":
             if let profile = message.userProfile { snapshot.userProfile = profile }
         case "project.updated":
@@ -414,6 +518,19 @@ final class AppModel: ObservableObject {
             if let sessionId = message.sessionId, let itemId = message.itemId { snapshot.taskTimelineCursors[sessionId] = itemId }
         case "task.preference.updated":
             if let preference = message.preference { upsert(&snapshot.taskPreferences, preference) }
+        case "review.updated":
+            if let review = message.review { upsert(&snapshot.reviews, review) }
+        case "reviews.list":
+            if let reviews = message.reviews { snapshot.reviews = reviews }
+        case "trust.policy.updated":
+            if let policy = message.policy { upsert(&snapshot.trustPolicies, policy) }
+        case "trust.policies":
+            if let policies = message.policies { snapshot.trustPolicies = policies }
+            if let audit = message.audit { snapshot.trustAudit = audit }
+        case "notification.settings.updated":
+            if let settings = message.settings { snapshot.notificationSettings = settings }
+        case "notification.device.updated":
+            snapshot.pushDevices = message.registration.map { [$0] } ?? []
         case "action.upsert":
             if let action = message.action { upsert(&snapshot.actions, action) }
         case "session.events":

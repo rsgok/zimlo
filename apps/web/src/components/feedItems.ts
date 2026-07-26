@@ -1,7 +1,7 @@
-import type { FeedPost, PendingAction, TaskCommand, TaskRecord } from "@zimlo/protocol";
+import type { FeedPost, PendingAction, TaskCommand, TaskRecord, TaskReview } from "@zimlo/protocol";
 
 export type FeedItem =
-  | { type: "post"; id: string; createdAt: string; needsAction: boolean; unread: boolean; priority: number; post: FeedPost }
+  | { type: "post"; id: string; createdAt: string; needsAction: boolean; unread: boolean; priority: number; settledReview?: boolean; post: FeedPost }
   | { type: "action"; id: string; createdAt: string; needsAction: true; unread: true; priority: 0; action: PendingAction }
   | { type: "command"; id: string; createdAt: string; needsAction: boolean; unread: true; priority: number; command: TaskCommand };
 
@@ -40,6 +40,7 @@ export function buildFeedItems(
   commands: TaskCommand[] = [],
   dismissedFeedItemIds: string[] = [],
   tasks: TaskRecord[] = [],
+  reviews: TaskReview[] = [],
 ): FeedItem[] {
   const linkedActionIds = new Set(posts.flatMap((post) => post.pendingActionIds));
   const pendingActionIds = new Set(actions.filter((action) => action.state === "pending").map((action) => action.actionId));
@@ -59,14 +60,17 @@ export function buildFeedItems(
   }
   const seen = new Set(seenPostIds);
   const dismissed = new Set(dismissedFeedItemIds);
+  const reviewByPostId = new Map(reviews.map((review) => [review.postId, review]));
   return [
     ...mergeRoutinePosts(posts).map((post): FeedItem => {
-      const unread = !seen.has(post.id);
+      const review = reviewByPostId.get(post.id);
+      const settledReview = Boolean(review && review.state !== "unreviewed");
+      const unread = !settledReview && !seen.has(post.id);
       const task = taskById.get(post.taskId) ?? (post.sessionId ? taskBySession.get(post.sessionId) : undefined);
       const hasLinkedPendingAction = post.pendingActionIds.some((id) => pendingActionIds.has(id));
       const directReplyIsCurrent = post.pendingActionIds.length === 0
         && (!task || ["waiting_input", "user_review"].includes(task.state));
-      const needsAction = post.actionRequired && (hasLinkedPendingAction || directReplyIsCurrent);
+      const needsAction = review?.state === "unreviewed" || (post.actionRequired && (hasLinkedPendingAction || directReplyIsCurrent));
       const covered = ["progress", "decision", "attention"].includes(post.kind)
         && (latestOutcomeByTask.get(post.sessionId ?? post.taskId) ?? "") > post.createdAt;
       return {
@@ -75,6 +79,7 @@ export function buildFeedItems(
       createdAt: post.createdAt,
       needsAction,
       unread,
+      ...(settledReview ? { settledReview: true } : {}),
       priority: needsAction ? 0 : POST_VALUE[post.kind] + (covered ? 6 : 0) + (unread ? 0 : 10),
       post,
       };

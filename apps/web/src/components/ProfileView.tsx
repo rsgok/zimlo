@@ -1,8 +1,8 @@
 import { useEffect, useState } from "react";
 import { USER_AVATAR_IDS } from "@zimlo/protocol";
-import type { ClientCommand, IntegrationStatus, Session, UserProfile } from "@zimlo/protocol";
+import type { ClientCommand, IntegrationStatus, NotificationSettings, Session, UserProfile } from "@zimlo/protocol";
 import type { CodexPluginInfo, DeviceInfo, PairingInfo } from "../hooks/useBridge";
-import { surfaceLabel } from "./sessionPresentation";
+import { ProviderBadge } from "./ProviderBadge";
 import { UserAvatar } from "./UserAvatar";
 
 interface ProfileViewProps {
@@ -14,36 +14,53 @@ interface ProfileViewProps {
   integrations: IntegrationStatus[];
   sessions: Session[];
   userProfile: UserProfile;
+  notificationSettings?: NotificationSettings | undefined;
+  pushRegistered?: boolean | undefined;
+  notificationEnabled?: boolean | undefined;
   send: (command: ClientCommand) => boolean;
   forgetDevice: () => Promise<void>;
 }
 
-export function ProfileView({ localAdmin, devices, pairing, lanApprovalsEnabled, codexPlugin, integrations, sessions, userProfile, send, forgetDevice }: ProfileViewProps) {
+function integrationStateLabel(state: IntegrationStatus["state"]) {
+  if (state === "ready") return "可用";
+  if (state === "shared") return "共用配置";
+  if (state === "partial") return "需要处理";
+  return "未连接";
+}
+
+export function ProfileView({ localAdmin, devices, pairing, lanApprovalsEnabled, codexPlugin, integrations, sessions, userProfile, notificationSettings = { enabled: false, approvals: true, failures: true, reviews: true, showTaskTitle: false, updatedAt: "" }, pushRegistered = false, notificationEnabled = true, send, forgetDevice }: ProfileViewProps) {
   const [selectedAvatarId, setSelectedAvatarId] = useState(userProfile.avatarId);
   useEffect(() => setSelectedAvatarId(userProfile.avatarId), [userProfile.avatarId]);
   const runtimeSummary = (["codex", "claude"] as const).map((provider) => {
     const runtimeSessions = sessions.filter((session) => session.provider === provider);
+    const runtimeIntegrations = integrations.filter((integration) => integration.provider === provider);
+    const usableIntegrationCount = runtimeIntegrations.filter((integration) => integration.state === "ready" || integration.state === "shared").length;
+    const needsAttention = runtimeIntegrations.some((integration) => integration.state === "partial");
+    const unavailableCount = runtimeIntegrations.filter((integration) => integration.state === "unavailable").length;
+    const checking = localAdmin && integrations.length === 0;
+    let state = "未连接";
+    if (checking) state = "正在检查";
+    else if (needsAttention || (usableIntegrationCount > 0 && unavailableCount > 0)) state = "部分可用";
+    else if (usableIntegrationCount > 0 || runtimeSessions.length > 0) state = "可用";
+
+    const active = runtimeSessions.filter((session) => session.status === "running" || session.status === "waiting").length;
+    const replyable = runtimeSessions.filter((session) => session.capabilities.replyable).length;
+    const activity = [
+      active > 0 ? `${active} 个运行中` : null,
+      replyable > 0 ? `${replyable} 个可继续` : null,
+    ].filter(Boolean).join(" · ");
     return {
       provider,
-      label: provider === "codex" ? "Codex" : "Claude Code",
-      total: runtimeSessions.length,
-      active: runtimeSessions.filter((session) => session.status === "running" || session.status === "waiting").length,
-      replyable: runtimeSessions.filter((session) => session.capabilities.replyable).length,
-      surfaces: (["gui", "cli", "managed", "unknown"] as const)
-        .map((surface) => ({ surface, count: runtimeSessions.filter((session) => session.surface === surface).length }))
-        .filter((item) => item.count > 0),
+      state,
+      activity: activity || (runtimeSessions.length > 0 ? `${runtimeSessions.length} 个任务` : "还没有任务"),
     };
   });
   return (
     <section className="profile-view">
-      <div className="section-heading">
-        <p className="eyebrow">SETTINGS</p>
-        <h2>{localAdmin ? "设备、接入与安全" : "当前设备设置"}</h2>
-      </div>
       <div className="settings-card user-avatar-card">
         <div className="user-avatar-heading">
           <UserAvatar avatarId={selectedAvatarId} className="user-avatar-current" />
-          <div><h3>你的头像</h3><p>从 24 个 Zimlo 预置头像中选择。头像会同步到所有已配对设备，不支持上传外部图片。</p></div>
+          <div><h3>你的头像</h3><p>会显示在你的指令和 Timeline 中，并同步到已连接设备。</p></div>
         </div>
         <div className="user-avatar-picker" role="list" aria-label="选择用户头像">
           {USER_AVATAR_IDS.map((avatarId, index) => (
@@ -61,115 +78,170 @@ export function ProfileView({ localAdmin, devices, pairing, lanApprovalsEnabled,
           ))}
         </div>
       </div>
-      <div className="settings-card">
-        <div>
-          <h3>连接状态</h3>
-          <p>WebSocket 的敏感消息使用设备密钥加密；初始网页仍受可信局域网边界限制。</p>
-        </div>
-        {!localAdmin && <button className="secondary-button" onClick={() => void forgetDevice()}>忘记此设备</button>}
-      </div>
 
       <div className="settings-card runtime-overview-card">
-        <div>
-          <h3>Runtime 工作能力</h3>
-          <p>Codex 和 Claude Code 是 Project Agent 可替换的执行引擎。</p>
+        <div className="settings-card-heading">
+          <div>
+            <h3>Agent 状态</h3>
+            <p>确认 Zimlo 现在能否接收新任务、继续已有任务。</p>
+          </div>
+          {localAdmin && integrations.some((integration) => integration.state === "partial" || integration.state === "unavailable") && (
+            <span className="attention-badge">需要处理</span>
+          )}
         </div>
         <div className="runtime-overview">
           {runtimeSummary.map((runtime) => (
             <div key={runtime.provider}>
-              <span className={`provider provider-${runtime.provider}`}>{runtime.label}</span>
-              <strong>{runtime.total > 0 ? "已连接" : "等待任务"}</strong>
-              <small>{runtime.active} 个运行中 · {runtime.replyable} 个可继续</small>
-              {runtime.surfaces.length > 0 && (
-                <span className="surface-summary">{runtime.surfaces.map((item) => `${surfaceLabel(item.surface)} ${item.count}`).join(" · ")}</span>
-              )}
+              <ProviderBadge provider={runtime.provider} labelMode="icon" />
+              <strong>{runtime.state}</strong>
+              <small>{runtime.activity}</small>
             </div>
           ))}
         </div>
+        {localAdmin && (
+          <div className="settings-actions">
+            <button className="primary-button" onClick={() => send({ type: "integrations.cli.install" })}>检查并修复 Agent 接入</button>
+          </div>
+        )}
       </div>
+
+      {notificationEnabled && <div className="settings-card notification-settings-card">
+        <div className="settings-card-heading">
+          <div><h3>主动通知</h3><p>{pushRegistered ? "这台设备已经可以接收需要你处理的提醒。" : "配对完成后，可接收审批、失败和结果审阅提醒。"}</p></div>
+          <span className={notificationSettings.enabled ? "attention-badge is-ready" : "attention-badge"}>{notificationSettings.enabled ? "已开启" : "已关闭"}</span>
+        </div>
+        {[
+          ["enabled", "允许 Zimlo 通知"],
+          ["approvals", "等待批准或回复"],
+          ["failures", "任务失败"],
+          ["reviews", "结果等待审阅"],
+          ["showTaskTitle", "在锁屏显示任务标题"],
+        ].map(([key, label]) => {
+          const field = key as keyof Omit<NotificationSettings, "updatedAt">;
+          return (
+            <label className="settings-switch-row" key={key}>
+              <span>{label}{field === "showTaskTitle" && <small>关闭时只显示通用隐私文案</small>}</span>
+              <button
+                type="button"
+                role="switch"
+                aria-checked={notificationSettings[field]}
+                className={`switch ${notificationSettings[field] ? "switch-on" : ""}`}
+                onClick={() => send({
+                  type: "notification.settings.update",
+                  settings: {
+                    enabled: notificationSettings.enabled,
+                    approvals: notificationSettings.approvals,
+                    failures: notificationSettings.failures,
+                    reviews: notificationSettings.reviews,
+                    showTaskTitle: notificationSettings.showTaskTitle,
+                    [field]: !notificationSettings[field],
+                  },
+                  idempotencyKey: crypto.randomUUID(),
+                })}
+              ><span /></button>
+            </label>
+          );
+        })}
+      </div>}
 
       {localAdmin && (
         <>
-          <div className="settings-card integration-card">
-            <div>
-              <h3>Runtime 接入方式</h3>
-              <p>Provider 和运行界面分开记录；同一个 Session 在 GUI、CLI 或 Zimlo 托管之间恢复时不会被拆成多个任务。</p>
-            </div>
-            <div className="integration-list">
-              {integrations.length === 0 ? <p>正在检查本机接入状态…</p> : integrations.map((integration) => (
-                <div className="integration-row" key={integration.id}>
-                  <span className={`integration-state integration-state-${integration.state}`} aria-hidden="true" />
-                  <span><strong>{integration.label}</strong><small>{integration.detail}</small></span>
-                  <em>{integration.state === "ready" ? "已就绪" : integration.state === "shared" ? "共享配置" : integration.state === "partial" ? "需修复" : "未配置"}</em>
-                </div>
-              ))}
-            </div>
-            <p className="integration-note">Zimlo 不会在启动时静默修改 Agent 配置；配置完成后，MCP 会按需自动启动 Bridge。</p>
-            <div className="settings-actions">
-              <button className="primary-button" onClick={() => send({ type: "integrations.cli.install" })}>配置 / 修复 CLI 接入</button>
-            </div>
-          </div>
-          <div className="settings-card codex-plugin-card">
-            <div>
-              <h3>Codex GUI 发帖插件</h3>
-              <p>{codexPlugin?.detail ?? "正在检查 Codex GUI 集成…"}</p>
-              <small>插件让新任务获得发帖与状态工具，并按需自动启动 Zimlo；普通对话可静默结束，无需输入 /hooks。</small>
-            </div>
-            <div className="settings-actions">
-              <button className="primary-button" onClick={() => send({ type: "codex.plugin.install" })}>
-                {codexPlugin?.installed ? "重新安装 / 修复" : "准备 Codex 插件"}
-              </button>
-              {codexPlugin?.installed && (
-                <a className="secondary-button button-link" href={codexPlugin.deepLink}>在 Codex 中打开</a>
-              )}
-            </div>
-          </div>
           <div className="settings-card pairing-card">
             <div>
-              <h3>配对手机 Safari</h3>
-              <p>二维码两分钟有效且只能使用一次。需要用 <code>zimlo start --lan</code> 启动。</p>
+              <h3>连接手机</h3>
+              <p>让手机看到同一个 Feed，并可随时回复、继续任务或完成审批。</p>
             </div>
-            <button className="primary-button" onClick={() => send({ type: "pairing.create" })}>生成二维码</button>
+            <button className="primary-button" onClick={() => send({ type: "pairing.create" })}>显示配对二维码</button>
             {pairing && (
               <div className="qr-wrap">
                 <img src={pairing.qrDataUrl} alt="Zimlo 手机配对二维码" />
-                <small>有效至 {new Date(pairing.expiresAt).toLocaleTimeString("zh-CN")}</small>
+                <small>请在 {new Date(pairing.expiresAt).toLocaleTimeString("zh-CN")} 前扫码</small>
               </div>
             )}
+            <div className="pairing-hint">
+              <strong>二维码无法生成？</strong>
+              <span>请在 Mac 上用 <code>zimlo start --lan</code> 启动。</span>
+            </div>
           </div>
           <div className="settings-card device-card">
             <div className="device-heading">
-              <h3>已知设备</h3>
+              <div><h3>设备权限</h3><p>控制哪些手机可以完成审批或管理项目自动化。</p></div>
               <button className="text-button" onClick={() => send({ type: "devices.request" })}>刷新</button>
             </div>
-            {devices.length === 0 ? <p>点击刷新查看。命令行可用 <code>zimlo devices revoke</code> 立即撤销。</p> : (
+            {devices.length === 0 ? <p className="empty-setting">还没有连接手机。</p> : (
               <ul className="device-list">
                 {devices.map((device) => (
                   <li key={device.id}>
                     <span><strong>{device.name}</strong><small>{device.isLocalAdmin ? "本机管理" : device.revokedAt ? "已撤销" : "已配对"}</small></span>
                     <time>{new Date(device.lastSeenAt).toLocaleString("zh-CN")}</time>
                     {!device.isLocalAdmin && !device.revokedAt && (
-                      <button
-                        role="switch"
-                        aria-label={`${device.name} 手机审批`}
-                        aria-checked={device.canApprove}
-                        className={`switch ${device.canApprove ? "switch-on" : ""}`}
-                        onClick={() => send({ type: "device.approvals.set", deviceId: device.id, enabled: !device.canApprove })}
-                      ><span /></button>
+                      <span className="device-permission-switches">
+                        <label>
+                          <span>审批</span>
+                          <button
+                            role="switch"
+                            aria-label={`${device.name} 手机审批`}
+                            aria-checked={device.canApprove}
+                            className={`switch ${device.canApprove ? "switch-on" : ""}`}
+                            onClick={() => send({ type: "device.approvals.set", deviceId: device.id, enabled: !device.canApprove })}
+                          ><span /></button>
+                        </label>
+                        <label>
+                          <span>自动化管理</span>
+                          <button
+                            role="switch"
+                            aria-label={`${device.name} 自动化管理`}
+                            aria-checked={device.canManageTrust}
+                            className={`switch ${device.canManageTrust ? "switch-on" : ""}`}
+                            onClick={() => send({ type: "device.trust.set", deviceId: device.id, enabled: !device.canManageTrust })}
+                          ><span /></button>
+                        </label>
+                      </span>
                     )}
                   </li>
                 ))}
               </ul>
             )}
           </div>
+          <details className="settings-card technical-settings">
+            <summary>
+              <span><strong>接入与安全详情</strong><small>GUI、CLI、插件和设备连接信息</small></span>
+              <span aria-hidden="true">⌄</span>
+            </summary>
+            <div className="technical-settings-body">
+              <div className="integration-list">
+                {integrations.length === 0 ? <p>正在检查本机接入状态…</p> : integrations.map((integration) => (
+                  <div className="integration-row" key={integration.id}>
+                    <span className={`integration-state integration-state-${integration.state}`} aria-hidden="true" />
+                    <span><strong>{integration.label}</strong><small>{integration.detail}</small></span>
+                    <em>{integrationStateLabel(integration.state)}</em>
+                  </div>
+                ))}
+              </div>
+              <div className="codex-plugin-detail">
+                <div>
+                  <strong>Codex App 连接</strong>
+                  <small>{codexPlugin?.detail ?? "正在检查 Codex App 接入…"}</small>
+                </div>
+                <div className="settings-actions">
+                  <button className="secondary-button" onClick={() => send({ type: "codex.plugin.install" })}>
+                    {codexPlugin?.installed ? "重新安装" : "连接 Codex App"}
+                  </button>
+                  {codexPlugin?.installed && <a className="secondary-button button-link" href={codexPlugin.deepLink}>打开 Codex</a>}
+                </div>
+              </div>
+              <p className="security-note">敏感消息使用设备密钥加密。Zimlo 只会在你点击修复或连接时修改 Agent 配置。</p>
+            </div>
+          </details>
         </>
       )}
       {!localAdmin && (
-        <div className="settings-card">
+        <div className="settings-card phone-permission-card">
           <div>
-            <h3>手机审批权限</h3>
-            <p>{lanApprovalsEnabled ? "已由 Mac 持久授权；高风险操作仍要求确认短语。" : "尚未授权。请在 Mac 的 Zimlo Settings 中为这台设备开启。"}</p>
+            <h3>这台手机</h3>
+            <p>{lanApprovalsEnabled ? "可以查看、回复和完成审批；高风险操作仍会再次确认。" : "可以查看和回复。审批权限需要在 Mac 的 Zimlo 设置中开启。"}</p>
           </div>
+          <button className="secondary-button" onClick={() => void forgetDevice()}>断开这台手机</button>
         </div>
       )}
     </section>

@@ -1,11 +1,13 @@
 import { useEffect, useMemo, useState } from "react";
-import type { ClientCommand, FeedPost, PendingAction, Project, Session, TaskCommand, TaskRecord, UnifiedEvent, UserAvatarId } from "@zimlo/protocol";
+import type { ClientCommand, FeedPost, PendingAction, Project, Session, TaskCommand, TaskRecord, TaskReview, UnifiedEvent, UserAvatarId } from "@zimlo/protocol";
+import { AppTopBar } from "./AppTopBar";
 import { ActionPanel } from "./ActionPanel";
 import { FormattedText } from "./FormattedText";
 import { VoiceInput } from "./VoiceInput";
 import { agentAvatarStyle } from "./AgentsView";
-import { conciseTaskInput, sessionLocation, sessionRuntimeLabel } from "./sessionPresentation";
-import { AgentAvatar, UserAvatar, ZimloAvatar } from "./UserAvatar";
+import { ProviderBadge, ProviderIcon } from "./ProviderBadge";
+import { conciseTaskInput, sessionLocation } from "./sessionPresentation";
+import { AgentAvatar, UserAvatar } from "./UserAvatar";
 
 interface SessionDetailProps {
   session: Session;
@@ -15,6 +17,7 @@ interface SessionDetailProps {
   posts: FeedPost[];
   commands: TaskCommand[];
   task?: TaskRecord | undefined;
+  reviews?: TaskReview[] | undefined;
   timelineCursor?: string | undefined;
   userAvatarId: UserAvatarId;
   send: (command: ClientCommand) => boolean;
@@ -247,9 +250,10 @@ function TimelineEventDetails({ events }: { events: UnifiedEvent[] }) {
   );
 }
 
-export function SessionDetail({ session, project, events, actions, posts, commands, task, timelineCursor, userAvatarId, send, onClose }: SessionDetailProps) {
+export function SessionDetail({ session, project, events, actions, posts, commands, task, reviews = [], timelineCursor, userAvatarId, send, onClose }: SessionDetailProps) {
   const draftKey = `zimlo:task-draft:${session.id}`;
   const [message, setMessage] = useState(() => typeof localStorage === "undefined" ? "" : localStorage.getItem(draftKey) ?? "");
+  const [reviewNote, setReviewNote] = useState("");
   const instructions = [...events]
     .filter((event) => event.kind === "user_instruction")
     .sort((left, right) => left.sequence - right.sequence);
@@ -282,6 +286,8 @@ export function SessionDetail({ session, project, events, actions, posts, comman
   const activeQueue = commands.filter((command) => ["queued", "dispatching", "running"].includes(command.state)).sort((left, right) => left.createdAt.localeCompare(right.createdAt));
   const duplicateActive = activeQueue.some((command) => command.text.trim() === message.trim());
   const latestPost = [...posts].sort((left, right) => right.createdAt.localeCompare(left.createdAt))[0];
+  const sortedReviews = [...reviews].sort((left, right) => right.version - left.version);
+  const latestReview = sortedReviews[0];
 
   const timeline = useMemo(() => buildTaskTimeline(posts, commands, events), [commands, events, posts]);
   const timelineIds = timeline.map((item) => `${item.type}:${item.id}`);
@@ -314,20 +320,17 @@ export function SessionDetail({ session, project, events, actions, posts, comman
 
   return (
     <div className="detail-backdrop" role="presentation">
-      <section className="detail-panel" role="dialog" aria-modal="true" aria-labelledby="detail-title">
-        <header className="detail-nav">
-          <button className="detail-back-button" onClick={onClose} aria-label="返回 Feed">←</button>
-          <div><strong id="detail-title">{project?.agentProfile.displayName ?? session.title}</strong><small>{timeline.length} 条关键动态</small></div>
-        </header>
+      <section className="detail-panel" role="dialog" aria-modal="true" aria-label={session.title}>
+        <AppTopBar detail title={session.title} onBack={onClose} action={<span className={`task-status task-status-${currentState}`}>{STATUS_LABELS[currentState] ?? currentState}</span>} />
 
         <section className="task-profile-header">
           <div className="task-profile-identity">
             {project
               ? <AgentAvatar avatar={project.agentProfile.avatar} className={`task-runtime-avatar ${agentAvatarStyle(project.id)}`} alt="" />
-              : <ZimloAvatar className="task-runtime-avatar" alt="" />}
+              : <span className={`task-runtime-avatar provider-avatar provider-${session.provider}`} aria-label={session.provider === "codex" ? "Codex" : "Claude Code"}><ProviderIcon provider={session.provider} /></span>}
             <div>
               <strong>{project?.agentProfile.displayName ?? (session.provider === "codex" ? "Codex" : "Claude Code")}</strong>
-              <span>{sessionRuntimeLabel(session)} · {location.label}</span>
+              <span className="task-runtime-line"><ProviderBadge provider={session.provider} surface={session.surface} />{location.label}</span>
             </div>
             <span className={`task-status task-status-${currentState}`}>{STATUS_LABELS[currentState] ?? currentState}</span>
           </div>
@@ -353,6 +356,43 @@ export function SessionDetail({ session, project, events, actions, posts, comman
           )}
         </section>
 
+        {latestReview && (
+          <section className={`task-review-area review-state-${latestReview.state}`} aria-label="结果审阅">
+            <header>
+              <div><p className="eyebrow">RESULT REVIEW · V{latestReview.version}</p><h2>{latestReview.bundle.conclusion}</h2></div>
+              <span>{latestReview.state === "unreviewed" ? "等待你确认" : latestReview.state === "accepted" ? "已接受" : latestReview.state === "changes_requested" ? "已要求修改" : "已有新版本"}</span>
+            </header>
+            {latestReview.bundle.impact && <p className="review-impact">{latestReview.bundle.impact}</p>}
+            <div className="review-evidence">
+              <div><strong>证据</strong><span>{latestReview.bundle.evidenceSource === "app_server" ? "应用已验证" : latestReview.bundle.evidenceSource === "hook" ? "Hook 已验证" : "Agent 报告"}</span></div>
+              {latestReview.bundle.changedFiles.length > 0 && (
+                <details><summary>{latestReview.bundle.changedFiles.length} 个改动文件</summary><ul>{latestReview.bundle.changedFiles.map((file) => <li key={file}><code>{file}</code></li>)}</ul></details>
+              )}
+              {latestReview.bundle.tests.map((test, index) => <p key={`${test.label}:${index}`}><strong>{test.label}</strong> · {test.detail}</p>)}
+              {latestReview.bundle.links.length > 0 && <div className="review-links">{latestReview.bundle.links.map((link) => <a href={link.url} target="_blank" rel="noreferrer" key={link.url}>{link.label} ↗</a>)}</div>}
+            </div>
+            {latestReview.state === "unreviewed" && (
+              <div className="review-actions">
+                <button className="primary-button" onClick={() => send({ type: "review.respond", reviewId: latestReview.id, decision: "accept", idempotencyKey: crypto.randomUUID() })}>接受结果</button>
+                <details>
+                  <summary>要求修改</summary>
+                  <textarea value={reviewNote} onChange={(event) => setReviewNote(event.target.value)} placeholder="具体说明需要修改什么…" rows={3} />
+                  <button
+                    className="secondary-button"
+                    disabled={!reviewNote.trim()}
+                    onClick={() => {
+                      if (send({ type: "review.respond", reviewId: latestReview.id, decision: "request_changes", note: reviewNote.trim(), idempotencyKey: crypto.randomUUID() })) setReviewNote("");
+                    }}
+                  >发送修改要求</button>
+                </details>
+              </div>
+            )}
+            {sortedReviews.length > 1 && (
+              <details className="review-history"><summary>查看其余 {sortedReviews.length - 1} 个版本</summary>{sortedReviews.slice(1).map((review) => <p key={review.id}>V{review.version} · {review.bundle.conclusion} · {review.state}</p>)}</details>
+            )}
+          </section>
+        )}
+
         <section className="task-timeline" aria-label="任务 Timeline">
           <header className="timeline-heading"><h2>动态</h2><span>{unreadCount > 0 ? `${unreadCount} 条未读 · 已定位` : "关键轮次在第一层"}</span></header>
           {timeline.map((item) => {
@@ -362,7 +402,7 @@ export function SessionDetail({ session, project, events, actions, posts, comman
               <article className={`task-timeline-item timeline-${item.post.kind}`} data-timeline-level="primary" key={`post:${item.id}`}>
                 {project
                   ? <AgentAvatar avatar={project.agentProfile.avatar} className={`timeline-avatar ${agentAvatarStyle(project.id)}`} alt="" />
-                  : <ZimloAvatar className="timeline-avatar timeline-avatar-agent" alt="" />}
+                  : <span className={`timeline-avatar timeline-avatar-agent provider-avatar provider-${session.provider}`} aria-label={session.provider === "codex" ? "Codex" : "Claude Code"}><ProviderIcon provider={session.provider} /></span>}
                 <div className="timeline-content">
                   <div className="timeline-meta"><strong>{project?.agentProfile.displayName ?? item.post.agentId.toUpperCase()}</strong><span>{POST_LABELS[item.post.kind]}</span><time>· {readableDate(item.at)}</time></div>
                   <h3>{item.post.headline}</h3><FormattedText text={item.post.takeaway} />
@@ -399,7 +439,7 @@ export function SessionDetail({ session, project, events, actions, posts, comman
                   ? <UserAvatar avatarId={userAvatarId} className="timeline-avatar timeline-avatar-user" alt="" />
                   : project
                     ? <AgentAvatar avatar={project.agentProfile.avatar} className={`timeline-avatar ${agentAvatarStyle(project.id)}`} alt="" />
-                    : <ZimloAvatar className="timeline-avatar timeline-avatar-agent" alt="" />}
+                    : <span className={`timeline-avatar timeline-avatar-agent provider-avatar provider-${session.provider}`} aria-label={session.provider === "codex" ? "Codex" : "Claude Code"}><ProviderIcon provider={session.provider} /></span>}
                 <div className="timeline-content">
                   <div className="timeline-meta"><strong>{item.instruction ? "你" : "Agent"}</strong><span>{item.instruction ? "本轮指令" : EVENT_LABELS[item.event.kind]}</span><time>· {readableDate(item.at)}</time></div>
                   {summary && <div className="timeline-turn-summary"><FormattedText text={summary.length > 420 ? `${summary.slice(0, 420)}…` : summary} /></div>}

@@ -2,6 +2,11 @@ import { findExitCode, isTestCommand, readCommand } from "./test-detection.js";
 import type { EventDraft, ParsedLine, ParserState, TranscriptMetadata } from "./types.js";
 import { userInstructionText } from "./user-instruction.js";
 
+export function isCodexFileMutationTool(name: string): boolean {
+  return name === "apply_patch"
+    || /(?:^|__)(?:write_file|edit_file|create_file|delete_file)$/iu.test(name);
+}
+
 function objectValue(value: unknown): Record<string, unknown> {
   return value && typeof value === "object" && !Array.isArray(value)
     ? (value as Record<string, unknown>)
@@ -100,7 +105,7 @@ export function parseCodexLine(line: string, state: ParserState): ParsedLine {
 
       if (/request_user_input|ask_user/iu.test(name)) {
         events.push(draft("needs_input", occurredAt, { name, input }, state, { itemId: callId }));
-      } else if (/apply_patch|write|edit/iu.test(name)) {
+      } else if (isCodexFileMutationTool(name)) {
         events.push(draft("files_changed", occurredAt, { name, input, phase: "proposed" }, state, { itemId: callId }));
       } else if (/exec|shell|command|bash/iu.test(name)) {
         events.push(draft("command_started", occurredAt, { name, command, input }, state, { itemId: callId }));

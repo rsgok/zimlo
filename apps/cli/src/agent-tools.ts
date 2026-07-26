@@ -9,6 +9,7 @@ import {
   type Provider,
   type Session,
 } from "@zimlo/protocol";
+import { detectHookSurface } from "./hook-surface.js";
 import { RuntimeHub } from "./runtime.js";
 
 export interface AgentToolRequest {
@@ -193,13 +194,17 @@ export class AgentToolService {
 
   private resolveSession(request: AgentToolRequest, taskId: string): Session {
     const found = this.runtime.store.findSessionForAgentTool(request.provider, request.parentPid, request.cwd, taskId);
-    if (found) return found;
+    if (found) {
+      if (found.surface !== "unknown") return found;
+      const detectedSurface = detectHookSurface(request.parentPid);
+      return detectedSurface === "unknown" ? found : this.runtime.upsertSession({ ...found, surface: detectedSurface });
+    }
     const providerSessionId = `tool:${taskId}`;
     const sessionId = stableSessionId(request.provider, providerSessionId);
     return this.runtime.upsertSession({
       id: sessionId,
       provider: request.provider,
-      surface: "unknown",
+      surface: detectHookSurface(request.parentPid),
       providerSessionId,
       title: `${request.provider === "codex" ? "Codex" : "Claude"} · ${taskId}`,
       cwd: request.cwd || null,

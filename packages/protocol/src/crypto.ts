@@ -1,4 +1,4 @@
-import { xchacha20poly1305 } from "@noble/ciphers/chacha.js";
+import { chacha20poly1305, xchacha20poly1305 } from "@noble/ciphers/chacha.js";
 import { x25519 } from "@noble/curves/ed25519.js";
 import { hkdf } from "@noble/hashes/hkdf.js";
 import { hmac } from "@noble/hashes/hmac.js";
@@ -9,6 +9,7 @@ const INFO_PAIR = utf8ToBytes("zimlo-pair-v1");
 const INFO_DEVICE = utf8ToBytes("zimlo-device-v1");
 const INFO_CLIENT_TX = utf8ToBytes("zimlo-ws-client-tx-v1");
 const INFO_SERVER_TX = utf8ToBytes("zimlo-ws-server-tx-v1");
+const INFO_PUSH_ROUTE = utf8ToBytes("zimlo-push-route-v1");
 
 export function toBase64Url(bytes: Uint8Array): string {
   let binary = "";
@@ -82,6 +83,38 @@ export function decryptFrame<T>(key: Uint8Array, counter: number, ciphertext: st
   const plaintext = xchacha20poly1305(key, counterNonce(counter), utf8ToBytes(aad)).decrypt(
     fromBase64Url(ciphertext),
   );
+  return JSON.parse(new TextDecoder().decode(plaintext)) as T;
+}
+
+export interface PushRouteEnvelope {
+  ephemeralPublicKey: string;
+  nonce: string;
+  ciphertext: string;
+}
+
+export function sealPushRoute(peerPublicKey: Uint8Array, value: unknown): PushRouteEnvelope {
+  const ephemeralPrivateKey = x25519.utils.randomSecretKey();
+  const ephemeralPublicKey = x25519.getPublicKey(ephemeralPrivateKey);
+  const shared = x25519.getSharedSecret(ephemeralPrivateKey, peerPublicKey);
+  const key = hkdf(sha256, shared, new Uint8Array(), INFO_PUSH_ROUTE, 32);
+  const nonce = randomBytes(12);
+  const plaintext = utf8ToBytes(JSON.stringify(value));
+  const ciphertext = chacha20poly1305(key, nonce, INFO_PUSH_ROUTE).encrypt(plaintext);
+  return {
+    ephemeralPublicKey: toBase64Url(ephemeralPublicKey),
+    nonce: toBase64Url(nonce),
+    ciphertext: toBase64Url(ciphertext),
+  };
+}
+
+export function openPushRoute<T>(privateKey: Uint8Array, envelope: PushRouteEnvelope): T {
+  const shared = x25519.getSharedSecret(privateKey, fromBase64Url(envelope.ephemeralPublicKey));
+  const key = hkdf(sha256, shared, new Uint8Array(), INFO_PUSH_ROUTE, 32);
+  const plaintext = chacha20poly1305(
+    key,
+    fromBase64Url(envelope.nonce),
+    INFO_PUSH_ROUTE,
+  ).decrypt(fromBase64Url(envelope.ciphertext));
   return JSON.parse(new TextDecoder().decode(plaintext)) as T;
 }
 

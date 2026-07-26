@@ -58,6 +58,19 @@ importers:
         specifier: ^8.18.1
         version: 8.18.1
 
+  apps/push-relay:
+    dependencies:
+      fastify:
+        specifier: ^5.10.0
+        version: 5.10.0
+    devDependencies:
+      '@types/node':
+        specifier: ^26.1.1
+        version: 26.1.1
+      typescript:
+        specifier: ^7.0.2
+        version: 7.0.2
+
   apps/web:
     dependencies:
       '@zimlo/protocol':

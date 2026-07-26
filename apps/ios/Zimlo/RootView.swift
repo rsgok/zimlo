@@ -2,90 +2,123 @@ import SwiftUI
 
 struct RootView: View {
     @ObservedObject var model: AppModel
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
 
     var body: some View {
-        GeometryReader { geometry in
-            if model.bridge.pairingRequired {
-                PairingView(model: model)
-                    .ignoresSafeArea()
-            } else {
-                VStack(spacing: 0) {
-                    PageHeader(connected: model.bridge.connected)
-                        .padding(.top, geometry.safeAreaInsets.top)
-                        .background(ZColor.ink)
-
-                    if model.pendingOutboxCount > 0 || !model.bridge.connected {
-                        HStack {
-                            Text(model.bridge.connected ? "正在同步手机指令" : "当前离线，操作已保存在手机")
-                            Spacer()
-                            if model.pendingOutboxCount > 0 { Text("\(model.pendingOutboxCount) 条待确认").bold() }
-                        }
-                        .font(.system(size: 11, weight: .medium))
-                        .foregroundStyle(ZColor.ink)
-                        .padding(.horizontal, 16).frame(height: 28)
-                        .background(ZColor.acid)
-                    }
-
-                    Group {
-                        if let session = model.selectedSession {
-                            TaskDetailView(model: model, session: session)
-                        } else if let project = model.selectedProject {
-                            AgentDetailView(model: model, project: project)
-                        } else {
-                            switch model.selectedTab {
-                            case .feed: NativeFeedView(model: model)
-                            case .tasks: TasksDirectoryView(model: model)
-                            case .agents: AgentsDirectoryView(model: model)
-                            case .settings: SettingsView(model: model)
-                            case .create: Color.clear
-                            }
-                        }
-                    }
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
-                    .background(ZColor.ink)
-
-                    BottomBar(model: model)
-                        .padding(.bottom, geometry.safeAreaInsets.bottom)
-                        .background(ZColor.ink)
-                }
+        if model.bridge.pairingRequired {
+            PairingView(model: model)
                 .ignoresSafeArea()
-                .overlay(alignment: .top) {
-                    if let error = model.bridge.error {
-                        Text(error)
-                            .font(.system(size: 12, weight: .semibold))
-                            .foregroundStyle(.white)
-                            .padding(.horizontal, 14).padding(.vertical, 10)
-                            .background(ZColor.coral)
-                            .clipShape(Capsule())
-                            .padding(.top, geometry.safeAreaInsets.top + 66)
+        } else {
+            VStack(spacing: 0) {
+                Group {
+                    if let session = model.selectedSession {
+                        TaskDetailView(model: model, session: session)
+                    } else if let project = model.selectedProject {
+                        AgentDetailView(model: model, project: project)
+                    } else {
+                        switch model.selectedTab {
+                        case .feed: NativeFeedView(model: model)
+                        case .tasks: TasksDirectoryView(model: model)
+                        case .agents: AgentsDirectoryView(model: model)
+                        case .settings: SettingsView(model: model)
+                        case .create: Color.clear
+                        }
                     }
                 }
-                .overlay(alignment: .bottom) {
-                    if let notice = model.notice {
-                        Text(notice)
-                            .font(.system(size: 12, weight: .semibold))
-                            .foregroundStyle(ZColor.ink)
-                            .padding(.horizontal, 16).padding(.vertical, 11)
-                            .background(ZColor.acid)
-                            .clipShape(Capsule())
-                            .padding(.bottom, geometry.safeAreaInsets.bottom + 74)
-                            .task {
-                                try? await Task.sleep(for: .seconds(4))
-                                if model.notice == notice { model.notice = nil }
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .background(ZColor.ink)
+
+                BottomBar(model: model)
+                    .background(ZColor.ink)
+            }
+            .background(ZColor.ink.ignoresSafeArea())
+            .safeAreaInset(edge: .top, spacing: 0) {
+                ZStack(alignment: .top) {
+                    AppTopBar(
+                        title: topBarTitle,
+                        connected: model.bridge.connected,
+                        onBack: isShowingDetail ? clearDetail : nil,
+                        status: detailStatus
+                    )
+                    VStack(spacing: 8) {
+                        if model.pendingOutboxCount > 0 || !model.bridge.connected {
+                            HStack(spacing: 8) {
+                                Circle().fill(model.bridge.connected ? ZColor.acid : Color.orange).frame(width: 6, height: 6)
+                                Text(model.bridge.connected ? "手机操作正在等待 Mac 确认" : "当前离线，操作已保存在手机")
+                                if model.pendingOutboxCount > 0 { Text("\(model.pendingOutboxCount) 条").bold() }
                             }
+                            .font(.system(size: 10, weight: .semibold))
+                            .foregroundStyle(ZColor.ink)
+                            .padding(.horizontal, 12).padding(.vertical, 8)
+                            .background(.thinMaterial)
+                            .clipShape(Capsule())
+                        }
+                        if let error = model.bridge.error {
+                            Text(error)
+                                .font(.system(size: 11, weight: .semibold))
+                                .foregroundStyle(.white)
+                                .padding(.horizontal, 14).padding(.vertical, 9)
+                                .background(ZColor.coral)
+                                .clipShape(Capsule())
+                        }
                     }
-                }
-                .sheet(isPresented: $model.showingNewTask) {
-                    NewTaskView(model: model)
-                        .presentationDetents([.large])
-                        .presentationDragIndicator(.visible)
-                        .presentationBackground(ZColor.paper)
-                }
-                .onChange(of: model.showingNewTask) { _, showing in
-                    if !showing { model.newTaskProjectId = nil }
+                    .offset(y: AppTopBar.contentHeight(for: dynamicTypeSize) + 8)
+                    .padding(.horizontal, 14)
+                    .allowsHitTesting(false)
+                    .zIndex(2)
                 }
             }
+            .overlay(alignment: .bottom) {
+                if let notice = model.notice {
+                    Text(notice)
+                        .font(.system(size: 12, weight: .semibold))
+                        .foregroundStyle(ZColor.ink)
+                        .padding(.horizontal, 16).padding(.vertical, 11)
+                        .background(ZColor.acid)
+                        .clipShape(Capsule())
+                        .padding(.bottom, 74)
+                        .task {
+                            try? await Task.sleep(for: .seconds(4))
+                            if model.notice == notice { model.notice = nil }
+                        }
+                }
+            }
+            .sheet(isPresented: $model.showingNewTask) {
+                NewTaskView(model: model)
+                    .presentationDetents([.large])
+                    .presentationDragIndicator(.visible)
+                    .presentationBackground(ZColor.paper)
+            }
+            .onChange(of: model.showingNewTask) { _, showing in
+                if !showing { model.newTaskProjectId = nil }
+            }
         }
+    }
+
+    private var isShowingDetail: Bool { model.selectedSession != nil || model.selectedProject != nil }
+
+    private var topBarTitle: String {
+        if let session = model.selectedSession { return session.title }
+        if let project = model.selectedProject { return project.agentProfile.displayName }
+        switch model.selectedTab {
+        case .feed: return "Feed"
+        case .tasks: return "任务"
+        case .agents: return "Agents"
+        case .settings: return "设置"
+        case .create: return "新任务"
+        }
+    }
+
+    private var detailStatus: String? {
+        if let session = model.selectedSession {
+            return ["running": "进行中", "waiting": "等待中", "failed": "失败", "completed": "已完成"][session.status] ?? session.status
+        }
+        return model.selectedProject == nil ? nil : "Agent"
+    }
+
+    private func clearDetail() {
+        model.selectedSession = nil
+        model.selectedProject = nil
     }
 }
 

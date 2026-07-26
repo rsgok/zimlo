@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import type { TaskCommand } from "@zimlo/protocol";
 import { FeedView } from "./components/FeedView";
+import { AppTopBar } from "./components/AppTopBar";
 import { AgentProfileDetail } from "./components/AgentProfileDetail";
 import { AgentsView } from "./components/AgentsView";
 import { PairingRequired } from "./components/PairingRequired";
@@ -9,7 +10,7 @@ import { SessionDetail } from "./components/SessionDetail";
 import { SystemNotices } from "./components/SystemNotices";
 import { TasksView } from "./components/TasksView";
 import { TaskComposer } from "./components/TaskComposer";
-import { UserAvatar, ZimloAvatar } from "./components/UserAvatar";
+import { UserAvatar } from "./components/UserAvatar";
 import { useBridge } from "./hooks/useBridge";
 
 type Tab = "feed" | "tasks" | "agents" | "settings";
@@ -43,6 +44,7 @@ export function App() {
     return [];
   }), [bridge.pendingCommandEntries, bridge.snapshot.sessions, bridge.snapshot.workspaces]);
   const commands = useMemo(() => [...localTaskCommands, ...bridge.snapshot.commands], [bridge.snapshot.commands, localTaskCommands]);
+  const tabTitle: Record<Tab, string> = { feed: "Feed", tasks: "任务", agents: "Agents", settings: "设置" };
 
   useEffect(() => {
     if (!bridge.notice) return;
@@ -88,22 +90,13 @@ export function App() {
 
   return (
     <div className={`app-shell tab-${tab}`}>
-      <header className="app-header">
-        <div className="brand-lockup">
-          <ZimloAvatar className="brand-mark" />
-          <div><strong>Zimlo</strong><small>coding agents, at a glance</small></div>
-        </div>
-        <div className="header-actions">
-          <div className={`connection-pill ${bridge.connected && online ? "connected" : ""}`}><span />{!online ? "离线" : bridge.connected ? "实时" : "重连中"}</div>
-          <button className={`settings-button ${tab === "settings" ? "active" : ""}`} onClick={openSettings} aria-label="打开设置">⚙</button>
-        </div>
-      </header>
+      <AppTopBar title={tabTitle[tab]} connected={bridge.connected} online={online} />
 
       <SystemNotices online={online} pendingCount={bridge.pendingOutboxCount} error={bridge.error} />
 
       <main className={`main-content ${tab === "feed" ? "feed-main" : ""}`}>
-        {tab === "feed" && <FeedView projects={bridge.snapshot.projects} posts={bridge.snapshot.posts} sessions={bridge.snapshot.sessions} actions={bridge.snapshot.actions} commands={commands} tasks={bridge.snapshot.tasks} seenPostIds={bridge.snapshot.seenPostIds} dismissedFeedItemIds={bridge.snapshot.dismissedFeedItemIds} send={bridge.send} onOpen={openSession} onOpenProject={openAgent} onNewTask={() => openNewTask()} />}
-        {tab === "tasks" && <TasksView projects={bridge.snapshot.projects} sessions={bridge.snapshot.sessions} tasks={bridge.snapshot.tasks} preferences={bridge.snapshot.taskPreferences} send={bridge.send} onOpen={openSession} />}
+        {tab === "feed" && <FeedView projects={bridge.snapshot.projects} posts={bridge.snapshot.posts} sessions={bridge.snapshot.sessions} actions={bridge.snapshot.actions} commands={commands} tasks={bridge.snapshot.tasks} reviews={bridge.snapshot.features.taskReview ? bridge.snapshot.reviews : []} seenPostIds={bridge.snapshot.seenPostIds} dismissedFeedItemIds={bridge.snapshot.dismissedFeedItemIds} send={bridge.send} onOpen={openSession} onOpenProject={openAgent} onNewTask={() => openNewTask()} />}
+        {tab === "tasks" && <TasksView projects={bridge.snapshot.projects} sessions={bridge.snapshot.sessions} tasks={bridge.snapshot.tasks} posts={bridge.snapshot.posts} preferences={bridge.snapshot.taskPreferences} send={bridge.send} onOpen={openSession} />}
         {tab === "agents" && <AgentsView projects={bridge.snapshot.projects} sessions={bridge.snapshot.sessions} onOpen={openAgent} onNewTask={openNewTask} />}
         {tab === "settings" && (
           <ProfileView
@@ -115,6 +108,9 @@ export function App() {
             sessions={bridge.snapshot.sessions}
             userProfile={bridge.snapshot.userProfile}
             lanApprovalsEnabled={bridge.snapshot.lanApprovalsEnabled}
+            notificationSettings={bridge.snapshot.notificationSettings}
+            pushRegistered={bridge.snapshot.pushDevices.some((device) => device.active)}
+            notificationEnabled={bridge.snapshot.features.pushNotifications}
             send={bridge.send}
             forgetDevice={bridge.forgetDevice}
           />
@@ -144,6 +140,9 @@ export function App() {
           sessions={bridge.snapshot.sessions.filter((session) => session.projectId === selectedProject.id)}
           posts={bridge.snapshot.posts.filter((post) => post.projectId === selectedProject.id)}
           commands={commands}
+          trustPolicy={bridge.snapshot.trustPolicies.find((policy) => policy.projectId === selectedProject.id)}
+          trustAudit={bridge.snapshot.trustAudit.filter((entry) => entry.projectId === selectedProject.id)}
+          trustEnabled={bridge.snapshot.features.projectTrustPolicy}
           userAvatarId={bridge.snapshot.userProfile.avatarId}
           send={bridge.send}
           onOpenTask={openSession}
@@ -160,6 +159,7 @@ export function App() {
           posts={bridge.snapshot.posts.filter((post) => post.sessionId === selectedSession.id)}
           commands={commands.filter((command) => command.sessionId === selectedSession.id)}
           task={[...bridge.snapshot.tasks].filter((task) => task.sessionId === selectedSession.id).sort((left, right) => right.updatedAt.localeCompare(left.updatedAt))[0]}
+          reviews={bridge.snapshot.features.taskReview ? bridge.snapshot.reviews.filter((review) => review.sessionId === selectedSession.id) : []}
           userAvatarId={bridge.snapshot.userProfile.avatarId}
           timelineCursor={bridge.snapshot.taskTimelineCursors[selectedSession.id]}
           send={bridge.send}

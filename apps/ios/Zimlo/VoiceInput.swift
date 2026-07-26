@@ -65,6 +65,7 @@ struct VoiceInput: View {
     @Binding var text: String
     var placeholder: String
     var axis: Axis = .vertical
+    var minHeight: CGFloat? = nil
     @StateObject private var speech = SpeechCapture()
     @State private var baseText = ""
 
@@ -75,6 +76,7 @@ struct VoiceInput: View {
                 .font(.system(size: 15, weight: .medium))
                 .foregroundStyle(ZColor.ink)
                 .padding(.horizontal, 14).padding(.vertical, 12)
+                .frame(minHeight: minHeight, alignment: .topLeading)
                 .background(Color.white.opacity(0.72))
                 .clipShape(RoundedRectangle(cornerRadius: 15, style: .continuous))
             Button {

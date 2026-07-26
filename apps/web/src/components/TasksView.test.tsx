@@ -1,6 +1,6 @@
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it, vi } from "vitest";
-import { EMPTY_CAPABILITIES, type Project, type Session, type TaskRecord } from "@zimlo/protocol";
+import { EMPTY_CAPABILITIES, type FeedPost, type Project, type Session, type TaskRecord } from "@zimlo/protocol";
 import { collapseProcessSessions, taskTitle, TasksView } from "./TasksView";
 
 const session: Session = {
@@ -46,18 +46,49 @@ const task: TaskRecord = {
   updatedAt: "2026-07-22T10:00:00.000Z",
 };
 
+const post: FeedPost = {
+  id: "post-a",
+  projectId: project.id,
+  taskId: task.id,
+  runId: task.runId,
+  agentId: "codex",
+  sessionId: session.id,
+  kind: "result",
+  template: "paper",
+  headline: "任务搜索与语义标题已经优化",
+  takeaway: "任务列表现在更容易扫描。",
+  highlights: [],
+  actionRequired: false,
+  actions: [],
+  pendingActionIds: [],
+  dedupeKey: "post-a",
+  source: "agent",
+  createdAt: "2026-07-22T10:01:00.000Z",
+};
+
 describe("TasksView", () => {
   it("uses a meaningful task reason instead of a generated runtime title", () => {
     expect(taskTitle(session, task)).toBe("优化任务搜索与语义标题");
     expect(taskTitle({ ...session, correlationUncertain: true }, task)).toBe("Codex · zimlo");
     const markup = renderToStaticMarkup(<TasksView projects={[project]} sessions={[session]} tasks={[task]} preferences={[]} send={vi.fn()} onOpen={vi.fn()} />);
-    expect(markup).toContain("<h2>任务</h2>");
-    expect(markup).toContain("1 项目 · 1 任务 · 1 进行中");
-    expect(markup).toContain("1 个任务 · 3 张卡");
+    expect(markup).not.toContain("<h2");
+    expect(markup).not.toContain("TASKS");
+    expect(markup).not.toContain("先处理需要你的任务");
+    expect(markup).toContain("进行中<span>1</span>");
+    expect(markup).toContain("zimlo · 1");
     expect(markup).toContain("优化任务搜索与语义标题");
     expect(markup).toContain("项目 · zimlo");
+    expect(markup).toContain("Agent 正在执行");
+    expect(markup).toContain("aria-label=\"管理任务\"");
     expect(markup).toContain("Codex");
     expect(markup).not.toContain("/Users/kai/Code/zimlo");
+  });
+
+  it("prefers the latest editorial result over a machine-state reason for generated titles", () => {
+    expect(taskTitle(session, task, post)).toBe("任务搜索与语义标题已经优化");
+    const markup = renderToStaticMarkup(<TasksView projects={[project]} sessions={[session]} tasks={[task]} posts={[post]} preferences={[]} send={vi.fn()} onOpen={vi.fn()} />);
+    expect(markup).toContain("任务搜索与语义标题已经优化");
+    expect(markup).not.toContain("<strong>优化任务搜索与语义标题</strong>");
   });
 
   it("groups indistinguishable process-only sessions from the same runtime and directory", () => {
@@ -69,11 +100,11 @@ describe("TasksView", () => {
     expect(collapseProcessSessions([processB, processA]).sessions[0]?.id).toBe("process-a");
   });
 
-  it("keeps group order stable when only last activity changes", () => {
+  it("orders tasks by the activity users most recently need to resume", () => {
     const older = { ...session, id: "older", title: "较早创建", createdAt: "2026-07-22T08:00:00.000Z", lastActivityAt: "2026-07-22T12:00:00.000Z" };
     const newer = { ...session, id: "newer", title: "较晚创建", createdAt: "2026-07-22T09:00:00.000Z", lastActivityAt: "2026-07-22T10:00:00.000Z" };
     const markup = renderToStaticMarkup(<TasksView projects={[project]} sessions={[older, newer]} tasks={[]} preferences={[]} send={vi.fn()} onOpen={vi.fn()} />);
-    expect(markup.indexOf("较晚创建")).toBeLessThan(markup.indexOf("较早创建"));
+    expect(markup.indexOf("较早创建")).toBeLessThan(markup.indexOf("较晚创建"));
     expect(markup).toContain("Codex · CLI");
   });
 

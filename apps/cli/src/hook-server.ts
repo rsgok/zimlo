@@ -13,6 +13,7 @@ import { EMPTY_CAPABILITIES, type Decision, type Provider, type Session, type Se
 import { ActionBroker, type DecisionResolution } from "./action-broker.js";
 import { AgentToolService, type AgentToolRequest, type AgentToolResult } from "./agent-tools.js";
 import { RuntimeHub } from "./runtime.js";
+import { approvalContextForCommand, approvalContextForFile } from "./trust-policy.js";
 
 interface HookRequest {
   type?: "hook";
@@ -324,6 +325,23 @@ export class HookServer {
       const availableDecisions: Decision[] = isInput
         ? [{ id: "submit-input", label: "提交回复", scope: "input", value: {}, risk: "low" }]
         : decisionsFor(request.provider, payload);
+      const toolInput = record(payload.tool_input);
+      const toolName = typeof payload.tool_name === "string" ? payload.tool_name : "";
+      const project = session.projectId ? this.runtime.store.getProject(session.projectId) : null;
+      const fileContext = approvalContextForFile(
+        typeof toolInput.file_path === "string" ? toolInput.file_path : null,
+        session.cwd,
+        project,
+      );
+      const approvalContext = toolName === "Bash" && typeof toolInput.command === "string"
+        ? approvalContextForCommand(toolInput.command, session.cwd, project)
+        : ["Read", "Grep", "Glob"].includes(toolName)
+          ? {
+              ...fileContext,
+              category: toolName === "Read" ? "read" as const : "search" as const,
+              reason: fileContext.withinProject ? `项目内 ${toolName}` : "读取路径无法确认位于项目内",
+            }
+          : fileContext;
       const pending = this.broker.create({
         sessionId,
         upstreamRequestId: String(payload.tool_use_id ?? request.id),
@@ -331,6 +349,7 @@ export class HookServer {
         title: isInput ? "Agent 正在等待输入" : approvalTitleFor(payload),
         detail: actionDetailFor(payload),
         availableDecisions,
+        ...(!isInput ? { approvalContext } : {}),
       });
       const expireOnCancellation = () => this.broker.expire(pending.action.actionId);
       cancellation?.addEventListener("abort", expireOnCancellation, { once: true });

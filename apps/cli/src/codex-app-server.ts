@@ -4,6 +4,7 @@ import { isTestCommand, redactText, stableSessionId, uuidV7 } from "@zimlo/adapt
 import { EMPTY_CAPABILITIES, type Decision, type Session, type UnifiedEvent } from "@zimlo/protocol";
 import { ActionBroker } from "./action-broker.js";
 import { RuntimeHub } from "./runtime.js";
+import { approvalContextForCommand, approvalContextForFile } from "./trust-policy.js";
 
 type JsonRecord = Record<string, unknown>;
 type RequestId = string | number;
@@ -476,6 +477,30 @@ export class CodexAppServer {
     const detail = stringValue(network.host)
       ? `网络访问：${String(network.protocol ?? "network")}://${network.host}${network.port ? `:${String(network.port)}` : ""}`
       : redactText(stringValue(params.command) ?? stringValue(params.reason) ?? JSON.stringify(params.permissions ?? params), 800);
+    const project = this.session.projectId ? this.runtime.store.getProject(this.session.projectId) : null;
+    const command = stringValue(params.command);
+    const filePath = stringValue(params.filePath) ?? stringValue(params.path);
+    const approvalContext = stringValue(network.host)
+      ? {
+          category: "network" as const,
+          projectId: project?.id ?? null,
+          cwd: this.session.cwd,
+          segments: [],
+          withinProject: false,
+          reason: "网络访问始终需要确认",
+        }
+      : title === "文件修改审批"
+        ? approvalContextForFile(filePath, this.session.cwd, project)
+        : command
+          ? approvalContextForCommand(command, this.session.cwd, project)
+          : {
+              category: "unknown" as const,
+              projectId: project?.id ?? null,
+              cwd: this.session.cwd,
+              segments: [],
+              withinProject: false,
+              reason: "无法可靠识别审批动作",
+            };
     const pending = this.broker.create({
       sessionId: this.session.id,
       upstreamRequestId: String(id),
@@ -483,6 +508,7 @@ export class CodexAppServer {
       title,
       detail,
       availableDecisions: decisions,
+      approvalContext,
     });
     this.serverActions.set(String(id), pending.action.actionId);
     this.runtime.ingestEvent({

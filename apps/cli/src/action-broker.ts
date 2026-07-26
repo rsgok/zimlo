@@ -1,6 +1,7 @@
-import type { Decision, PendingAction } from "@zimlo/protocol";
+import type { ApprovalContext, Decision, PendingAction } from "@zimlo/protocol";
 import { uuidV7 } from "@zimlo/adapters";
 import { RuntimeHub } from "./runtime.js";
+import { canAutoAllow } from "./trust-policy.js";
 
 export interface DecisionSubmission {
   deviceId: string;
@@ -29,6 +30,7 @@ export interface NewAction {
   title: string;
   detail: string;
   availableDecisions: Decision[];
+  approvalContext?: ApprovalContext;
   timeoutMs?: number;
 }
 
@@ -54,7 +56,41 @@ export class ActionBroker {
       expiresAt: new Date(now.getTime() + timeoutMs).toISOString(),
       state: "pending",
       createdAt: now.toISOString(),
+      ...(input.approvalContext ? { approvalContext: input.approvalContext } : {}),
     };
+    if (input.kind === "approval" && input.approvalContext?.projectId) {
+      const policy = this.runtime.store.getTrustPolicy(input.approvalContext.projectId);
+      const allow = input.availableDecisions.find((decision) => decision.scope === "once");
+      if (allow && canAutoAllow(input.approvalContext, policy)) {
+        const resolved: PendingAction = { ...action, state: "resolved", resolvedAt: now.toISOString() };
+        this.runtime.store.upsertAction(action);
+        this.runtime.send({ type: "action.upsert", action });
+        this.runtime.resolveAction(resolved);
+        this.runtime.store.insertTrustAudit({
+          id: uuidV7(),
+          projectId: input.approvalContext.projectId,
+          sessionId: input.sessionId,
+          deviceId: policy.updatedByDeviceId || "local-policy",
+          category: input.approvalContext.category,
+          decision: "auto_allowed",
+          reason: `项目策略 ${policy.preset} 自动允许`,
+          actionSummary: input.detail.slice(0, 500),
+          createdAt: now.toISOString(),
+        });
+        return { action: resolved, result: Promise.resolve({ decision: allow }) };
+      }
+      this.runtime.store.insertTrustAudit({
+        id: uuidV7(),
+        projectId: input.approvalContext.projectId,
+        sessionId: input.sessionId,
+        deviceId: "system",
+        category: input.approvalContext.category,
+        decision: "asked",
+        reason: input.approvalContext.reason,
+        actionSummary: input.detail.slice(0, 500),
+        createdAt: now.toISOString(),
+      });
+    }
     this.runtime.upsertAction(action);
 
     const result = new Promise<DecisionResolution | null>((resolve) => {

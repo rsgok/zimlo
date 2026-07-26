@@ -11,7 +11,7 @@ const integrations: IntegrationStatus[] = [
 ];
 
 describe("ProfileView", () => {
-  it("shows GUI and CLI as separate integration surfaces without implying automatic installation", () => {
+  it("leads with user-facing status and keeps technical integration details secondary", () => {
     const markup = renderToStaticMarkup(
       <ProfileView
         localAdmin
@@ -26,13 +26,22 @@ describe("ProfileView", () => {
         forgetDevice={vi.fn()}
       />,
     );
+    expect(markup).not.toContain("<h2");
+    expect(markup).not.toContain("SETTINGS");
+    expect(markup).toContain("Agent 状态");
+    expect(markup).toContain("部分可用");
+    expect(markup).not.toContain("管理你的头像、Agent 接入和手机设备");
+    expect(markup).toContain("会显示在你的指令和 Timeline 中");
+    expect(markup).toContain("<details");
+    expect(markup).toContain("接入与安全详情");
     expect(markup).toContain("Codex · GUI");
     expect(markup).toContain("Codex · CLI");
     expect(markup).toContain("Claude Code · GUI");
-    expect(markup).toContain("共享配置");
-    expect(markup).toContain("不会在启动时静默修改 Agent 配置");
-    expect(markup).toContain("从 24 个 Zimlo 预置头像中选择");
+    expect(markup).toContain("共用配置");
+    expect(markup).toContain("只会在你点击修复或连接时修改 Agent 配置");
     expect(markup.match(/aria-label="选择头像 /gu)).toHaveLength(24);
     expect(markup).not.toContain("上传头像");
+    expect(markup).not.toContain("Runtime 工作能力");
+    expect(markup).not.toContain("WebSocket");
   });
 });

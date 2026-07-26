@@ -48,6 +48,11 @@ describe("Feed compatibility", () => {
     expect(snapshot.taskTimelineCursors).toEqual({});
     expect(snapshot.taskPreferences).toEqual([]);
     expect(snapshot.userProfile.avatarId).toBe("user-01");
+    expect(snapshot.features).toEqual({
+      taskReview: false,
+      projectTrustPolicy: false,
+      pushNotifications: false,
+    });
   });
 
   it("marks sessions from an older Bridge with an unknown surface", () => {

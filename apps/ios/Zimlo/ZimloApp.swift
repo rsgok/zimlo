@@ -2,6 +2,7 @@ import SwiftUI
 
 @main
 struct ZimloApp: App {
+    @UIApplicationDelegateAdaptor(ZimloAppDelegate.self) private var appDelegate
     @StateObject private var model = AppModel()
     @Environment(\.scenePhase) private var scenePhase
 

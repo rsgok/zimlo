@@ -7,7 +7,7 @@
     "node": ">=24.0.0"
   },
   "scripts": {
-    "build": "pnpm --filter @zimlo/protocol build && pnpm --filter @zimlo/adapters build && pnpm --filter @zimlo/web build && pnpm --filter @zimlo/cli build",
+    "build": "pnpm --filter @zimlo/protocol build && pnpm --filter @zimlo/adapters build && pnpm --filter @zimlo/web build && pnpm --filter @zimlo/cli build && pnpm --filter @zimlo/push-relay build",
     "dev": "pnpm --filter @zimlo/cli dev",
     "start": "pnpm --filter @zimlo/cli start",
     "test": "vitest run",

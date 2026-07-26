@@ -16,6 +16,9 @@ Zimlo 是 Codex 与 Claude Code 的本地移动状态层。它自动发现 Mac �
 - 底部 `+` 可从 Mac 已发现的可信项目中创建 Codex/Claude Code 任务；运行中 follow-up 会先持久化，再等待精确 session 空闲后执行。
 - 新任务默认最近 Project Agent/Runtime，支持项目搜索和草稿恢复；发送后立即出现启动中占位卡。Task Detail 的 follow-up 同样保存草稿、显示队列状态并阻止同文重复提交。
 - Task Detail 固定展示 Task Input、状态、最新结论和下一步；Timeline 按设备保存阅读位置。
+- 新结果会形成带版本的 Review Bundle，将结论、真实改动文件、测试证据和相关链接放在 Timeline 前；用户可接受结果或通过可靠 outbox 要求修改。
+- 每个 Project 可单独开启“安全自动化”：只自动允许项目边界内可确认的读取、搜索、测试和构建；写入、联网、安装、发布、删除与未知动作继续询问并保留审计。
+- iOS 可在完成配对后按需开启三类隐私通知：等待批准/回复、任务失败、新结果待审阅。默认锁屏不显示任务标题，通知只携带设备端可解密的任务路由。
 - 只有真实测试命令与真实退出码才能生成 `tests_passed` / `tests_failed`。
 - 闲置 Codex session 通过 app-server 的 `thread/read`、`thread/resume` 和 `turn/start` 安全继续；闲置 Claude session 使用 stream-json runner。
 - 活跃外部终端 session 禁止 TTY 注入；精确 hook 审批仍可按原请求闭环。
@@ -66,6 +69,7 @@ Zimlo 已启动：http://127.0.0.1:4747
 4. 原生 iOS App 也连接这个 `--lan` Bridge，构建与运行见 [iOS README](apps/ios/README.md)。
 
 手机审批必须由 Mac 在已知设备列表中逐台授权；授权会跨 Bridge 重启保留，高风险操作仍要求确认短语。
+手机管理 Project 自动化策略也必须由 Mac 在设备列表中单独授权；首次授权不能由手机自行提升。
 
 ### 只在 Mac 本机使用
 
@@ -106,6 +110,22 @@ zimlo open                          # 打开默认端口的本机管理页
 ```
 
 Codex GUI 插件在调用 Zimlo MCP 时可以自动拉起仅本机 Bridge，但不会自动开放局域网。需要手机访问时，仍应在终端显式运行 `zimlo start --lan`。
+
+启动后的健康检查仍使用 protocol v2，并通过 capability 增量声明新能力：
+
+```bash
+curl http://127.0.0.1:4747/healthz
+```
+
+响应中的 `features.taskReview`、`features.projectTrustPolicy`、`features.pushNotifications` 为 `true` 时，客户端才显示相应入口；旧客户端可以继续使用既有 Feed、任务和审批。
+
+## iPhone 安装与通知
+
+开发阶段需要用 Xcode 将原生 App 安装到模拟器或已登记真机，详细步骤见 [iOS README](apps/ios/README.md)。Safari/PWA 仍可通过 `zimlo start --lan` 配对使用，但 APNs 主动通知只由原生 iOS App 提供。
+
+通知不是远程访问隧道：Relay 不保存任务标题、提示词、代码、结果或完整路由。Mac 仍是任务状态 source of truth；通知打开后由 App 与 Mac 同步最新状态，Mac 离线时路由会保存在手机并在重连后恢复。
+
+自建 Relay 的部署、密钥和环境变量见 [Push Relay README](apps/push-relay/README.md)。没有配置 Relay 时，Zimlo 的本地 Feed、审阅和自动化策略照常工作，通知入口会显示为未注册。
 
 ## npm CLI
 
@@ -178,6 +198,6 @@ Feed V2 的 `feed.post` 使用结构化字段：`headline`、`takeaway`、最多
 
 ## 安全边界
 
-这是可信局域网技术 Beta，不是远程访问产品。配对后的敏感消息具有应用层加密，但初始网页仍通过本地 HTTP 交付，无法抵抗局域网内主动篡改页面的攻击。首版不包含云 Relay、TLS 终止、iOS/Android App、远程终端、多人协作或代码编辑器。
+这是可信局域网技术 Beta，不是远程访问产品。配对后的敏感消息具有应用层加密，但初始网页仍通过本地 HTTP 交付，无法抵抗局域网内主动篡改页面的攻击。Push Relay 只转发通用 APNs alert 与加密路由，不提供远程终端、任务正文中继、多人协作或代码编辑器。
 
 实现为 clean-room 代码，没有复制 open-vibe-island 的 GPLv3 源码，也没有引入 CodeIsland 源码。

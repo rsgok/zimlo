@@ -1,4 +1,4 @@
-import { USER_AVATAR_IDS } from "@zimlo/protocol";
+import { EMPTY_FEATURE_CAPABILITIES, USER_AVATAR_IDS } from "@zimlo/protocol";
 import type { FeedAction, FeedPost, FeedPostKind, FeedTemplate, Project, Snapshot, UserAvatarId } from "@zimlo/protocol";
 
 const KINDS = new Set<FeedPostKind>(["progress", "decision", "attention", "result", "failure"]);
@@ -105,6 +105,19 @@ export function normalizeSnapshot(value: Snapshot): Snapshot {
     taskTimelineCursors: snapshot.taskTimelineCursors && typeof snapshot.taskTimelineCursors === "object" ? snapshot.taskTimelineCursors : {},
     taskPreferences: Array.isArray(snapshot.taskPreferences) ? snapshot.taskPreferences : [],
     actions: Array.isArray(snapshot.actions) ? snapshot.actions.filter((action) => !isInternalZimloAction(action)) : [],
+    reviews: Array.isArray(snapshot.reviews) ? snapshot.reviews : [],
+    trustPolicies: Array.isArray(snapshot.trustPolicies) ? snapshot.trustPolicies : [],
+    trustAudit: Array.isArray(snapshot.trustAudit) ? snapshot.trustAudit : [],
+    notificationSettings: snapshot.notificationSettings ?? {
+      enabled: false,
+      approvals: true,
+      failures: true,
+      reviews: true,
+      showTaskTitle: false,
+      updatedAt: "",
+    },
+    pushDevices: Array.isArray(snapshot.pushDevices) ? snapshot.pushDevices : [],
+    features: snapshot.features ?? EMPTY_FEATURE_CAPABILITIES,
     sequence: typeof snapshot.sequence === "number" ? snapshot.sequence : 0,
     lanApprovalsEnabled: snapshot.lanApprovalsEnabled === true,
   };

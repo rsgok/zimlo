@@ -14,13 +14,16 @@ function setup() {
   temporaryDirectories.push(directory);
   const store = new ZimloStore(join(directory, "zimlo.db"));
   const runtime = new RuntimeHub(store);
+  const now = new Date().toISOString();
+  const project = store.ensureProjectForCwd(directory, now);
   const session: Session = {
     id: "session-a",
+    projectId: project?.id,
     provider: "codex",
     surface: "cli",
     providerSessionId: "provider-a",
     title: "Test",
-    cwd: "/tmp",
+    cwd: directory,
     transcriptPath: null,
     status: "waiting",
     lastActivityAt: new Date().toISOString(),
@@ -32,7 +35,7 @@ function setup() {
     capabilities: EMPTY_CAPABILITIES,
   };
   store.upsertSession(session);
-  return { store, runtime, broker: new ActionBroker(runtime) };
+  return { store, runtime, project, broker: new ActionBroker(runtime) };
 }
 
 afterEach(() => {
@@ -119,6 +122,35 @@ describe("ActionBroker", () => {
     const event = store.listEvents("session-a")[0];
     expect(Buffer.byteLength(JSON.stringify(event?.payload), "utf8")).toBeLessThanOrEqual(4_096);
     expect(event?.payload).toMatchObject({ truncated: true });
+    store.close();
+  });
+
+  it("records safe automatic approvals in the timeline and audit without leaving a pending action", async () => {
+    const { store, broker, project } = setup();
+    expect(project).not.toBeNull();
+    store.updateTrustPolicy(project!.id, "safe_automation", "local-admin");
+    const automatic = broker.create({
+      sessionId: "session-a",
+      kind: "approval",
+      title: "运行测试",
+      detail: "pnpm test",
+      approvalContext: {
+        category: "test",
+        projectId: project!.id,
+        cwd: project!.primaryPath,
+        command: "pnpm test",
+        segments: ["pnpm test"],
+        withinProject: true,
+        reason: "识别为 test",
+      },
+      availableDecisions: [{ id: "once", label: "允许一次", scope: "once", value: true, risk: "low" }],
+    });
+
+    expect(automatic.action.state).toBe("resolved");
+    expect((await automatic.result)?.decision.id).toBe("once");
+    expect(store.listActions()).toHaveLength(1);
+    expect(store.listActions()[0]?.state).toBe("resolved");
+    expect(store.listTrustAudit(project!.id)[0]).toMatchObject({ category: "test", decision: "auto_allowed" });
     store.close();
   });
 });

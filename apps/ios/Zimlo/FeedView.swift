@@ -19,7 +19,7 @@ struct NativeFeedView: View {
             ScrollView(.vertical) {
                 LazyVStack(spacing: 0) {
                     ForEach(current) { entry in
-                        FeedPage(model: model, entry: entry, position: position(entry), total: model.feedEntries.count)
+                        FeedPage(model: model, entry: entry, position: position(entry), total: current.count)
                             .frame(height: geometry.size.height)
                             .id(entry.id)
                     }
@@ -27,7 +27,7 @@ struct NativeFeedView: View {
                         .frame(height: geometry.size.height)
                         .id("caught-up")
                     ForEach(history) { entry in
-                        FeedPage(model: model, entry: entry, position: position(entry), total: model.feedEntries.count, historical: true)
+                        FeedPage(model: model, entry: entry, position: 0, total: current.count, historical: true)
                             .frame(height: geometry.size.height)
                             .id(entry.id)
                     }
@@ -39,7 +39,7 @@ struct NativeFeedView: View {
             .scrollPosition(id: $visibleID)
             .background(ZColor.ink)
             .onAppear { updateCohort() }
-            .onChange(of: model.feedEntries.map(\.id)) { _, _ in updateCohort() }
+            .onChange(of: model.feedEntries.map { "\($0.id):\($0.settledReview)" }) { _, _ in updateCohort() }
             .onChange(of: visibleID) { _, id in
                 guard let id, let entry = model.feedEntries.first(where: { $0.id == id }),
                       case .post(let post) = entry.content, entry.unread else { return }
@@ -53,10 +53,12 @@ struct NativeFeedView: View {
     }
 
     private func position(_ entry: FeedEntry) -> Int {
-        (model.feedEntries.firstIndex(of: entry) ?? 0) + 1
+        (current.firstIndex(of: entry) ?? 0) + 1
     }
 
     private func updateCohort() {
+        let settledIds = Set(model.feedEntries.filter(\.settledReview).map(\.id))
+        currentOrder.removeAll(where: settledIds.contains)
         for entry in model.feedEntries where entry.unread || entry.needsAction {
             if !currentOrder.contains(entry.id) { currentOrder.append(entry.id) }
         }
@@ -86,9 +88,9 @@ private struct FeedPage: View {
                 case .post(let post):
                     PostCard(model: model, post: post, needsAction: entry.needsAction, position: position, total: total, historical: historical)
                 case .action(let action):
-                    ActionCard(model: model, action: action, position: position, total: total)
+                    ActionCard(model: model, action: action, position: position, total: total, historical: historical)
                 case .command(let command):
-                    CommandCard(model: model, command: command, position: position, total: total)
+                    CommandCard(model: model, command: command, position: position, total: total, historical: historical)
                 }
             }
             .padding(.horizontal, 10).padding(.vertical, 6)
@@ -136,8 +138,10 @@ private struct PostCard: View {
             HStack {
                 Text(historical ? "历史 · \(label)" : label).font(.system(size: 11, weight: .black))
                 Spacer()
-                Text(String(format: "%02d / %02d", position, max(total, 1)))
-                    .font(.system(size: 11, weight: .bold, design: .monospaced))
+                if !historical {
+                    Text(String(format: "%02d / %02d", position, max(total, 1)))
+                        .font(.system(size: 11, weight: .bold, design: .monospaced))
+                }
             }
             .foregroundStyle(ZColor.muted).padding(.top, 22)
 
@@ -204,8 +208,10 @@ private struct PostCard: View {
                         AgentAvatar(value: project.agentProfile.avatar, size: 20)
                         Text(project.agentProfile.displayName).fontWeight(.bold)
                     }
+                } else if let session {
+                    ProviderBadge(provider: session.provider, surface: session.surface)
                 } else {
-                    Text(session?.runtimeLabel ?? post.agentId.uppercased()).fontWeight(.bold)
+                    Text(post.agentId.uppercased()).fontWeight(.bold)
                 }
                 Spacer()
                 if needsAction {
@@ -250,13 +256,16 @@ private struct ActionCard: View {
     let action: PendingAction
     let position: Int
     let total: Int
+    let historical: Bool
 
     var body: some View {
         VStack(alignment: .leading, spacing: 20) {
             HStack {
                 Text("需要你处理").font(.system(size: 11, weight: .black))
                 Spacer()
-                Text(String(format: "%02d / %02d", position, max(total, 1))).font(.caption.monospaced().bold())
+                if !historical {
+                    Text(String(format: "%02d / %02d", position, max(total, 1))).font(.caption.monospaced().bold())
+                }
             }
             .foregroundStyle(ZColor.muted)
             Spacer()
@@ -277,13 +286,16 @@ private struct CommandCard: View {
     let command: TaskCommand
     let position: Int
     let total: Int
+    let historical: Bool
 
     var body: some View {
         VStack(alignment: .leading, spacing: 20) {
             HStack {
                 Text(command.state == "failed" ? "启动失败" : "启动中").font(.system(size: 11, weight: .black))
                 Spacer()
-                Text(String(format: "%02d / %02d", position, max(total, 1))).font(.caption.monospaced().bold())
+                if !historical {
+                    Text(String(format: "%02d / %02d", position, max(total, 1))).font(.caption.monospaced().bold())
+                }
             }.foregroundStyle(ZColor.muted)
             Spacer()
             Text(command.text).font(.system(size: 31, weight: .black, design: .rounded)).lineLimit(4)
@@ -294,8 +306,10 @@ private struct CommandCard: View {
                 Button("原地重试") { model.retry(commandId: command.id) }
                     .buttonStyle(ActionButtonStyle(primary: true))
             }
-            Text("\(command.provider.label) · \(command.cwd)")
-                .font(.system(size: 12, weight: .semibold)).lineLimit(1)
+            HStack(spacing: 7) {
+                ProviderBadge(provider: command.provider, iconOnly: true)
+                Text(command.cwd).font(.system(size: 12, weight: .semibold)).lineLimit(1)
+            }
         }
         .padding(24).foregroundStyle(ZColor.ink)
         .background(ZColor.paper)
@@ -309,17 +323,29 @@ private struct CaughtUpPage: View {
     let hasHistory: Bool
 
     var body: some View {
-        VStack(spacing: 18) {
+        VStack(spacing: 0) {
             Spacer()
-            Text("✓").font(.system(size: 44, weight: .black)).foregroundStyle(ZColor.sage)
-            Text("YOU'RE ALL CAUGHT UP").font(.system(size: 11, weight: .black))
+            VStack(spacing: 13) {
+                Text("✓")
+                    .font(.system(size: 25, weight: .black))
+                    .frame(width: 56, height: 56)
+                    .foregroundStyle(ZColor.ink)
+                    .background(ZColor.acid)
+                    .clipShape(Circle())
+                Text("YOU'RE ALL CAUGHT UP").font(.system(size: 11, weight: .black))
+            }
             Text(model.feedEntries.isEmpty ? "Feed 已经清空" : "当前更新已经看完")
                 .font(.system(size: 30, weight: .black, design: .rounded))
-            Text(hasHistory ? "现在可以布置新任务，或者继续向下浏览历史。" : "新的重要进展会自动出现在这里。")
-                .font(.system(size: 15, weight: .medium)).foregroundStyle(ZColor.muted).multilineTextAlignment(.center)
+                .padding(.top, 18)
             Button("＋ 新任务") { model.showingNewTask = true }.buttonStyle(ActionButtonStyle(primary: true))
                 .frame(maxWidth: 210)
-            if hasHistory { Text("继续向下浏览历史 ↓").font(.system(size: 12, weight: .bold)).foregroundStyle(ZColor.muted) }
+                .padding(.top, 24)
+            if hasHistory {
+                Text("继续向下浏览历史 ↓")
+                    .font(.system(size: 12, weight: .bold))
+                    .foregroundStyle(ZColor.muted)
+                    .padding(.top, 14)
+            }
             Spacer()
         }
         .padding(28).foregroundStyle(ZColor.ink)
