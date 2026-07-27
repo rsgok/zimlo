@@ -1,5 +1,5 @@
 import { EventEmitter } from "node:events";
-import type { FeedPost, PendingAction, ReviewBundle, ServerMessage, Session, TaskCommand, TaskRecord, TaskReview, TrustedWorkspace, UnifiedEvent } from "@zimlo/protocol";
+import type { FeatureCapabilities, FeedPost, PendingAction, ReviewBundle, ServerMessage, Session, TaskCommand, TaskRecord, TaskReview, TrustedWorkspace, UnifiedEvent } from "@zimlo/protocol";
 import { projectNameForCwd } from "./project-context.js";
 import { sanitizeEventPayload } from "./sanitization.js";
 import { ZimloStore } from "./store.js";
@@ -10,11 +10,13 @@ import type { CloudService } from "./cloud-service.js";
 export class RuntimeHub extends EventEmitter {
   readonly store: ZimloStore;
   private readonly push: PushService;
+  private readonly cloud: CloudService | undefined;
   lanApprovalsEnabled: boolean;
 
   constructor(store: ZimloStore, cloud?: CloudService) {
     super();
     this.store = store;
+    this.cloud = cloud;
     this.push = new PushService(store, cloud ?? {
       enabled: false,
       sendPush: async () => 503,
@@ -160,7 +162,20 @@ export class RuntimeHub extends EventEmitter {
 
   snapshot(deviceId = "") {
     const snapshot = this.store.snapshot(this.lanApprovalsEnabled, deviceId, this.workspaces());
-    return { ...snapshot, sessions: snapshot.sessions.map((session) => this.withProject(session)) };
+    return {
+      ...snapshot,
+      features: this.features(),
+      sessions: snapshot.sessions.map((session) => this.withProject(session)),
+    };
+  }
+
+  features(): FeatureCapabilities {
+    return {
+      taskReview: true,
+      projectTrustPolicy: true,
+      pushNotifications: this.cloud?.pushNotificationsAvailable === true,
+      remoteSync: this.cloud?.enabled === true,
+    };
   }
 
   private withProject(session: Session): Session {

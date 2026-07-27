@@ -5,7 +5,7 @@ import Fastify, { type FastifyInstance } from "fastify";
 import fastifyStatic from "@fastify/static";
 import fastifyWebsocket from "@fastify/websocket";
 import QRCode from "qrcode";
-import { FEATURE_CAPABILITIES, type ClientCommand, type ServerMessage } from "@zimlo/protocol";
+import type { ClientCommand, ServerMessage } from "@zimlo/protocol";
 import { ActionBroker } from "./action-broker.js";
 import { CloudService } from "./cloud-service.js";
 import { codexPluginDeepLink, inspectCodexPlugin, installCodexPlugin } from "./codex-plugin.js";
@@ -79,7 +79,7 @@ export class BridgeServer {
       }
     });
 
-    app.get("/healthz", async () => ({ ok: true, version: "0.2.0", protocolVersion: 2, features: FEATURE_CAPABILITIES }));
+    app.get("/healthz", async () => ({ ok: true, version: "0.2.0", protocolVersion: 2, features: this.runtime.features() }));
     app.get("/api/local-bootstrap", async (request, reply) => {
       if (!isLoopbackAddress(request.ip)) return reply.code(403).send({ error: "Loopback only" });
       const device = this.devices.localAdmin();
@@ -90,6 +90,7 @@ export class BridgeServer {
       return {
         ready: true,
         cloud: this.cloud.enabled,
+        pushNotifications: this.cloud.pushNotificationsAvailable,
         integrations: await inspectIntegrationStatuses(this.entrypoint),
       };
     });

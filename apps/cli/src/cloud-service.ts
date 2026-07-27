@@ -54,6 +54,7 @@ export class CloudService {
   private readonly baseURL: string | null;
   private identity: CloudIdentity | null = null;
   private readyPromise: Promise<boolean> | null = null;
+  private pushConfigured = false;
 
   constructor(store: ZimloStore) {
     this.store = store;
@@ -69,6 +70,29 @@ export class CloudService {
 
   get relayURL(): string | null {
     return this.baseURL;
+  }
+
+  get pushNotificationsAvailable(): boolean {
+    return this.pushConfigured;
+  }
+
+  async refreshHealth(): Promise<boolean> {
+    if (!this.baseURL) {
+      this.pushConfigured = false;
+      return false;
+    }
+    try {
+      const response = await fetch(`${this.baseURL}/healthz`, {
+        signal: AbortSignal.timeout(2_000),
+      });
+      if (!response.ok) throw new Error(`Cloud health failed (${response.status})`);
+      const health = await response.json() as { pushConfigured?: boolean };
+      this.pushConfigured = health.pushConfigured === true;
+      return true;
+    } catch {
+      this.pushConfigured = false;
+      return false;
+    }
   }
 
   async ensureReady(): Promise<boolean> {
@@ -184,6 +208,7 @@ export class CloudService {
 
   private async registerInstallation(): Promise<boolean> {
     if (!this.baseURL) return false;
+    await this.refreshHealth();
     this.identity = this.loadOrCreateIdentity();
     const timestamp = new Date().toISOString();
     const message = `${timestamp}.POST./v1/installations.${this.identity.installationId}.${this.identity.publicKey}`;

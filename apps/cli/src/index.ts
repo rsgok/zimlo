@@ -63,6 +63,7 @@ program.command("start")
       store.finalizeOpenFeedCheckpoints(new Date().toISOString(), "bridge:restart");
       traceStartup("create-services");
       const cloud = new CloudService(store);
+      const cloudHealth = cloud.refreshHealth();
       const runtime = new RuntimeHub(store, cloud);
       const broker = new ActionBroker(runtime);
       const agentTools = new AgentToolService(runtime);
@@ -96,6 +97,8 @@ program.command("start")
         const discoveryStarted = Date.now();
         await discovery.start();
         traceStartup("discovery-started");
+        await cloudHealth;
+        traceStartup("cloud-health-checked");
         traceStartup("start-bridge");
         const urls = await bridge.start();
         traceStartup("bridge-started");

@@ -44,6 +44,7 @@ final class AppModel: ObservableObject {
 
     private var bridgeObserver: AnyCancellable?
     private var outbox: [OutboxEntry] = []
+    private var outboxRetryTask: Task<Void, Never>?
     private let outboxKey = "zimlo.native.command-outbox.v1"
 
     init() {
@@ -83,12 +84,19 @@ final class AppModel: ObservableObject {
         }
         bridge.onSecureConnection = { [weak self] in
             guard let self else { return }
-            for entry in self.outbox { _ = self.bridge.send(entry.command) }
+            self.flushOutbox()
             _ = self.bridge.send(ClientCommand(type: "snapshot.request", [
                 "afterSequence": .number(Double(self.snapshot.sequence)),
             ]))
             if let sessionId = self.selectedSession?.id {
                 _ = self.bridge.send(ClientCommand(type: "session.events.request", ["sessionId": .string(sessionId)]))
+            }
+        }
+        outboxRetryTask = Task { [weak self] in
+            while !Task.isCancelled {
+                try? await Task.sleep(for: .seconds(15))
+                guard !Task.isCancelled, let self else { return }
+                self.flushOutbox()
             }
         }
     }
@@ -439,6 +447,11 @@ final class AppModel: ObservableObject {
         if let data = try? JSONEncoder().encode(outbox) {
             UserDefaults.standard.set(data, forKey: outboxKey)
         }
+    }
+
+    private func flushOutbox() {
+        guard bridge.connected, !outbox.isEmpty else { return }
+        for entry in outbox { _ = bridge.send(entry.command) }
     }
 
     private func acknowledge(_ message: ServerEnvelope) {

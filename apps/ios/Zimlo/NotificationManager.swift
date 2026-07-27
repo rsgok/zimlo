@@ -23,6 +23,7 @@ final class NotificationManager: NSObject, UNUserNotificationCenterDelegate {
 
     func configure() {
         UNUserNotificationCenter.current().delegate = self
+        Task { _ = await refreshRegistration() }
     }
 
     func requestAuthorization() async -> Bool {
@@ -38,6 +39,15 @@ final class NotificationManager: NSObject, UNUserNotificationCenterDelegate {
 
     func authorizationStatus() async -> UNAuthorizationStatus {
         await UNUserNotificationCenter.current().notificationSettings().authorizationStatus
+    }
+
+    @discardableResult
+    func refreshRegistration() async -> UNAuthorizationStatus {
+        let status = await authorizationStatus()
+        if [.authorized, .provisional, .ephemeral].contains(status) {
+            UIApplication.shared.registerForRemoteNotifications()
+        }
+        return status
     }
 
     func didRegister(deviceToken: Data) {
