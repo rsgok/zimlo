@@ -132,6 +132,7 @@ struct AppTopBar: View {
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     let title: String
     let connected: Bool
+    var connectionLabel: String?
     var onBack: (() -> Void)?
     var status: String?
 
@@ -165,7 +166,7 @@ struct AppTopBar: View {
                 } else {
                     HStack(spacing: 6) {
                         Circle().fill(connected ? ZColor.acid : Color.orange).frame(width: 6, height: 6)
-                        Text(connected ? "实时" : "重连")
+                        Text(connectionLabel ?? (connected ? "实时" : "重连"))
                             .font(.system(size: 10, weight: .semibold))
                     }
                 }

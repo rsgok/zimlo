@@ -52,12 +52,24 @@ describe("Feed compatibility", () => {
       taskReview: false,
       projectTrustPolicy: false,
       pushNotifications: false,
+      remoteSync: false,
     });
   });
 
   it("marks sessions from an older Bridge with an unknown surface", () => {
     const snapshot = normalizeSnapshot({ sessions: [{ id: "legacy" }] } as never);
     expect(snapshot.sessions[0]?.surface).toBe("unknown");
+  });
+
+  it("defaults capabilities added after an older Bridge snapshot", () => {
+    const snapshot = normalizeSnapshot({
+      features: {
+        taskReview: true,
+        projectTrustPolicy: false,
+        pushNotifications: true,
+      },
+    } as never);
+    expect(snapshot.features.remoteSync).toBe(false);
   });
 
   it("hides stale recursive approvals for Zimlo's own control tools", () => {

@@ -196,6 +196,10 @@ export function ProfileView({ localAdmin, devices, pairing, lanApprovalsEnabled,
                             onClick={() => send({ type: "device.trust.set", deviceId: device.id, enabled: !device.canManageTrust })}
                           ><span /></button>
                         </label>
+                        <button
+                          className="text-button"
+                          onClick={() => send({ type: "device.revoke", deviceId: device.id })}
+                        >撤销设备</button>
                       </span>
                     )}
                   </li>

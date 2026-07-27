@@ -117,7 +117,7 @@ export function normalizeSnapshot(value: Snapshot): Snapshot {
       updatedAt: "",
     },
     pushDevices: Array.isArray(snapshot.pushDevices) ? snapshot.pushDevices : [],
-    features: snapshot.features ?? EMPTY_FEATURE_CAPABILITIES,
+    features: { ...EMPTY_FEATURE_CAPABILITIES, ...(snapshot.features ?? {}) },
     sequence: typeof snapshot.sequence === "number" ? snapshot.sequence : 0,
     lanApprovalsEnabled: snapshot.lanApprovalsEnabled === true,
   };

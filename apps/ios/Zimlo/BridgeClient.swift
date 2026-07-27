@@ -7,6 +7,7 @@ final class BridgeClient: ObservableObject {
     @Published private(set) var connected = false
     @Published private(set) var pairingRequired = KeychainStore.load() == nil
     @Published private(set) var error: String?
+    @Published private(set) var connectionMode = "offline"
 
     var onMessage: ((ServerEnvelope) -> Void)?
     var onSecureConnection: (() -> Void)?
@@ -20,6 +21,8 @@ final class BridgeClient: ObservableObject {
     private var sendCounter: UInt64 = 0
     private var receiveCounter: UInt64 = 0
     private var intentionallyStopped = false
+    private var usingRemoteRelay = false
+    private var retryRemoteNext = false
 
     func start() {
         intentionallyStopped = false
@@ -35,9 +38,14 @@ final class BridgeClient: ObservableObject {
             do {
                 try await verifyProtocol(at: credentials.bridgeURL)
                 guard !Task.isCancelled else { return }
-                connect()
+                connect(remote: false)
             } catch {
-                if !Task.isCancelled { self.error = error.localizedDescription }
+                guard !Task.isCancelled else { return }
+                if credentials.remoteRelayURL != nil, credentials.remoteAccessToken != nil {
+                    connect(remote: true)
+                } else {
+                    self.error = error.localizedDescription
+                }
             }
         }
     }
@@ -50,6 +58,7 @@ final class BridgeClient: ObservableObject {
         socket?.cancel(with: .goingAway, reason: nil)
         socket = nil
         connected = false
+        connectionMode = "offline"
     }
 
     func forgetDevice() {
@@ -67,7 +76,7 @@ final class BridgeClient: ObservableObject {
             self.credentials = credentials
             pairingRequired = false
             error = nil
-            connect()
+            connect(remote: false)
         } catch {
             self.error = error.localizedDescription
         }
@@ -99,23 +108,35 @@ final class BridgeClient: ObservableObject {
         }
     }
 
-    private func connect() {
+    private func connect(remote: Bool) {
         guard let credentials else { return }
         socket?.cancel()
         clientTX = nil
         serverTX = nil
         sendCounter = 0
         receiveCounter = 0
-        var components = URLComponents(url: credentials.bridgeURL, resolvingAgainstBaseURL: false)
-        components?.scheme = credentials.bridgeURL.scheme == "https" ? "wss" : "ws"
-        components?.path = "/ws"
+        let baseURL = remote ? credentials.remoteRelayURL : credentials.bridgeURL
+        guard let baseURL else {
+            scheduleReconnect()
+            return
+        }
+        usingRemoteRelay = remote
+        retryRemoteNext = !remote
+        var components = URLComponents(url: baseURL, resolvingAgainstBaseURL: false)
+        components?.scheme = baseURL.scheme == "https" ? "wss" : "ws"
+        components?.path = remote ? "/v1/sync/device" : "/ws"
         components?.query = nil
         components?.fragment = nil
         guard let url = components?.url else {
             error = "Bridge 地址无效"
             return
         }
-        let socket = URLSession.shared.webSocketTask(with: url)
+        var request = URLRequest(url: url)
+        request.timeoutInterval = remote ? 12 : 3
+        if remote, let token = credentials.remoteAccessToken {
+            request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        }
+        let socket = URLSession.shared.webSocketTask(with: request)
         self.socket = socket
         socket.resume()
         Task { [weak self] in await self?.authenticate(credentials: credentials) }
@@ -152,6 +173,7 @@ final class BridgeClient: ObservableObject {
             clientTX = keys.client
             serverTX = keys.server
             connected = true
+            connectionMode = usingRemoteRelay ? "cloud" : "local"
             error = nil
             onSecureConnection?()
             await receiveLoop()
@@ -184,7 +206,8 @@ final class BridgeClient: ObservableObject {
 
     private func fail(_ failure: Error) {
         connected = false
-        error = failure.localizedDescription
+        connectionMode = "offline"
+        error = usingRemoteRelay ? "Mac 当前离线；已显示手机缓存，操作会在重连后发送" : failure.localizedDescription
         if socket?.closeCode == .policyViolation {
             socket = nil
             KeychainStore.clear()
@@ -197,11 +220,27 @@ final class BridgeClient: ObservableObject {
         socket?.cancel()
         socket = nil
         guard !intentionallyStopped, credentials != nil else { return }
+        if retryRemoteNext, credentials?.remoteRelayURL != nil, credentials?.remoteAccessToken != nil {
+            reconnectTask?.cancel()
+            reconnectTask = Task { [weak self] in
+                try? await Task.sleep(for: .milliseconds(250))
+                guard !Task.isCancelled else { return }
+                self?.connect(remote: true)
+            }
+            return
+        }
+        scheduleReconnect()
+    }
+
+    private func scheduleReconnect() {
         reconnectTask?.cancel()
         reconnectTask = Task { [weak self] in
             try? await Task.sleep(for: .seconds(1.5))
             guard !Task.isCancelled else { return }
-            self?.connect()
+            guard let self else { return }
+            let canUseRemote = self.credentials?.remoteRelayURL != nil
+                && self.credentials?.remoteAccessToken != nil
+            self.connect(remote: canUseRemote && self.retryRemoteNext)
         }
     }
 
@@ -250,7 +289,9 @@ final class BridgeClient: ObservableObject {
         return DeviceCredentials(
             bridgeURL: bridgeURL,
             deviceId: result.deviceId,
-            deviceKey: ZimloCrypto.base64URL(ZimloCrypto.deviceKey(pairKey: pairKey, secret: secret))
+            deviceKey: ZimloCrypto.base64URL(ZimloCrypto.deviceKey(pairKey: pairKey, secret: secret)),
+            remoteRelayURL: result.cloud?.relayURL,
+            remoteAccessToken: result.cloud?.accessToken
         )
     }
 
@@ -258,7 +299,9 @@ final class BridgeClient: ObservableObject {
         var components = URLComponents(url: bridgeURL, resolvingAgainstBaseURL: false)
         components?.path = "/healthz"
         guard let url = components?.url else { throw PairingError.invalidLink }
-        let (data, response) = try await URLSession.shared.data(from: url)
+        var request = URLRequest(url: url)
+        request.timeoutInterval = 2.5
+        let (data, response) = try await URLSession.shared.data(for: request)
         guard let http = response as? HTTPURLResponse, http.statusCode == 200,
               let value = try JSONSerialization.jsonObject(with: data) as? [String: Any],
               value["protocolVersion"] as? Int == 2 else {
@@ -301,6 +344,12 @@ private struct PairRequest: Codable {
 private struct PairResponse: Codable {
     var deviceId: String
     var serverProof: String
+    var cloud: PairCloud?
+}
+
+private struct PairCloud: Codable {
+    var relayURL: URL
+    var accessToken: String
 }
 
 private struct AuthRequest: Codable {

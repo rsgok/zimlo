@@ -6,6 +6,8 @@ import openBrowser from "open";
 import { ActionBroker } from "./action-broker.js";
 import { AgentToolService, runMcpServer } from "./agent-tools.js";
 import { BridgeServer } from "./bridge.js";
+import { CloudRelayClient } from "./cloud-relay-client.js";
+import { CloudService } from "./cloud-service.js";
 import { ensureBridgeRunning } from "./bridge-supervisor.js";
 import { codexPluginDeepLink, inspectCodexPlugin, installCodexPlugin, uninstallCodexPlugin } from "./codex-plugin.js";
 import { DeviceManager } from "./device-manager.js";
@@ -36,7 +38,8 @@ program.command("start")
     const store = new ZimloStore(ZIMLO_PATHS.database);
     store.prune(7);
     store.finalizeOpenFeedCheckpoints(new Date().toISOString(), "bridge:restart");
-    const runtime = new RuntimeHub(store);
+    const cloud = new CloudService(store);
+    const runtime = new RuntimeHub(store, cloud);
     const broker = new ActionBroker(runtime);
     const agentTools = new AgentToolService(runtime);
     const devices = new DeviceManager(store);
@@ -45,15 +48,18 @@ program.command("start")
     const taskCommands = new TaskCommandService(runtime, resume);
     const hooks = new HookServer(runtime, broker, ZIMLO_PATHS.socket, agentTools);
     const discovery = new DiscoveryService(runtime);
-    const bridge = new BridgeServer({ runtime, broker, devices, taskCommands, entrypoint, options: { port, lan: Boolean(options.lan) } });
+    const bridge = new BridgeServer({ runtime, broker, devices, taskCommands, cloud, entrypoint, options: { port, lan: Boolean(options.lan) } });
+    const cloudRelay = new CloudRelayClient(cloud, port);
 
     const urls = await bridge.start();
+    const cloudStarted = await cloudRelay.start();
     await hooks.start();
     taskCommands.start();
     const discoveryStarted = Date.now();
     await discovery.start();
     console.log(`Zimlo 已启动：${urls.localUrl}`);
     if (urls.lanUrl) console.log(`可信局域网：${urls.lanUrl}`);
+    console.log(cloudStarted ? `Cloudflare 远程同步：${cloud.relayURL}` : "Cloudflare 远程同步：未配置");
     console.log(`已发现 ${store.listSessions().length} 个 Session（${Date.now() - discoveryStarted} ms）`);
     console.log("按 Ctrl-C 停止。手机审批权限由 Mac 在 Settings 中按设备管理。");
 
@@ -65,6 +71,7 @@ program.command("start")
       taskCommands.stop();
       broker.cancelAll();
       await hooks.stop();
+      cloudRelay.stop();
       await bridge.stop();
       store.close();
     };
@@ -128,13 +135,14 @@ devices.command("list").action(() => {
     store.close();
   }
 });
-devices.command("revoke <device-id>").action((deviceId: string) => {
+devices.command("revoke <device-id>").action(async (deviceId: string) => {
   const store = new ZimloStore(ZIMLO_PATHS.database);
   try {
     const device = store.getDevice(deviceId);
     if (!device) throw new Error("找不到该设备。");
     if (device.isLocalAdmin) throw new Error("本机管理设备不能撤销；它只可通过 loopback 获取。" );
     if (!store.revokeDevice(deviceId)) throw new Error("设备已经撤销。" );
+    await new CloudService(store).revokeDevice(deviceId);
     console.log(`已撤销 ${device.name} (${device.id})。`);
   } finally {
     store.close();

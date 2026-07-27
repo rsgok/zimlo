@@ -1,6 +1,6 @@
 # Zimlo Local Web MVP
 
-Zimlo 是 Codex 与 Claude Code 的本地移动状态层。它自动发现 Mac 上已经存在或正在运行的 session，同时给 Agent 提供显式的 `feed.post`、`feed.skip` 与 `signal.transition` 工具，在可信局域网内提供可配对的响应式 Timeline。
+Zimlo 是 Codex 与 Claude Code 的隐私优先移动状态层。它自动发现 Mac 上已经存在或正在运行的 session，同时给 Agent 提供显式的 `feed.post`、`feed.skip` 与 `signal.transition` 工具。手机在同一局域网时直连 Mac；离开局域网后自动通过 Cloudflare 转发端到端加密的 Bridge 帧。
 
 ## 当前能力
 
@@ -19,6 +19,7 @@ Zimlo 是 Codex 与 Claude Code 的本地移动状态层。它自动发现 Mac �
 - 新结果会形成带版本的 Review Bundle，将结论、真实改动文件、测试证据和相关链接放在 Timeline 前；用户可接受结果或通过可靠 outbox 要求修改。
 - 每个 Project 可单独开启“安全自动化”：只自动允许项目边界内可确认的读取、搜索、测试和构建；写入、联网、安装、发布、删除与未知动作继续询问并保留审计。
 - iOS 可在完成配对后按需开启三类隐私通知：等待批准/回复、任务失败、新结果待审阅。默认锁屏不显示任务标题，通知只携带设备端可解密的任务路由。
+- 原生 iOS 与 PWA 都会优先本地直连，失败后自动切到 Cloudflare；顶栏明确显示“本地 / 云端 / 重连”。Cloudflare 不保存任务正文，Mac 离线时手机显示保存在设备本地的最近快照，操作进入可靠 outbox。
 - 只有真实测试命令与真实退出码才能生成 `tests_passed` / `tests_failed`。
 - 闲置 Codex session 通过 app-server 的 `thread/read`、`thread/resume` 和 `turn/start` 安全继续；闲置 Claude session 使用 stream-json runner。
 - 活跃外部终端 session 禁止 TTY 注入；精确 hook 审批仍可按原请求闭环。
@@ -47,7 +48,7 @@ pnpm build
 node apps/cli/dist/index.js doctor
 ```
 
-如果要在手机浏览器或原生 iOS App 使用 Zimlo，推荐这样启动：
+首次给手机配对时，Mac 与手机必须在同一个可信局域网，并这样启动：
 
 ```bash
 node apps/cli/dist/index.js start --lan
@@ -65,7 +66,7 @@ Zimlo 已启动：http://127.0.0.1:4747
 
 1. Mac 打开 [http://127.0.0.1:4747](http://127.0.0.1:4747)；
 2. 在右上角 **Settings → 配对手机 Safari** 生成二维码；
-3. 手机与 Mac 连接同一个可信局域网，用 Safari 扫码完成配对；
+3. 手机与 Mac 连接同一个可信局域网，用 Safari 扫码完成配对；配对响应会同时写入该手机独有的云端访问凭证；
 4. 原生 iOS App 也连接这个 `--lan` Bridge，构建与运行见 [iOS README](apps/ios/README.md)。
 
 手机审批必须由 Mac 在已知设备列表中逐台授权；授权会跨 Bridge 重启保留，高风险操作仍要求确认短语。
@@ -86,10 +87,10 @@ node apps/cli/dist/index.js start
 依赖和代码没有变化时，不需要重复 `pnpm install` 或 `pnpm build`，直接运行：
 
 ```bash
-node apps/cli/dist/index.js start --lan
+node apps/cli/dist/index.js start
 ```
 
-拉取新代码、切换分支或修改 Web/CLI 源码后，先重新执行 `pnpm build`。使用 `Ctrl-C` 可以安全停止 Bridge。
+配置 Cloudflare 后，已经配对的手机不再依赖 `--lan`：Mac 会主动建立到 Cloudflare 的出站连接，手机在外网通过加密中继同步。只有新增手机或希望手机优先局域网直连时才需要 `--lan`。拉取新代码、切换分支或修改 Web/CLI 源码后，先重新执行 `pnpm build`。使用 `Ctrl-C` 可以安全停止 Bridge。
 
 ### 已全局安装 CLI
 
@@ -117,15 +118,35 @@ Codex GUI 插件在调用 Zimlo MCP 时可以自动拉起仅本机 Bridge，但�
 curl http://127.0.0.1:4747/healthz
 ```
 
-响应中的 `features.taskReview`、`features.projectTrustPolicy`、`features.pushNotifications` 为 `true` 时，客户端才显示相应入口；旧客户端可以继续使用既有 Feed、任务和审批。
+响应中的 `features.taskReview`、`features.projectTrustPolicy`、`features.pushNotifications`、`features.remoteSync` 为 `true` 时，客户端才显示相应入口；旧客户端可以继续使用既有 Feed、任务和审批。
+
+## 手机离开局域网后如何工作
+
+Cloudflare 不是任务数据库，Mac 仍是唯一的任务状态源：
+
+1. Mac 用安装私钥签名并建立到 Durable Object 的长连接；
+2. 手机先尝试 LAN，失败后使用配对时取得的设备令牌连接同一 Durable Object；
+3. Durable Object 只按安装与连接 ID 转发密文；现有 Bridge 在密文内部再次验证设备身份、加密消息并防重放；
+4. Mac 在线时，快照、审批、回复和审阅实时同步；Mac 离线时，Cloudflare 返回离线状态，手机显示最近缓存，写操作保存在设备 outbox；
+5. Mac 恢复连接后，客户端重新请求最新快照并幂等重放未确认操作。
+
+因此，手机离开电脑的 Wi-Fi **可以继续使用**，但 Mac 必须开机并运行 Zimlo。Mac 关机时不会把代码、任务正文或可执行操作托管到云端。
+
+默认线上服务已经部署在 `https://zimlo-cloud.zimlo.workers.dev`，普通用户无需配置服务器。自建或本地开发可覆盖：
+
+```bash
+export ZIMLO_CLOUD_URL="https://zimlo-cloud.<account>.workers.dev"
+```
+
+设置 `ZIMLO_CLOUD_DISABLED=1` 可以完全关闭远程通道，只保留 LAN。
+
+已在旧版本完成配对的手机没有云端设备令牌，启用 Cloudflare 后需要撤销并重新配对一次。
 
 ## iPhone 安装与通知
 
 开发阶段需要用 Xcode 将原生 App 安装到模拟器或已登记真机，详细步骤见 [iOS README](apps/ios/README.md)。Safari/PWA 仍可通过 `zimlo start --lan` 配对使用，但 APNs 主动通知只由原生 iOS App 提供。
 
-通知不是远程访问隧道：Relay 不保存任务标题、提示词、代码、结果或完整路由。Mac 仍是任务状态 source of truth；通知打开后由 App 与 Mac 同步最新状态，Mac 离线时路由会保存在手机并在重连后恢复。
-
-自建 Relay 的部署、密钥和环境变量见 [Push Relay README](apps/push-relay/README.md)。没有配置 Relay 时，Zimlo 的本地 Feed、审阅和自动化策略照常工作，通知入口会显示为未注册。
+通知与远程同步共用 Cloudflare 服务，但用途分离：通知只负责唤醒用户，真实状态总是在 App 打开后向 Mac 同步。Cloudflare D1 只保存安装公钥、设备令牌哈希、APNs token、路由公钥和投递审计，不保存任务标题、提示词、代码或结果。
 
 ## npm CLI
 
@@ -198,6 +219,6 @@ Feed V2 的 `feed.post` 使用结构化字段：`headline`、`takeaway`、最多
 
 ## 安全边界
 
-这是可信局域网技术 Beta，不是远程访问产品。配对后的敏感消息具有应用层加密，但初始网页仍通过本地 HTTP 交付，无法抵抗局域网内主动篡改页面的攻击。Push Relay 只转发通用 APNs alert 与加密路由，不提供远程终端、任务正文中继、多人协作或代码编辑器。
+这是端到端加密远程同步 Beta，不是云端代码执行平台。首次配对网页仍通过可信局域网 HTTP 交付，无法抵抗局域网内主动篡改页面的攻击；完成配对后，LAN 与 Cloudflare 通道都使用相同的设备认证和应用层加密。Cloudflare 不提供远程 shell、任务正文存储、多人协作或代码编辑器。Beta 已对安装注册和中继认证启用 Cloudflare 速率限制；正式规模化发布前仍需补充账号或邀请体系以及账户级配额。
 
 实现为 clean-room 代码，没有复制 open-vibe-island 的 GPLv3 源码，也没有引入 CodeIsland 源码。

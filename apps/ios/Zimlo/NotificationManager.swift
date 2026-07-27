@@ -43,42 +43,11 @@ final class NotificationManager: NSObject, UNUserNotificationCenterDelegate {
     func didRegister(deviceToken: Data) {
         let token = deviceToken.map { String(format: "%02x", $0) }.joined()
         let publicKey = ZimloCrypto.base64URL(routePrivateKey.publicKey.rawRepresentation)
-        Task { await registerWithRelay(token: token, publicKey: publicKey) }
+        onRegistration?(token, publicKey)
     }
 
     func didFailRegistration(_ error: Error) {
         onError?("APNs 注册失败：\(error.localizedDescription)")
-    }
-
-    private func registerWithRelay(token: String, publicKey: String) async {
-        guard let rawURL = Bundle.main.object(forInfoDictionaryKey: "ZimloPushRelayURL") as? String,
-              rawURL.hasPrefix("https://"),
-              let baseURL = URL(string: rawURL) else {
-            onError?("通知服务尚未配置，请设置 ZimloPushRelayURL。")
-            return
-        }
-        var request = URLRequest(url: baseURL.appending(path: "v1/devices"))
-        request.httpMethod = "POST"
-        request.setValue("application/json", forHTTPHeaderField: "content-type")
-        if let secret = Bundle.main.object(forInfoDictionaryKey: "ZimloPushRegistrationSecret") as? String, !secret.isEmpty {
-            request.setValue("Bearer \(secret)", forHTTPHeaderField: "authorization")
-        }
-        request.httpBody = try? JSONSerialization.data(withJSONObject: [
-            "platform": "ios",
-            "token": token,
-            "publicKey": publicKey,
-        ])
-        do {
-            let (data, response) = try await URLSession.shared.data(for: request)
-            guard let http = response as? HTTPURLResponse, 200..<300 ~= http.statusCode,
-                  let object = try JSONSerialization.jsonObject(with: data) as? [String: Any],
-                  let endpoint = object["endpoint"] as? String else {
-                throw URLError(.badServerResponse)
-            }
-            onRegistration?(endpoint, publicKey)
-        } catch {
-            onError?("通知设备注册失败：\(error.localizedDescription)")
-        }
     }
 
     nonisolated func userNotificationCenter(

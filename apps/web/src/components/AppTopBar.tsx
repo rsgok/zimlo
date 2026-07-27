@@ -5,12 +5,13 @@ interface AppTopBarProps {
   title: string;
   connected?: boolean;
   online?: boolean;
+  connectionMode?: "offline" | "local" | "cloud";
   detail?: boolean;
   onBack?: () => void;
   action?: ReactNode;
 }
 
-export function AppTopBar({ title, connected = false, online = true, detail = false, onBack, action }: AppTopBarProps) {
+export function AppTopBar({ title, connected = false, online = true, connectionMode = "offline", detail = false, onBack, action }: AppTopBarProps) {
   return (
     <header className={`app-top-bar${detail ? " is-detail" : ""}`}>
       <div className="app-top-bar-row">
@@ -24,7 +25,7 @@ export function AppTopBar({ title, connected = false, online = true, detail = fa
           {action ?? (
             <span className={`app-top-bar-status ${connected && online ? "is-connected" : ""}`}>
               <i aria-hidden="true" />
-              {!online ? "离线" : connected ? "实时" : "重连"}
+              {!online ? "离线" : connected ? (connectionMode === "cloud" ? "云端" : "本地") : "重连"}
             </span>
           )}
         </div>

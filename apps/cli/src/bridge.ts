@@ -7,6 +7,7 @@ import fastifyWebsocket from "@fastify/websocket";
 import QRCode from "qrcode";
 import { FEATURE_CAPABILITIES, type ClientCommand, type ServerMessage } from "@zimlo/protocol";
 import { ActionBroker } from "./action-broker.js";
+import { CloudService } from "./cloud-service.js";
 import { codexPluginDeepLink, inspectCodexPlugin, installCodexPlugin } from "./codex-plugin.js";
 import { DeviceManager } from "./device-manager.js";
 import { inspectIntegrationStatuses, installCliIntegrations } from "./integration-status.js";
@@ -32,6 +33,7 @@ export class BridgeServer {
   private readonly broker: ActionBroker;
   private readonly devices: DeviceManager;
   private readonly taskCommands: TaskCommandService;
+  private readonly cloud: CloudService;
   private readonly options: BridgeOptions;
   private readonly entrypoint: string;
   private readonly connections = new Set<SecureSocket>();
@@ -43,6 +45,7 @@ export class BridgeServer {
     broker: ActionBroker;
     devices: DeviceManager;
     taskCommands: TaskCommandService;
+    cloud: CloudService;
     entrypoint: string;
     options: BridgeOptions;
   }) {
@@ -50,6 +53,7 @@ export class BridgeServer {
     this.broker = input.broker;
     this.devices = input.devices;
     this.taskCommands = input.taskCommands;
+    this.cloud = input.cloud;
     this.entrypoint = input.entrypoint;
     this.options = input.options;
   }
@@ -83,7 +87,12 @@ export class BridgeServer {
         ...(body.name ? { name: body.name } : {}),
       });
       if (!result) return reply.code(410).send({ error: "Pairing expired, used, or invalid" });
-      return { deviceId: result.device.id, serverProof: result.serverProof };
+      const cloud = await this.cloud.provisionDevice(result.device.id);
+      return {
+        deviceId: result.device.id,
+        serverProof: result.serverProof,
+        ...(cloud ? { cloud } : {}),
+      };
     });
     app.get("/ws", { websocket: true }, (socket) => {
       let connection: SecureSocket;
@@ -156,6 +165,22 @@ export class BridgeServer {
           devices: this.devicesList(),
         });
         return;
+      case "device.revoke": {
+        if (!connection.isLocalAdmin) return connection.send({ type: "error", code: "forbidden", message: "仅 Mac 本机管理页可撤销设备。" });
+        const device = this.runtime.store.getDevice(command.deviceId);
+        if (!device || device.isLocalAdmin) {
+          return connection.send({ type: "error", code: "device_not_found", message: "这台设备不存在或不能撤销。" });
+        }
+        this.runtime.store.revokeDevice(command.deviceId);
+        await this.cloud.revokeDevice(command.deviceId);
+        for (const authenticated of this.connections) {
+          if (authenticated.deviceId === command.deviceId) {
+            authenticated.close(1008, "Device revoked");
+          }
+        }
+        connection.send({ type: "devices.list", devices: this.devicesList() });
+        return;
+      }
       case "integrations.request":
         if (!connection.isLocalAdmin) return connection.send({ type: "error", code: "forbidden", message: "仅 Mac 本机管理页可查看本地 Agent 接入状态。" });
         connection.send({ type: "integrations.status", integrations: await inspectIntegrationStatuses(this.entrypoint) });
@@ -364,12 +389,23 @@ export class BridgeServer {
         return;
       }
       case "notification.device.register": {
-        const registration = this.runtime.store.upsertPushDevice(deviceId, command.endpoint, command.publicKey);
+        const endpoint = command.token
+          ? await this.cloud.registerPushDevice(deviceId, command.token, command.publicKey)
+          : command.endpoint ?? null;
+        if (!endpoint) {
+          return connection.send({
+            type: "error",
+            code: "notification_cloud_unavailable",
+            message: "Cloudflare 通知服务尚未连接，设备 token 已保留在手机上并会在重连后重试。",
+          });
+        }
+        const registration = this.runtime.store.upsertPushDevice(deviceId, endpoint, command.publicKey);
         this.runtime.store.saveIdempotentResult(`${deviceId}:${command.idempotencyKey}`, deviceId, { ok: true });
         connection.send({ type: "notification.device.updated", registration });
         return;
       }
       case "notification.device.unregister":
+        await this.cloud.unregisterPushDevice(deviceId);
         this.runtime.store.unregisterPushDevice(deviceId);
         this.runtime.store.saveIdempotentResult(`${deviceId}:${command.idempotencyKey}`, deviceId, { ok: true });
         connection.send({ type: "notification.device.updated", registration: null });

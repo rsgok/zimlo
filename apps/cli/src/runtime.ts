@@ -5,16 +5,20 @@ import { sanitizeEventPayload } from "./sanitization.js";
 import { ZimloStore } from "./store.js";
 import { titleSessionFromInput } from "./task-title.js";
 import { PushService } from "./push-service.js";
+import type { CloudService } from "./cloud-service.js";
 
 export class RuntimeHub extends EventEmitter {
   readonly store: ZimloStore;
   private readonly push: PushService;
   lanApprovalsEnabled: boolean;
 
-  constructor(store: ZimloStore) {
+  constructor(store: ZimloStore, cloud?: CloudService) {
     super();
     this.store = store;
-    this.push = new PushService(store);
+    this.push = new PushService(store, cloud ?? {
+      enabled: false,
+      sendPush: async () => 503,
+    });
     this.lanApprovalsEnabled = store.lanApprovalsEnabled();
   }
 

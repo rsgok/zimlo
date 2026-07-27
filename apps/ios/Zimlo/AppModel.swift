@@ -32,7 +32,7 @@ struct FeedEntry: Identifiable, Hashable {
 final class AppModel: ObservableObject {
     let bridge = BridgeClient()
 
-    @Published var snapshot = Snapshot.empty
+    @Published var snapshot = SnapshotCache.load() ?? .empty
     @Published var events: [String: [UnifiedEvent]] = [:]
     @Published var selectedTab: MainTab = .feed
     @Published var selectedSession: AgentSession?
@@ -53,10 +53,10 @@ final class AppModel: ObservableObject {
         )) ?? []
         bridgeObserver = bridge.objectWillChange.sink { [weak self] _ in self?.objectWillChange.send() }
         bridge.onMessage = { [weak self] message in self?.apply(message) }
-        NotificationManager.shared.onRegistration = { [weak self] endpoint, publicKey in
+        NotificationManager.shared.onRegistration = { [weak self] token, publicKey in
             guard let self else { return }
             _ = self.sendDurable(ClientCommand(type: "notification.device.register", [
-                "endpoint": .string(endpoint),
+                "token": .string(token),
                 "publicKey": .string(publicKey),
                 "idempotencyKey": .string(UUID().uuidString),
             ]))
@@ -367,6 +367,7 @@ final class AppModel: ObservableObject {
     func forgetDevice() {
         bridge.forgetDevice()
         snapshot = .empty
+        SnapshotCache.clear()
         events = [:]
     }
 
@@ -544,6 +545,7 @@ final class AppModel: ObservableObject {
         default:
             break
         }
+        SnapshotCache.save(snapshot)
     }
 
     private func upsert<T: Identifiable>(_ values: inout [T], _ value: T) where T.ID: Equatable {

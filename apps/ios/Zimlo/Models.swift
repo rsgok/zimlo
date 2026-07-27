@@ -260,6 +260,26 @@ struct FeatureCapabilities: Codable, Hashable {
     var taskReview: Bool
     var projectTrustPolicy: Bool
     var pushNotifications: Bool
+    var remoteSync: Bool
+
+    private enum CodingKeys: String, CodingKey {
+        case taskReview, projectTrustPolicy, pushNotifications, remoteSync
+    }
+
+    init(taskReview: Bool, projectTrustPolicy: Bool, pushNotifications: Bool, remoteSync: Bool) {
+        self.taskReview = taskReview
+        self.projectTrustPolicy = projectTrustPolicy
+        self.pushNotifications = pushNotifications
+        self.remoteSync = remoteSync
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        taskReview = try container.decodeIfPresent(Bool.self, forKey: .taskReview) ?? false
+        projectTrustPolicy = try container.decodeIfPresent(Bool.self, forKey: .projectTrustPolicy) ?? false
+        pushNotifications = try container.decodeIfPresent(Bool.self, forKey: .pushNotifications) ?? false
+        remoteSync = try container.decodeIfPresent(Bool.self, forKey: .remoteSync) ?? false
+    }
 }
 
 struct TaskRecord: Codable, Hashable, Identifiable {
@@ -345,7 +365,10 @@ struct Snapshot: Codable, Hashable {
         seenPostIds: [], dismissedFeedItemIds: [], taskTimelineCursors: [:],
         taskPreferences: [], actions: [], reviews: [], trustPolicies: [], trustAudit: [],
         notificationSettings: NotificationSettings(enabled: false, approvals: true, failures: true, reviews: true, showTaskTitle: false, updatedAt: ""),
-        pushDevices: [], features: FeatureCapabilities(taskReview: false, projectTrustPolicy: false, pushNotifications: false),
+        pushDevices: [], features: FeatureCapabilities(
+            taskReview: false, projectTrustPolicy: false,
+            pushNotifications: false, remoteSync: false
+        ),
         sequence: 0, lanApprovalsEnabled: false
     )
 

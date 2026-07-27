@@ -37,6 +37,7 @@ struct RootView: View {
                     AppTopBar(
                         title: topBarTitle,
                         connected: model.bridge.connected,
+                        connectionLabel: connectionLabel,
                         onBack: isShowingDetail ? clearDetail : nil,
                         status: detailStatus
                     )
@@ -114,6 +115,14 @@ struct RootView: View {
             return ["running": "进行中", "waiting": "等待中", "failed": "失败", "completed": "已完成"][session.status] ?? session.status
         }
         return model.selectedProject == nil ? nil : "Agent"
+    }
+
+    private var connectionLabel: String {
+        switch model.bridge.connectionMode {
+        case "cloud": return "云端"
+        case "local": return "本地"
+        default: return "重连"
+        }
     }
 
     private func clearDetail() {

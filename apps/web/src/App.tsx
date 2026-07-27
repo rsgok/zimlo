@@ -90,7 +90,7 @@ export function App() {
 
   return (
     <div className={`app-shell tab-${tab}`}>
-      <AppTopBar title={tabTitle[tab]} connected={bridge.connected} online={online} />
+      <AppTopBar title={tabTitle[tab]} connected={bridge.connected} online={online} connectionMode={bridge.connectionMode} />
 
       <SystemNotices online={online} pendingCount={bridge.pendingOutboxCount} error={bridge.error} />
 

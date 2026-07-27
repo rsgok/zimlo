@@ -101,3 +101,11 @@ Session、persistent 与高风险决策要求确认短语。永久规则只有�
 ## LAN 通道
 
 `zimlo start` 只绑定 `127.0.0.1`；`--lan` 仅选择 loopback、RFC1918 或 ULA 地址。二维码携带 2 分钟单次 secret，X25519 协商设备密钥，随后每个方向派生独立 XChaCha20-Poly1305 密钥并使用连接级计数器防重放。浏览器密钥保存在 IndexedDB，Mac 可立即撤销设备，并按设备持久授权手机审批。
+
+## Cloudflare 远程通道
+
+Cloudflare Worker 负责鉴权和路由，D1 只保存 Mac 安装公钥、设备访问令牌哈希、APNs token 与投递审计；每个 Mac 安装映射到一个使用 WebSocket Hibernation API 的 Durable Object。Mac 主动建立出站 WebSocket，手机在 LAN 失败后连接同一对象。Durable Object 只看到连接 ID 与 Bridge 密文，不能读取 Snapshot、任务正文、审批内容或命令。
+
+远程通道不另造应用协议：Mac relay 把每个手机连接映射到本机 loopback `/ws`，因此仍由 `SecureSocket` 验证设备密钥、权限、单调计数器和端到端加密。手机缓存最近 Snapshot；Mac 不在线时写操作留在持久 outbox，不会写入 D1，重连后使用既有 idempotency key 重放。
+
+Mac 安装身份使用 P-256 签名，私钥只保存在权限为 `0600` 的本机 SQLite metadata；每台手机的随机云访问令牌只在可信配对时下发，Cloudflare 只保存 SHA-256 哈希。撤销设备会同时撤销本地 Bridge 身份和云端记录。

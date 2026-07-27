@@ -1,0 +1,371 @@
+import {
+  createAPNsJWT,
+  freshTimestamp,
+  installationRegistrationMessage,
+  sha256Text,
+  signedRequestMessage,
+  verifyInstallationSignature,
+} from "./crypto.js";
+import { RelayRoom } from "./relay-room.js";
+
+interface Env {
+  DB: D1Database;
+  RELAY_ROOMS: DurableObjectNamespace;
+  REGISTRATION_RATE_LIMITER: RateLimit;
+  AUTH_RATE_LIMITER: RateLimit;
+  APNS_PRIVATE_KEY_P8?: string;
+  APNS_KEY_ID?: string;
+  APNS_TEAM_ID?: string;
+  APNS_TOPIC?: string;
+  APNS_ENVIRONMENT?: "development" | "production";
+}
+
+interface InstallationRow {
+  id: string;
+  public_key_spki: string;
+  disabled_at: string | null;
+}
+
+interface DeviceRow {
+  installation_id: string;
+  device_id: string;
+  apns_token: string | null;
+  route_public_key: string | null;
+}
+
+interface PushBody {
+  deviceId?: string;
+  kind?: "approval" | "failure" | "review";
+  collapseId?: string;
+  alert?: { title?: string; body?: string };
+  route?: { ephemeralPublicKey?: string; nonce?: string; ciphertext?: string };
+}
+
+function jsonError(status: number, error: string): Response {
+  return Response.json({ error }, { status });
+}
+
+function validId(value: unknown, prefix: string): value is string {
+  return typeof value === "string" && value.startsWith(prefix) && /^[a-zA-Z0-9:_-]{12,160}$/u.test(value);
+}
+
+function actorKey(request: Request): string {
+  return request.headers.get("cf-connecting-ip") ?? "unknown";
+}
+
+async function installationForSignedRequest(
+  request: Request,
+  env: Env,
+  rawBody = "",
+): Promise<InstallationRow | Response> {
+  const installationId = request.headers.get("x-zimlo-installation") ?? "";
+  const timestamp = request.headers.get("x-zimlo-timestamp") ?? "";
+  const signature = request.headers.get("x-zimlo-signature") ?? "";
+  if (!validId(installationId, "installation_") || !freshTimestamp(timestamp) || !signature) {
+    return jsonError(401, "invalid_signature");
+  }
+  const row = await env.DB.prepare(
+    "SELECT id, public_key_spki, disabled_at FROM installations WHERE id = ?",
+  ).bind(installationId).first<InstallationRow>();
+  if (!row || row.disabled_at) return jsonError(401, "installation_inactive");
+  const message = await signedRequestMessage(timestamp, request.method, new URL(request.url).pathname, rawBody);
+  if (!await verifyInstallationSignature(row.public_key_spki, message, signature)) {
+    return jsonError(401, "invalid_signature");
+  }
+  await env.DB.prepare("UPDATE installations SET last_seen_at = ? WHERE id = ?")
+    .bind(new Date().toISOString(), installationId).run();
+  return row;
+}
+
+async function registerInstallation(request: Request, env: Env): Promise<Response> {
+  const body = await request.json<Record<string, unknown>>().catch(() => null);
+  const installationId = body?.installationId;
+  const publicKey = body?.publicKey;
+  const timestamp = body?.timestamp;
+  const signature = body?.signature;
+  if (
+    !validId(installationId, "installation_")
+    || typeof publicKey !== "string"
+    || publicKey.length > 512
+    || typeof timestamp !== "string"
+    || typeof signature !== "string"
+    || !freshTimestamp(timestamp)
+  ) {
+    return jsonError(400, "invalid_installation");
+  }
+  if (!await verifyInstallationSignature(
+    publicKey,
+    installationRegistrationMessage(timestamp, installationId, publicKey),
+    signature,
+  )) {
+    return jsonError(401, "invalid_signature");
+  }
+  const existing = await env.DB.prepare("SELECT public_key_spki FROM installations WHERE id = ?")
+    .bind(installationId).first<{ public_key_spki: string }>();
+  if (existing && existing.public_key_spki !== publicKey) return jsonError(409, "installation_exists");
+  const now = new Date().toISOString();
+  await env.DB.prepare(`
+    INSERT INTO installations(id, public_key_spki, created_at, last_seen_at, disabled_at)
+    VALUES (?, ?, ?, ?, NULL)
+    ON CONFLICT(id) DO UPDATE SET last_seen_at = excluded.last_seen_at
+  `).bind(installationId, publicKey, now, now).run();
+  return Response.json({ installationId });
+}
+
+async function upsertDevice(request: Request, env: Env): Promise<Response> {
+  const rawBody = await request.text();
+  const installation = await installationForSignedRequest(request, env, rawBody);
+  if (installation instanceof Response) return installation;
+  let body: Record<string, unknown>;
+  try {
+    body = JSON.parse(rawBody) as Record<string, unknown>;
+  } catch {
+    return jsonError(400, "invalid_json");
+  }
+  const deviceId = body.deviceId;
+  const accessTokenHash = body.accessTokenHash;
+  const apnsToken = body.apnsToken;
+  const routePublicKey = body.routePublicKey;
+  if (
+    !validId(deviceId, "device_")
+    || typeof accessTokenHash !== "string"
+    || accessTokenHash.length < 32
+    || (apnsToken !== undefined && (typeof apnsToken !== "string" || !/^[a-f0-9]{64,256}$/u.test(apnsToken)))
+    || (routePublicKey !== undefined && (typeof routePublicKey !== "string" || routePublicKey.length > 256))
+  ) {
+    return jsonError(400, "invalid_device");
+  }
+  if (
+    apnsToken !== undefined
+    && (!env.APNS_PRIVATE_KEY_P8 || !env.APNS_KEY_ID || !env.APNS_TEAM_ID || !env.APNS_TOPIC)
+  ) {
+    return jsonError(503, "apns_not_configured");
+  }
+  const now = new Date().toISOString();
+  await env.DB.prepare(`
+    INSERT INTO devices(
+      installation_id, device_id, access_token_hash, apns_token,
+      route_public_key, active, created_at, updated_at
+    ) VALUES (?, ?, ?, ?, ?, 1, ?, ?)
+    ON CONFLICT(installation_id, device_id) DO UPDATE SET
+      access_token_hash = excluded.access_token_hash,
+      apns_token = COALESCE(excluded.apns_token, devices.apns_token),
+      route_public_key = COALESCE(excluded.route_public_key, devices.route_public_key),
+      active = 1,
+      updated_at = excluded.updated_at
+  `).bind(
+    installation.id,
+    deviceId,
+    accessTokenHash,
+    apnsToken ?? null,
+    routePublicKey ?? null,
+    now,
+    now,
+  ).run();
+  return Response.json({ endpoint: deviceId });
+}
+
+async function unregisterDevice(request: Request, env: Env, deviceId: string): Promise<Response> {
+  const rawBody = await request.text();
+  const installation = await installationForSignedRequest(request, env, rawBody);
+  if (installation instanceof Response) return installation;
+  if (!validId(deviceId, "device_")) return jsonError(400, "invalid_device");
+  await env.DB.prepare(`
+    UPDATE devices SET active = 0, updated_at = ?
+    WHERE installation_id = ? AND device_id = ?
+  `).bind(new Date().toISOString(), installation.id, deviceId).run();
+  return Response.json({ ok: true });
+}
+
+async function unregisterPushDevice(request: Request, env: Env, deviceId: string): Promise<Response> {
+  const rawBody = await request.text();
+  const installation = await installationForSignedRequest(request, env, rawBody);
+  if (installation instanceof Response) return installation;
+  if (!validId(deviceId, "device_")) return jsonError(400, "invalid_device");
+  await env.DB.prepare(`
+    UPDATE devices SET apns_token = NULL, route_public_key = NULL, updated_at = ?
+    WHERE installation_id = ? AND device_id = ?
+  `).bind(new Date().toISOString(), installation.id, deviceId).run();
+  return Response.json({ ok: true });
+}
+
+let cachedAPNsJWT: { value: string; expiresAt: number } | null = null;
+
+async function apnsJWT(env: Env): Promise<string> {
+  if (cachedAPNsJWT && cachedAPNsJWT.expiresAt > Date.now()) return cachedAPNsJWT.value;
+  if (!env.APNS_PRIVATE_KEY_P8 || !env.APNS_KEY_ID || !env.APNS_TEAM_ID) {
+    throw new Error("APNs is not configured");
+  }
+  const value = await createAPNsJWT({
+    privateKeyPEM: env.APNS_PRIVATE_KEY_P8,
+    keyId: env.APNS_KEY_ID,
+    teamId: env.APNS_TEAM_ID,
+  });
+  cachedAPNsJWT = { value, expiresAt: Date.now() + 50 * 60 * 1_000 };
+  return value;
+}
+
+async function sendPush(request: Request, env: Env): Promise<Response> {
+  const rawBody = await request.text();
+  const installation = await installationForSignedRequest(request, env, rawBody);
+  if (installation instanceof Response) return installation;
+  let body: PushBody;
+  try {
+    body = JSON.parse(rawBody) as PushBody;
+  } catch {
+    return jsonError(400, "invalid_json");
+  }
+  if (
+    !validId(body.deviceId, "device_")
+    || !body.kind
+    || !body.collapseId
+    || !body.route?.ciphertext
+  ) {
+    return jsonError(400, "invalid_push");
+  }
+  if (!env.APNS_PRIVATE_KEY_P8 || !env.APNS_KEY_ID || !env.APNS_TEAM_ID || !env.APNS_TOPIC) {
+    return jsonError(503, "apns_not_configured");
+  }
+  const device = await env.DB.prepare(`
+    SELECT installation_id, device_id, apns_token, route_public_key
+    FROM devices WHERE installation_id = ? AND device_id = ? AND active = 1
+  `).bind(installation.id, body.deviceId).first<DeviceRow>();
+  if (!device?.apns_token) return jsonError(410, "device_inactive");
+  const origin = env.APNS_ENVIRONMENT === "production"
+    ? "https://api.push.apple.com"
+    : "https://api.sandbox.push.apple.com";
+  const response = await fetch(`${origin}/3/device/${device.apns_token}`, {
+    method: "POST",
+    headers: {
+      authorization: `bearer ${await apnsJWT(env)}`,
+      "content-type": "application/json",
+      "apns-topic": env.APNS_TOPIC,
+      "apns-push-type": "alert",
+      "apns-priority": "10",
+      "apns-collapse-id": body.collapseId.slice(0, 64),
+    },
+    body: JSON.stringify({
+      aps: {
+        alert: {
+          title: body.alert?.title?.slice(0, 80) || "Zimlo",
+          body: body.alert?.body?.slice(0, 180) || "有一项需要你处理",
+        },
+        sound: "default",
+        "mutable-content": 1,
+        "thread-id": body.collapseId.split(":")[0] || "zimlo",
+      },
+      route: body.route,
+      kind: body.kind,
+    }),
+  });
+  if (response.status === 410) {
+    await env.DB.prepare(`
+      UPDATE devices SET active = 0, updated_at = ?
+      WHERE installation_id = ? AND device_id = ?
+    `).bind(new Date().toISOString(), installation.id, body.deviceId).run();
+  }
+  await env.DB.prepare(`
+    INSERT INTO push_audit(id, installation_id, device_id, kind, collapse_id, status, created_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?)
+  `).bind(
+    crypto.randomUUID(),
+    installation.id,
+    body.deviceId,
+    body.kind,
+    body.collapseId,
+    response.status,
+    new Date().toISOString(),
+  ).run();
+  if (!response.ok) return jsonError(response.status === 410 ? 410 : 502, "apns_rejected");
+  return Response.json({ ok: true });
+}
+
+async function relayWebSocket(request: Request, env: Env, role: "mac" | "device"): Promise<Response> {
+  let installationId: string;
+  let deviceId = "";
+  if (role === "mac") {
+    const installation = await installationForSignedRequest(request, env);
+    if (installation instanceof Response) return installation;
+    installationId = installation.id;
+  } else {
+    const authorization = request.headers.get("authorization") ?? "";
+    const protocols = (request.headers.get("sec-websocket-protocol") ?? "")
+      .split(",")
+      .map((value) => value.trim());
+    const protocolToken = protocols.find((value) => value.startsWith("zimlo-token."))?.slice("zimlo-token.".length);
+    const accessToken = authorization.startsWith("Bearer ") ? authorization.slice(7) : protocolToken;
+    if (!accessToken) return jsonError(401, "device_token_required");
+    const tokenHash = await sha256Text(accessToken);
+    const device = await env.DB.prepare(`
+      SELECT installation_id, device_id FROM devices
+      WHERE access_token_hash = ? AND active = 1
+    `).bind(tokenHash).first<{ installation_id: string; device_id: string }>();
+    if (!device) return jsonError(401, "device_inactive");
+    installationId = device.installation_id;
+    deviceId = device.device_id;
+  }
+  const headers = new Headers(request.headers);
+  headers.set("x-zimlo-relay-role", role);
+  if (deviceId) headers.set("x-zimlo-device-id", deviceId);
+  headers.delete("authorization");
+  headers.delete("x-zimlo-signature");
+  headers.delete("sec-websocket-protocol");
+  if ((request.headers.get("sec-websocket-protocol") ?? "").includes("zimlo-relay-v1")) {
+    headers.set("x-zimlo-websocket-protocol", "zimlo-relay-v1");
+  }
+  const room = env.RELAY_ROOMS.get(env.RELAY_ROOMS.idFromName(installationId));
+  return room.fetch(new Request(request, { headers }));
+}
+
+export default {
+  async fetch(request: Request, env: Env): Promise<Response> {
+    const url = new URL(request.url);
+    if (request.method === "GET" && url.pathname === "/healthz") {
+      return Response.json({
+        ok: true,
+        service: "zimlo-cloud",
+        protocolVersion: 2,
+        storesContent: false,
+        encryptedRemoteSync: true,
+        pushConfigured: Boolean(
+          env.APNS_PRIVATE_KEY_P8 && env.APNS_KEY_ID && env.APNS_TEAM_ID && env.APNS_TOPIC,
+        ),
+      });
+    }
+    if (request.method === "POST" && url.pathname === "/v1/installations") {
+      const allowed = await env.REGISTRATION_RATE_LIMITER.limit({ key: actorKey(request) });
+      if (!allowed.success) return jsonError(429, "registration_rate_limited");
+      return registerInstallation(request, env);
+    }
+    if (request.method === "POST" && url.pathname === "/v1/devices") {
+      return upsertDevice(request, env);
+    }
+    if (request.method === "DELETE" && /^\/v1\/devices\/[^/]+\/push$/u.test(url.pathname)) {
+      const encodedDeviceId = url.pathname.slice("/v1/devices/".length, -"/push".length);
+      return unregisterPushDevice(request, env, decodeURIComponent(encodedDeviceId));
+    }
+    if (request.method === "DELETE" && url.pathname.startsWith("/v1/devices/")) {
+      return unregisterDevice(request, env, decodeURIComponent(url.pathname.slice("/v1/devices/".length)));
+    }
+    if (request.method === "POST" && url.pathname === "/v1/push") {
+      return sendPush(request, env);
+    }
+    if (request.method === "GET" && url.pathname === "/v1/sync/mac") {
+      const allowed = await env.AUTH_RATE_LIMITER.limit({ key: `mac:${actorKey(request)}` });
+      if (!allowed.success) return jsonError(429, "relay_rate_limited");
+      return relayWebSocket(request, env, "mac");
+    }
+    if (request.method === "GET" && url.pathname === "/v1/sync/device") {
+      const allowed = await env.AUTH_RATE_LIMITER.limit({ key: `device:${actorKey(request)}` });
+      if (!allowed.success) return jsonError(429, "relay_rate_limited");
+      return relayWebSocket(request, env, "device");
+    }
+    return jsonError(404, "not_found");
+  },
+  async scheduled(_controller: ScheduledController, env: Env): Promise<void> {
+    const cutoff = new Date(Date.now() - 45 * 24 * 60 * 60 * 1_000).toISOString();
+    await env.DB.prepare("DELETE FROM push_audit WHERE created_at < ?").bind(cutoff).run();
+  },
+};
+
+export { RelayRoom };

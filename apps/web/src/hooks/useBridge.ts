@@ -15,7 +15,9 @@ import {
 } from "@zimlo/protocol/crypto";
 import {
   clearCredentials,
+  readCachedSnapshot,
   readCredentials,
+  saveCachedSnapshot,
   saveCredentials,
   type DeviceCredentials,
 } from "../lib/credentials";
@@ -85,6 +87,7 @@ interface BridgeState {
   codexPlugin: CodexPluginInfo | null;
   integrations: IntegrationStatus[];
   connected: boolean;
+  connectionMode: "offline" | "local" | "cloud";
   pairingRequired: boolean;
   localAdmin: boolean;
   error: string | null;
@@ -117,9 +120,20 @@ async function pairFromFragment(): Promise<DeviceCredentials | null> {
     }),
   });
   if (!response.ok) throw new Error("配对链接已过期、已使用或校验失败。请在 Mac 上重新生成。");
-  const result = await response.json() as { deviceId: string; serverProof: string };
+  const result = await response.json() as {
+    deviceId: string;
+    serverProof: string;
+    cloud?: { relayURL: string; accessToken: string };
+  };
   if (!verifyProof(pairKey, `server:${result.deviceId}`, result.serverProof)) throw new Error("Bridge 配对证明无效。");
-  const credentials = { deviceId: result.deviceId, deviceKey: toBase64Url(deriveDeviceKey(pairKey, secret)) };
+  const credentials: DeviceCredentials = {
+    deviceId: result.deviceId,
+    deviceKey: toBase64Url(deriveDeviceKey(pairKey, secret)),
+    ...(result.cloud ? {
+      remoteRelayURL: result.cloud.relayURL,
+      remoteAccessToken: result.cloud.accessToken,
+    } : {}),
+  };
   await saveCredentials(credentials);
   window.history.replaceState(null, "", `${window.location.pathname}${window.location.search}`);
   return credentials;
@@ -157,6 +171,7 @@ export function useBridge() {
     codexPlugin: null,
     integrations: [],
     connected: false,
+    connectionMode: "offline",
     pairingRequired: false,
     localAdmin: false,
     error: null,
@@ -356,11 +371,17 @@ export function useBridge() {
       });
     };
 
-    const connect = (credentials: DeviceCredentials) => {
+    const connect = (credentials: DeviceCredentials, mode: "local" | "cloud" = "local") => {
       if (disposed) return;
-      const url = new URL("/ws", window.location.href);
-      url.protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
-      socket = new WebSocket(url);
+      const remote = mode === "cloud";
+      const url = new URL(
+        remote ? "/v1/sync/device" : "/ws",
+        remote ? credentials.remoteRelayURL : window.location.href,
+      );
+      url.protocol = url.protocol === "https:" ? "wss:" : "ws:";
+      socket = remote
+        ? new WebSocket(url, ["zimlo-relay-v1", `zimlo-token.${credentials.remoteAccessToken}`])
+        : new WebSocket(url);
       let clientTx: Uint8Array | null = null;
       let serverTx: Uint8Array | null = null;
       let sendCounter = 0;
@@ -393,7 +414,7 @@ export function useBridge() {
             const keys = deriveConnectionKeys(deviceKey, clientNonce, fromBase64Url(value.serverNonce));
             clientTx = keys.clientTx;
             serverTx = keys.serverTx;
-            setState((current) => ({ ...current, connected: true, error: null }));
+            setState((current) => ({ ...current, connected: true, connectionMode: mode, error: null }));
             for (const entry of outboxRef.current) rawSendRef.current(entry.command);
             return;
           }
@@ -412,13 +433,26 @@ export function useBridge() {
         setState((current) => ({
           ...current,
           connected: false,
+          connectionMode: "offline",
           ...(event.code === 1008 ? { error: "设备身份已失效或被撤销，请重新配对。" } : {}),
         }));
-        if (!disposed && event.code !== 1008) reconnectTimer = window.setTimeout(() => connect(credentials), 1_500);
+        if (!disposed && event.code !== 1008) {
+          const nextMode = credentials.remoteRelayURL && credentials.remoteAccessToken
+            ? (mode === "local" ? "cloud" : "local")
+            : "local";
+          reconnectTimer = window.setTimeout(() => connect(credentials, nextMode), 1_500);
+        }
       };
     };
 
-    void loadCredentials().then(({ credentials, localAdmin }) => {
+    void readCachedSnapshot().then((cached) => {
+      if (cached && !disposed) {
+        setState((current) => current.snapshot.sequence > 0
+          ? current
+          : { ...current, snapshot: normalizeSnapshot(cached) });
+      }
+      return loadCredentials();
+    }).then(({ credentials, localAdmin }) => {
       if (disposed) return;
       setState((current) => ({ ...current, localAdmin, pairingRequired: !credentials }));
       if (credentials) connect(credentials);
@@ -433,6 +467,10 @@ export function useBridge() {
       socket?.close();
     };
   }, []);
+
+  useEffect(() => {
+    if (state.snapshot.sequence > 0) void saveCachedSnapshot(state.snapshot);
+  }, [state.snapshot]);
 
   const send = useCallback((command: ClientCommand) => sendRef.current(command), []);
   const dismissNotice = useCallback(() => setState((current) => ({ ...current, notice: null })), []);

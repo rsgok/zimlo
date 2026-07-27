@@ -440,6 +440,7 @@ export const FeatureCapabilitiesSchema = z.object({
   taskReview: z.boolean(),
   projectTrustPolicy: z.boolean(),
   pushNotifications: z.boolean(),
+  remoteSync: z.boolean(),
 });
 export type FeatureCapabilities = z.infer<typeof FeatureCapabilitiesSchema>;
 
@@ -447,12 +448,14 @@ export const FEATURE_CAPABILITIES: FeatureCapabilities = {
   taskReview: true,
   projectTrustPolicy: true,
   pushNotifications: true,
+  remoteSync: true,
 };
 
 export const EMPTY_FEATURE_CAPABILITIES: FeatureCapabilities = {
   taskReview: false,
   projectTrustPolicy: false,
   pushNotifications: false,
+  remoteSync: false,
 };
 
 export const SnapshotSchema = z.object({
@@ -543,7 +546,8 @@ export const ClientCommandSchema = z.discriminatedUnion("type", [
   }),
   z.object({
     type: z.literal("notification.device.register"),
-    endpoint: z.string().min(1).max(2_000),
+    endpoint: z.string().min(1).max(2_000).optional(),
+    token: z.string().min(1).max(2_000).optional(),
     publicKey: z.string().min(1).max(2_000),
     idempotencyKey: z.string(),
   }),
@@ -562,6 +566,7 @@ export const ClientCommandSchema = z.discriminatedUnion("type", [
   }),
   z.object({ type: z.literal("session.events.request"), sessionId: z.string() }),
   z.object({ type: z.literal("devices.request") }),
+  z.object({ type: z.literal("device.revoke"), deviceId: z.string() }),
   z.object({ type: z.literal("integrations.request") }),
   z.object({ type: z.literal("integrations.cli.install") }),
   z.object({ type: z.literal("device.approvals.set"), deviceId: z.string(), enabled: z.boolean() }),

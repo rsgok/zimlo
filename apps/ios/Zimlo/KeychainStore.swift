@@ -5,6 +5,8 @@ struct DeviceCredentials: Codable, Hashable {
     var bridgeURL: URL
     var deviceId: String
     var deviceKey: String
+    var remoteRelayURL: URL?
+    var remoteAccessToken: String?
 }
 
 enum KeychainStore {

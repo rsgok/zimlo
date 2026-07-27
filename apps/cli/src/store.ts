@@ -103,6 +103,22 @@ export class ZimloStore {
     this.database.close();
   }
 
+  getMetadata(key: string): string | null {
+    const row = this.database.prepare("SELECT value FROM metadata WHERE key = ?").get(key) as { value: string } | undefined;
+    return row?.value ?? null;
+  }
+
+  setMetadata(key: string, value: string): void {
+    this.database.prepare(`
+      INSERT INTO metadata(key, value) VALUES (?, ?)
+      ON CONFLICT(key) DO UPDATE SET value = excluded.value
+    `).run(key, value);
+  }
+
+  deleteMetadata(key: string): void {
+    this.database.prepare("DELETE FROM metadata WHERE key = ?").run(key);
+  }
+
   private migrate(): void {
     this.database.exec(`
       CREATE TABLE IF NOT EXISTS projects (

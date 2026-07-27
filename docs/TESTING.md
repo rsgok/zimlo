@@ -46,6 +46,10 @@ pnpm --filter @zimlo/cli smoke
 | 空闲 Codex 回复 | app-server 握手、resume、turn 完成 |
 | 四个并发审批 | 每个 action 只解析到自己的上游请求 |
 | 双击/重放/断线重试 | 同一 idempotency key 不重复执行 |
+| 手机离开 LAN、Mac 在线 | 自动从“本地”切成“云端”，Snapshot、审批和回复继续同步 |
+| Mac 离线、手机在外网 | 显示最近缓存与“重连”，操作只进入设备 outbox，不写入云端任务库 |
+| Mac 恢复在线 | 拉取最新 Snapshot，幂等发送 outbox，不产生重复审批或回复 |
+| 撤销手机 | 本地设备身份和 Cloudflare 设备记录都失效，旧令牌不能再次连接 |
 | Bridge 在审批时崩溃 | resolver 失效，重启后旧 action 过期 |
 | Mac Safari/Chrome、iPhone Safari | 一屏一帖、Tasks、Agents、Task Detail 与 Settings 无横向溢出 |
 | 320×568、390×844、768px、桌面 | 五套文字卡无横向溢出；普通卡无内部滚动 |
