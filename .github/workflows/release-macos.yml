@@ -1,0 +1,94 @@
+name: Release macOS
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Marketing version, for example 0.3.0
+        required: true
+        type: string
+      build_number:
+        description: Monotonically increasing CFBundleVersion
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  release:
+    runs-on: macos-15
+    timeout-minutes: 60
+    env:
+      ZIMLO_VERSION: ${{ inputs.version }}
+      ZIMLO_BUILD_NUMBER: ${{ inputs.build_number }}
+      ZIMLO_SIGN_IDENTITY: ${{ secrets.MACOS_SIGN_IDENTITY }}
+      SPARKLE_PUBLIC_KEY: ${{ secrets.SPARKLE_PUBLIC_KEY }}
+      APPLE_ID: ${{ secrets.APPLE_ID }}
+      APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+      APPLE_APP_PASSWORD: ${{ secrets.APPLE_APP_PASSWORD }}
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10.33.0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24.15.0
+          cache: pnpm
+
+      - run: pnpm install --frozen-lockfile
+
+      - name: Import Developer ID certificate
+        env:
+          CERTIFICATE_P12_BASE64: ${{ secrets.MACOS_CERTIFICATE_P12_BASE64 }}
+          CERTIFICATE_PASSWORD: ${{ secrets.MACOS_CERTIFICATE_PASSWORD }}
+          KEYCHAIN_PASSWORD: ${{ secrets.MACOS_KEYCHAIN_PASSWORD }}
+        run: |
+          certificate_path="$RUNNER_TEMP/zimlo-developer-id.p12"
+          keychain_path="$RUNNER_TEMP/zimlo-signing.keychain-db"
+          printf '%s' "$CERTIFICATE_P12_BASE64" | base64 --decode > "$certificate_path"
+          security create-keychain -p "$KEYCHAIN_PASSWORD" "$keychain_path"
+          security set-keychain-settings -lut 21600 "$keychain_path"
+          security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$keychain_path"
+          security import "$certificate_path" \
+            -P "$CERTIFICATE_PASSWORD" \
+            -A \
+            -t cert \
+            -f pkcs12 \
+            -k "$keychain_path"
+          security set-key-partition-list \
+            -S apple-tool:,apple:,codesign: \
+            -s \
+            -k "$KEYCHAIN_PASSWORD" \
+            "$keychain_path"
+          security list-keychains -d user -s "$keychain_path"
+
+      - name: Build, sign, notarize, and staple
+        run: pnpm macos:release
+
+      - name: Publish DMG and Sparkle appcast to Cloudflare R2
+        env:
+          SPARKLE_PRIVATE_KEY: ${{ secrets.SPARKLE_PRIVATE_KEY }}
+        run: |
+          private_key_path="$RUNNER_TEMP/zimlo-sparkle-private-key"
+          printf '%s' "$SPARKLE_PRIVATE_KEY" > "$private_key_path"
+          chmod 600 "$private_key_path"
+          SPARKLE_PRIVATE_KEY_FILE="$private_key_path" \
+            apps/macos/scripts/publish-release.sh \
+            "apps/macos/.build/release-${ZIMLO_VERSION}/Zimlo-${ZIMLO_VERSION}.dmg"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Zimlo-${{ inputs.version }}-notarized
+          path: apps/macos/.build/release-${{ inputs.version }}/Zimlo-${{ inputs.version }}.dmg
+          if-no-files-found: error
+
+      - name: Remove temporary signing keychain
+        if: always()
+        run: security delete-keychain "$RUNNER_TEMP/zimlo-signing.keychain-db" || true

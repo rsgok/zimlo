@@ -105,20 +105,35 @@ async function pairFromFragment(): Promise<DeviceCredentials | null> {
   const pairingId = params.get("pairingId");
   const secretText = params.get("secret");
   const bridgeKeyText = params.get("bridgeKey");
+  const pairingToken = params.get("pairingToken");
   if (!pairingId || !secretText || !bridgeKeyText) return null;
   const secret = fromBase64Url(secretText);
   const pair = createKeyPair();
   const pairKey = derivePairKey(pair.privateKey, fromBase64Url(bridgeKeyText), secret);
-  const response = await fetch("/api/pair", {
+  let response = await fetch("/api/pair", {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify({
       pairingId,
+      ...(pairingToken ? { pairingToken } : {}),
       clientPublicKey: toBase64Url(pair.publicKey),
       proof: makeProof(pairKey, `client:${pairingId}`),
       name: `${navigator.platform || "Mobile"} browser`,
     }),
   });
+  if (response.status === 202 && pairingToken) {
+    const pending = await response.json() as { requestId: string };
+    const deadline = Date.now() + 60_000;
+    do {
+      await new Promise((resolve) => window.setTimeout(resolve, 500));
+      const query = new URLSearchParams({
+        pairingId,
+        pairingToken,
+        requestId: pending.requestId,
+      });
+      response = await fetch(`/api/pair?${query.toString()}`);
+    } while (response.status === 202 && Date.now() < deadline);
+  }
   if (!response.ok) throw new Error("配对链接已过期、已使用或校验失败。请在 Mac 上重新生成。");
   const result = await response.json() as {
     deviceId: string;

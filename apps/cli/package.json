@@ -20,6 +20,7 @@
     "dev": "tsx src/index.ts start",
     "start": "node dist/index.js start",
     "smoke": "node scripts/smoke-client.mjs",
+    "smoke:cloud-pairing": "node scripts/smoke-cloud-pairing.mjs",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "vitest run"
   },

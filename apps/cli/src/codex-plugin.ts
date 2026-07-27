@@ -1,10 +1,14 @@
+import { execFile } from "node:child_process";
 import { constants } from "node:fs";
 import { access, copyFile, cp, mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
+import { promisify } from "node:util";
+import { resolveAgentCommand } from "./agent-command.js";
 import { codexPluginHooks } from "./hook-config.js";
 
 type JsonObject = Record<string, unknown>;
+const execFileAsync = promisify(execFile);
 
 export interface CodexPluginPaths {
   marketplaceRoot: string;
@@ -18,10 +22,13 @@ export interface CodexPluginOptions {
   home?: string;
   sourceRoot?: string;
   nodePath?: string;
+  activateRuntime?: boolean;
 }
 
 export interface CodexPluginStatus {
   installed: boolean;
+  runtimeInstalled: boolean;
+  runtimeEnabled: boolean;
   pluginPresent: boolean;
   marketplacePresent: boolean;
   commandsCurrent: boolean;
@@ -32,6 +39,13 @@ export interface CodexPluginStatus {
 
 const PLUGIN_NAME = "zimlo";
 const MARKETPLACE_SOURCE = `./plugins/${PLUGIN_NAME}`;
+const PLUGIN_SELECTOR = `${PLUGIN_NAME}@personal`;
+
+interface CodexRuntimePlugin {
+  installed: boolean;
+  enabled: boolean;
+  version: string | null;
+}
 
 export function codexPluginPaths(home = homedir()): CodexPluginPaths {
   const marketplaceRoot = join(home, ".agents", "plugins");
@@ -84,6 +98,47 @@ async function writeJsonAtomic(path: string, value: unknown): Promise<void> {
   const temporary = `${path}.zimlo-${process.pid}-${Date.now()}.tmp`;
   await writeFile(temporary, `${JSON.stringify(value, null, 2)}\n`, { mode: 0o600 });
   await rename(temporary, path);
+}
+
+export function parseCodexRuntimePlugin(value: unknown): CodexRuntimePlugin {
+  if (!isObject(value) || !Array.isArray(value.installed)) {
+    return { installed: false, enabled: false, version: null };
+  }
+  const plugin = value.installed.find((item) => (
+    isObject(item)
+    && (item.pluginId === PLUGIN_SELECTOR || (item.name === PLUGIN_NAME && item.marketplaceName === "personal"))
+  ));
+  if (!isObject(plugin)) return { installed: false, enabled: false, version: null };
+  return {
+    installed: plugin.installed === true,
+    enabled: plugin.enabled === true,
+    version: typeof plugin.version === "string" ? plugin.version : null,
+  };
+}
+
+async function inspectCodexRuntime(command: string): Promise<CodexRuntimePlugin> {
+  try {
+    const result = await execFileAsync(command, ["plugin", "list", "--json"], {
+      timeout: 10_000,
+      maxBuffer: 2 * 1024 * 1024,
+    });
+    return parseCodexRuntimePlugin(JSON.parse(result.stdout));
+  } catch {
+    return { installed: false, enabled: false, version: null };
+  }
+}
+
+async function activateCodexRuntime(command: string, prior: CodexRuntimePlugin): Promise<void> {
+  if (prior.installed) {
+    await execFileAsync(command, ["plugin", "remove", PLUGIN_SELECTOR, "--json"], {
+      timeout: 15_000,
+      maxBuffer: 2 * 1024 * 1024,
+    });
+  }
+  await execFileAsync(command, ["plugin", "add", PLUGIN_SELECTOR, "--json"], {
+    timeout: 15_000,
+    maxBuffer: 2 * 1024 * 1024,
+  });
 }
 
 function mcpConfig(entrypoint: string, nodePath: string): JsonObject {
@@ -153,6 +208,12 @@ export async function installCodexPlugin(entrypoint: string, options: CodexPlugi
   const previous = join(paths.pluginsRoot, `.zimlo-previous-${process.pid}-${Date.now()}`);
   let movedPrevious = false;
   let installedNew = false;
+  const codexCommand = options.home === undefined && options.activateRuntime !== false
+    ? await resolveAgentCommand("codex")
+    : null;
+  const runtimeBefore = codexCommand
+    ? await inspectCodexRuntime(codexCommand)
+    : { installed: false, enabled: false, version: null };
   try {
     await materializePlugin(sourceRoot, temporary, entrypoint, nodePath);
     if (await exists(paths.plugin)) {
@@ -172,6 +233,7 @@ export async function installCodexPlugin(entrypoint: string, options: CodexPlugi
     if (movedPrevious) await rename(previous, paths.plugin);
     throw error;
   }
+  if (codexCommand) await activateCodexRuntime(codexCommand, runtimeBefore);
   return inspectCodexPlugin(entrypoint, options);
 }
 
@@ -199,17 +261,44 @@ export async function inspectCodexPlugin(entrypoint: string, options: CodexPlugi
   const versionCurrent = typeof manifest?.version === "string"
     && typeof bundledManifest?.version === "string"
     && manifest.version === bundledManifest.version;
-  const installed = pluginPresent && marketplacePresent && commandsCurrent && versionCurrent;
+  const sourceReady = pluginPresent && marketplacePresent && commandsCurrent && versionCurrent;
+  const codexCommand = options.home === undefined ? await resolveAgentCommand("codex") : null;
+  const runtime = codexCommand
+    ? await inspectCodexRuntime(codexCommand)
+    : options.home !== undefined && sourceReady
+      ? { installed: true, enabled: true, version: typeof manifest?.version === "string" ? manifest.version : null }
+      : { installed: false, enabled: false, version: null };
+  const runtimeVersionCurrent = typeof bundledManifest?.version === "string"
+    && runtime.version === bundledManifest.version;
+  const installed = sourceReady && runtime.installed && runtime.enabled && runtimeVersionCurrent;
   const detail = installed
-    ? "已安装；请在 Codex GUI 的 Plugins → Personal 中启用 Zimlo"
+    ? "Codex App 已启用 Zimlo；新任务会自动出现在 Feed。"
     : !pluginPresent
       ? "未安装"
       : !marketplacePresent
         ? "插件文件存在，但 Personal marketplace 未注册"
         : !commandsCurrent
           ? "插件命令指向旧版 CLI，需要重新安装"
-          : "插件内容版本已过期，请重新安装并新建 Codex 任务";
-  return { installed, pluginPresent, marketplacePresent, commandsCurrent, versionCurrent, detail, paths };
+          : !versionCurrent
+            ? "插件内容版本已过期，请重新安装并新建 Codex 任务"
+            : !codexCommand && options.home === undefined
+              ? "尚未发现 Codex App 或 CLI。"
+              : !runtime.installed
+                ? "插件源已准备，但尚未在 Codex App 中安装。"
+                : !runtime.enabled
+                  ? "Zimlo 已安装，但在 Codex App 中处于停用状态。"
+                  : "Codex App 仍在使用旧版 Zimlo，需要重新连接。";
+  return {
+    installed,
+    runtimeInstalled: runtime.installed,
+    runtimeEnabled: runtime.enabled,
+    pluginPresent,
+    marketplacePresent,
+    commandsCurrent,
+    versionCurrent,
+    detail,
+    paths,
+  };
 }
 
 export async function uninstallCodexPlugin(options: CodexPluginOptions = {}): Promise<CodexPluginStatus> {
@@ -229,6 +318,8 @@ export async function uninstallCodexPlugin(options: CodexPluginOptions = {}): Pr
   if (legacyManifest?.name === PLUGIN_NAME) await rm(paths.legacyPlugin, { recursive: true, force: true });
   return {
     installed: false,
+    runtimeInstalled: false,
+    runtimeEnabled: false,
     pluginPresent: false,
     marketplacePresent: false,
     commandsCurrent: false,

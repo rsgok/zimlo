@@ -422,7 +422,11 @@ export class ZimloStore {
     }
     this.database.prepare("INSERT OR IGNORE INTO user_profile(id, avatar_id, updated_at) VALUES (1, ?, ?)")
       .run(USER_AVATAR_IDS[randomInt(USER_AVATAR_IDS.length)] ?? USER_AVATAR_IDS[0], new Date().toISOString());
-    this.backfillProjects();
+    const projectBackfill = this.database.prepare("SELECT value FROM metadata WHERE key = 'project_backfill_v1'").get() as { value: string } | undefined;
+    if (projectBackfill?.value !== "1") {
+      this.backfillProjects();
+      this.database.prepare("INSERT OR REPLACE INTO metadata(key, value) VALUES ('project_backfill_v1', '1')").run();
+    }
     this.backfillAgentAvatars();
     this.migrateFeedV2();
     this.database.prepare("UPDATE task_commands SET state = 'queued', updated_at = ?, error = NULL WHERE state IN ('dispatching', 'running')")
@@ -482,7 +486,11 @@ export class ZimloStore {
   }
 
   private backfillProjects(): void {
-    const sessions = this.database.prepare("SELECT id, cwd, created_at, last_activity_at FROM sessions WHERE cwd IS NOT NULL").all() as Array<{
+    const sessions = this.database.prepare(`
+      SELECT id, cwd, created_at, last_activity_at
+      FROM sessions
+      WHERE cwd IS NOT NULL AND project_id IS NULL
+    `).all() as Array<{
       id: string;
       cwd: string;
       created_at: string;

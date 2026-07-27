@@ -1,15 +1,17 @@
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { resolve } from "node:path";
+import { dirname, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, it } from "vitest";
 import {
   codexPluginPaths,
   inspectCodexPlugin,
   installCodexPlugin,
+  parseCodexRuntimePlugin,
   uninstallCodexPlugin,
 } from "../src/codex-plugin.js";
 
-const sourceRoot = resolve("apps/cli/plugin/zimlo");
+const sourceRoot = resolve(dirname(fileURLToPath(import.meta.url)), "../plugin/zimlo");
 const entrypoint = "/opt/zimlo/dist/index.js";
 const nodePath = "/opt/zimlo/node";
 const homes: string[] = [];
@@ -25,6 +27,24 @@ afterEach(async () => {
 });
 
 describe("Codex GUI plugin installer", () => {
+  it("distinguishes an enabled Codex plugin from a merely available source", () => {
+    expect(parseCodexRuntimePlugin({
+      installed: [{
+        pluginId: "zimlo@personal",
+        name: "zimlo",
+        marketplaceName: "personal",
+        version: "0.2.0",
+        installed: true,
+        enabled: true,
+      }],
+    })).toEqual({ installed: true, enabled: true, version: "0.2.0" });
+    expect(parseCodexRuntimePlugin({ installed: [] })).toEqual({
+      installed: false,
+      enabled: false,
+      version: null,
+    });
+  });
+
   it("installs a Personal plugin with absolute MCP and hook commands", async () => {
     const testHome = await home();
     const status = await installCodexPlugin(entrypoint, { home: testHome, sourceRoot, nodePath });

@@ -55,9 +55,15 @@ final class AppModel: ObservableObject {
         bridge.onMessage = { [weak self] message in self?.apply(message) }
         NotificationManager.shared.onRegistration = { [weak self] token, publicKey in
             guard let self else { return }
+            #if DEBUG
+            let environment = "development"
+            #else
+            let environment = "production"
+            #endif
             _ = self.sendDurable(ClientCommand(type: "notification.device.register", [
                 "token": .string(token),
                 "publicKey": .string(publicKey),
+                "environment": .string(environment),
                 "idempotencyKey": .string(UUID().uuidString),
             ]))
         }

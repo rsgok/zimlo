@@ -36,11 +36,19 @@
       "migrations_dir": "migrations"
     }
   ],
+  // After enabling R2 and creating `zimlo-releases`, add:
+  // "r2_buckets": [
+  //   { "binding": "RELEASES", "bucket_name": "zimlo-releases" }
+  // ],
   "durable_objects": {
     "bindings": [
       {
         "name": "RELAY_ROOMS",
         "class_name": "RelayRoom"
+      },
+      {
+        "name": "PAIRING_ROOMS",
+        "class_name": "PairingRoom"
       }
     ]
   },
@@ -48,6 +56,10 @@
     {
       "tag": "v1",
       "new_sqlite_classes": ["RelayRoom"]
+    },
+    {
+      "tag": "v2",
+      "new_sqlite_classes": ["PairingRoom"]
     }
   ]
 }

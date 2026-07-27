@@ -19,11 +19,15 @@ import { detectHookSurface } from "./hook-surface.js";
 import { ZIMLO_PATHS } from "./paths.js";
 import { ResumeService } from "./resume-service.js";
 import { RuntimeHub } from "./runtime.js";
+import { acquireServiceInstance, ServiceAlreadyRunningError } from "./service-instance.js";
 import { ZimloStore } from "./store.js";
 import { TaskCommandService } from "./task-command-service.js";
 
 const entrypoint = fileURLToPath(import.meta.url);
 const program = new Command();
+const traceStartup = (phase: string): void => {
+  if (process.env.ZIMLO_STARTUP_TRACE === "1") console.error(`[zimlo:start] ${phase}`);
+};
 
 program.name("zimlo").description("Local feed and action layer for coding agents").version("0.2.0");
 
@@ -34,50 +38,85 @@ program.command("start")
   .action(async (options: { lan?: boolean; port: string }) => {
     const port = Number(options.port);
     if (!Number.isInteger(port) || port < 1 || port > 65_535) throw new Error("端口必须是 1-65535 的整数。");
-    await mkdir(ZIMLO_PATHS.logs, { recursive: true, mode: 0o700 });
-    const store = new ZimloStore(ZIMLO_PATHS.database);
-    store.prune(7);
-    store.finalizeOpenFeedCheckpoints(new Date().toISOString(), "bridge:restart");
-    const cloud = new CloudService(store);
-    const runtime = new RuntimeHub(store, cloud);
-    const broker = new ActionBroker(runtime);
-    const agentTools = new AgentToolService(runtime);
-    const devices = new DeviceManager(store);
-    devices.localAdmin();
-    const resume = new ResumeService(runtime, broker);
-    const taskCommands = new TaskCommandService(runtime, resume);
-    const hooks = new HookServer(runtime, broker, ZIMLO_PATHS.socket, agentTools);
-    const discovery = new DiscoveryService(runtime);
-    const bridge = new BridgeServer({ runtime, broker, devices, taskCommands, cloud, entrypoint, options: { port, lan: Boolean(options.lan) } });
-    const cloudRelay = new CloudRelayClient(cloud, port);
+    let lease;
+    try {
+      lease = await acquireServiceInstance({
+        lockPath: ZIMLO_PATHS.serviceLock,
+        entrypoint,
+      });
+    } catch (error) {
+      if (error instanceof ServiceAlreadyRunningError) {
+        console.log(error.message);
+        return;
+      }
+      throw error;
+    }
 
-    const urls = await bridge.start();
-    const cloudStarted = await cloudRelay.start();
-    await hooks.start();
-    taskCommands.start();
-    const discoveryStarted = Date.now();
-    await discovery.start();
-    console.log(`Zimlo 已启动：${urls.localUrl}`);
-    if (urls.lanUrl) console.log(`可信局域网：${urls.lanUrl}`);
-    console.log(cloudStarted ? `Cloudflare 远程同步：${cloud.relayURL}` : "Cloudflare 远程同步：未配置");
-    console.log(`已发现 ${store.listSessions().length} 个 Session（${Date.now() - discoveryStarted} ms）`);
-    console.log("按 Ctrl-C 停止。手机审批权限由 Mac 在 Settings 中按设备管理。");
+    try {
+      traceStartup("create-log-directory");
+      await mkdir(ZIMLO_PATHS.logs, { recursive: true, mode: 0o700 });
+      traceStartup("open-store");
+      const store = new ZimloStore(ZIMLO_PATHS.database);
+      traceStartup("prune-store");
+      store.prune(7);
+      traceStartup("finalize-feed-checkpoints");
+      store.finalizeOpenFeedCheckpoints(new Date().toISOString(), "bridge:restart");
+      traceStartup("create-services");
+      const cloud = new CloudService(store);
+      const runtime = new RuntimeHub(store, cloud);
+      const broker = new ActionBroker(runtime);
+      const agentTools = new AgentToolService(runtime);
+      const devices = new DeviceManager(store);
+      devices.localAdmin();
+      const resume = new ResumeService(runtime, broker);
+      const taskCommands = new TaskCommandService(runtime, resume);
+      const hooks = new HookServer(runtime, broker, ZIMLO_PATHS.socket, agentTools);
+      const discovery = new DiscoveryService(runtime);
+      const bridge = new BridgeServer({ runtime, broker, devices, taskCommands, cloud, entrypoint, options: { port, lan: Boolean(options.lan) } });
+      const cloudRelay = new CloudRelayClient(cloud, port);
+      traceStartup("services-created");
 
-    let stopping = false;
-    const stop = async () => {
-      if (stopping) return;
-      stopping = true;
-      discovery.stop();
-      taskCommands.stop();
-      broker.cancelAll();
-      await hooks.stop();
-      cloudRelay.stop();
-      await bridge.stop();
-      store.close();
-    };
-    process.once("SIGINT", () => void stop().finally(() => process.exit(0)));
-    process.once("SIGTERM", () => void stop().finally(() => process.exit(0)));
-    await new Promise<void>(() => undefined);
+      let stopping = false;
+      const stop = async () => {
+        if (stopping) return;
+        stopping = true;
+        discovery.stop();
+        taskCommands.stop();
+        broker.cancelAll();
+        await hooks.stop();
+        cloudRelay.stop();
+        await bridge.stop();
+        store.close();
+      };
+
+      try {
+        await hooks.start();
+        traceStartup("hooks-started");
+        taskCommands.start();
+        const discoveryStarted = Date.now();
+        await discovery.start();
+        traceStartup("discovery-started");
+        traceStartup("start-bridge");
+        const urls = await bridge.start();
+        traceStartup("bridge-started");
+        const cloudStarted = await cloudRelay.start();
+        traceStartup("cloud-relay-started");
+        console.log(`Zimlo 已启动：${urls.localUrl}`);
+        if (urls.lanUrl) console.log(`可信局域网：${urls.lanUrl}`);
+        console.log(cloudStarted ? `Cloudflare 远程同步：${cloud.relayURL}` : "Cloudflare 远程同步：未配置");
+        console.log(`已发现 ${store.listSessions().length} 个 Session（${Date.now() - discoveryStarted} ms）`);
+        console.log("按 Ctrl-C 停止。手机审批权限由 Mac 在 Settings 中按设备管理。");
+
+        await new Promise<void>((resolve) => {
+          process.once("SIGINT", resolve);
+          process.once("SIGTERM", resolve);
+        });
+      } finally {
+        await stop();
+      }
+    } finally {
+      await lease.release();
+    }
   });
 
 program.command("doctor")

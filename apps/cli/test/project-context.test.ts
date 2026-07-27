@@ -1,29 +1,38 @@
-import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
+import { execFileSync } from "node:child_process";
+import { mkdtempSync, mkdirSync, realpathSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { projectNameForCwd } from "../src/project-context";
+import { persistableProjectForCwd, projectContextForCwd } from "../src/project-context.js";
 
-const created: string[] = [];
+const temporaryPaths: string[] = [];
 
 afterEach(() => {
-  for (const path of created.splice(0)) rmSync(path, { recursive: true, force: true });
+  for (const path of temporaryPaths.splice(0)) rmSync(path, { recursive: true, force: true });
 });
 
-describe("projectNameForCwd", () => {
-  it("finds the nearest git project above the working directory", () => {
+describe("project context", () => {
+  it("uses the repository root and remote identity for nested paths", () => {
     const root = mkdtempSync(join(tmpdir(), "zimlo-project-"));
-    created.push(root);
-    mkdirSync(join(root, ".git"));
-    const cwd = join(root, "apps", "web");
-    mkdirSync(cwd, { recursive: true });
+    temporaryPaths.push(root);
+    execFileSync("git", ["init", "-q", root]);
+    execFileSync("git", ["-C", root, "remote", "add", "origin", "https://example.com/team/project.git"]);
+    const nested = join(root, "src", "feature");
+    mkdirSync(nested, { recursive: true });
 
-    expect(projectNameForCwd(cwd)).toBe(root.split("/").at(-1));
+    const context = projectContextForCwd(nested);
+
+    expect(context?.root).toBe(realpathSync(root));
+    expect(context?.name).toBe(root.split("/").at(-1));
+    expect(context?.identityKey).toMatch(/^git-remote:/u);
   });
 
-  it("returns null outside a git project", () => {
-    const cwd = mkdtempSync(join(tmpdir(), "zimlo-directory-"));
-    created.push(cwd);
-    expect(projectNameForCwd(cwd)).toBeNull();
+  it("falls back to a path identity when git cannot inspect the directory", () => {
+    const missing = join(tmpdir(), `zimlo-missing-${Date.now()}`);
+
+    const project = persistableProjectForCwd(missing);
+
+    expect(project?.root).toBe(missing);
+    expect(project?.identityKey).toMatch(/^path:/u);
   });
 });

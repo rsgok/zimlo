@@ -44,13 +44,13 @@ xcodebuild \
   build
 ```
 
-先在 Mac 启动允许局域网访问的 Bridge：
+开发时先在 Mac 启动 Bridge：
 
 ```bash
-node apps/cli/dist/index.js start --lan
+node apps/cli/dist/index.js start
 ```
 
-再打开 `apps/ios/Zimlo.xcodeproj`，选择 iPhone 模拟器或已签名真机运行，并使用 Mac 网页 Settings 中生成的配对信息。首次配对需要真机与 Mac 处于同一可信 LAN；配置 Cloudflare 后，之后可离开该局域网继续同步。
+再打开 `apps/ios/Zimlo.xcodeproj`，选择 iPhone 模拟器或已签名真机运行，并使用 Mac 网页 Settings 中生成的配对信息。首次配对默认通过两分钟有效的 Cloudflare 配对房间完成，真机与 Mac 不需要处于同一 LAN；配对后也可在外网继续同步。
 
 Bridge 在局域网使用用户提供的 HTTP / WebSocket 地址，但所有配对证明和应用消息均由 Zimlo protocol v2 自行认证和端到端加密。
 
@@ -60,9 +60,9 @@ Bridge 在局域网使用用户提供的 HTTP / WebSocket 地址，但所有配�
 2. 在 Zimlo target 的 **Signing & Capabilities** 选择自己的 Team，并确保 Bundle Identifier 唯一。
 3. 保留 **Push Notifications** capability；首次只调试局域网功能时可以暂不配置 APNs。
 4. 用数据线或已启用无线调试的方式连接 iPhone，在 Xcode 顶部选择该设备后运行。
-5. Mac 执行 `node apps/cli/dist/index.js start --lan`，然后在 Mac 网页 Settings 生成配对二维码，使用 App 扫码。
+5. 打开 Mac 版 Zimlo（源码调试时执行 `node apps/cli/dist/index.js start`），生成配对二维码并使用 App 扫码。
 6. 配对成功后，再到 App 的“设置 → 主动通知”开启通知。Zimlo 不会在首次启动时直接弹系统权限框。
 
 真机 APNs 需要 Apple Developer 签名、Push Notifications entitlement，以及已经部署的 Cloudflare Worker。App 本身不再包含 Relay URL 或全局注册密钥：Worker 地址和每台手机独有的随机访问令牌都由 Mac 在可信配对响应中下发。
 
-Mac 端设置 `ZIMLO_CLOUD_URL` 并重新配对一次即可。APNs provider key 只作为 Cloudflare Worker secret 保存，绝不能写入 Xcode 配置或 App 包。完整步骤见 [Cloudflare 服务说明](../cloud/README.md)。
+官方 Beta 默认使用已部署的 Cloudflare 服务；自建环境才需要在 Mac 端设置 `ZIMLO_CLOUD_URL`。APNs provider key 只作为 Cloudflare Worker secret 保存，绝不能写入 Xcode 配置或 App 包。完整步骤见 [Cloudflare 服务说明](../cloud/README.md)。

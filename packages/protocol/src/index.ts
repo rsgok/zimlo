@@ -549,6 +549,7 @@ export const ClientCommandSchema = z.discriminatedUnion("type", [
     endpoint: z.string().min(1).max(2_000).optional(),
     token: z.string().min(1).max(2_000).optional(),
     publicKey: z.string().min(1).max(2_000),
+    environment: z.enum(["development", "production"]).optional(),
     idempotencyKey: z.string(),
   }),
   z.object({

@@ -1,4 +1,5 @@
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { execFileSync } from "node:child_process";
+import { mkdirSync, mkdtempSync, realpathSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -11,7 +12,7 @@ function fixture() {
   const root = mkdtempSync(join(tmpdir(), "zimlo-project-store-"));
   roots.push(root);
   const projectRoot = join(root, "product");
-  mkdirSync(join(projectRoot, ".git"), { recursive: true });
+  execFileSync("git", ["init", "-q", projectRoot]);
   return { root, projectRoot, database: join(root, "zimlo.db") };
 }
 
@@ -42,6 +43,8 @@ afterEach(() => {
 describe("persistent project model", () => {
   it("groups sessions by Git root and makes Feed posts inherit the project", () => {
     const { projectRoot, database } = fixture();
+    mkdirSync(join(projectRoot, "apps/web"), { recursive: true });
+    mkdirSync(join(projectRoot, "packages/core"), { recursive: true });
     const store = new ZimloStore(database);
     const first = store.upsertSession(session("a", join(projectRoot, "apps/web"), "2026-07-23T00:00:00.000Z"));
     const second = store.upsertSession(session("b", join(projectRoot, "packages/core"), "2026-07-23T01:00:00.000Z"));
@@ -70,7 +73,7 @@ describe("persistent project model", () => {
     const storedPost = store.insertFeedPost(post).post;
     expect(storedPost.projectId).toBe(first.projectId);
     expect(store.listProjects()).toEqual([
-      expect.objectContaining({ name: "product", primaryPath: projectRoot, sessionCount: 2, postCount: 1 }),
+      expect.objectContaining({ name: "product", primaryPath: realpathSync(projectRoot), sessionCount: 2, postCount: 1 }),
     ]);
     expect(store.snapshot(false, "", []).projects).toHaveLength(1);
     store.close();
@@ -87,6 +90,7 @@ describe("persistent project model", () => {
     expect(stored.projectId).toBeTruthy();
     store.database.prepare("UPDATE sessions SET project_id = NULL").run();
     store.database.prepare("DELETE FROM projects").run();
+    store.database.prepare("DELETE FROM metadata WHERE key = 'project_backfill_v1'").run();
     store.upsertSession(session("root", "/", "2026-07-23T00:00:00.000Z"));
     store.close();
 
@@ -146,8 +150,8 @@ describe("persistent project model", () => {
     const original = join(root, "original");
     const moved = join(root, "moved");
     for (const path of [original, moved]) {
-      mkdirSync(join(path, ".git"), { recursive: true });
-      writeFileSync(join(path, ".git", "config"), '[remote "origin"]\n\turl = https://example.com/acme/product.git\n');
+      execFileSync("git", ["init", "-q", path]);
+      execFileSync("git", ["-C", path, "remote", "add", "origin", "https://example.com/acme/product.git"]);
     }
     const store = new ZimloStore(database);
     const first = store.upsertSession(session("original", original, "2026-07-23T01:00:00.000Z"));
@@ -156,7 +160,7 @@ describe("persistent project model", () => {
     expect(updated?.agentProfile).toMatchObject({ displayName: "股票研究", avatar: "📈", defaultProvider: "codex" });
     const second = store.upsertSession(session("moved", moved, "2026-07-23T02:00:00.000Z"));
     expect(second.projectId).toBe(first.projectId);
-    expect(store.getProject(first.projectId!)?.paths).toEqual([moved, original]);
+    expect(store.getProject(first.projectId!)?.paths).toEqual([realpathSync(moved), realpathSync(original)]);
     store.close();
 
     const reopened = new ZimloStore(database);

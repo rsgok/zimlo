@@ -12,7 +12,10 @@
     "start": "pnpm --filter @zimlo/cli start",
     "test": "vitest run",
     "test:watch": "vitest",
-    "typecheck": "pnpm --filter @zimlo/protocol build && pnpm --filter @zimlo/adapters build && pnpm -r --if-present typecheck"
+    "typecheck": "pnpm --filter @zimlo/protocol build && pnpm --filter @zimlo/adapters build && pnpm -r --if-present typecheck",
+    "macos:build": "apps/macos/scripts/build-dev-app.sh",
+    "macos:release": "apps/macos/scripts/build-release-dmg.sh",
+    "macos:test": "swift test --package-path apps/macos"
   },
   "devDependencies": {
     "@types/node": "^26.1.1",

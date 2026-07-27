@@ -117,26 +117,64 @@ function removeCommand(root: JsonObject, command: string): JsonObject {
   return next;
 }
 
-export async function hookConfigChanges(entrypoint: string, uninstall = false): Promise<HookConfigChange[]> {
-  const home = homedir();
+function removeZimloCommands(root: JsonObject, provider: "codex" | "claude"): JsonObject {
+  const next = clone(root);
+  if (!next.hooks || typeof next.hooks !== "object" || Array.isArray(next.hooks)) return next;
+  const hooks = next.hooks as JsonObject;
+  for (const [event, rawGroups] of Object.entries(hooks)) {
+    if (!Array.isArray(rawGroups)) continue;
+    const groups = rawGroups.flatMap((rawGroup) => {
+      if (!rawGroup || typeof rawGroup !== "object") return [rawGroup];
+      const group = clone(rawGroup as JsonObject);
+      if (!Array.isArray(group.hooks)) return [group];
+      const remaining = group.hooks.filter((rawHandler) => {
+        if (!rawHandler || typeof rawHandler !== "object") return true;
+        const command = (rawHandler as JsonObject).command;
+        if (typeof command !== "string") return true;
+        return !/zimlo/iu.test(command) || !command.includes(`hook --provider ${provider}`);
+      });
+      group.hooks = remaining;
+      return remaining.length > 0 ? [group] : [];
+    });
+    if (groups.length > 0) hooks[event] = groups;
+    else delete hooks[event];
+  }
+  return next;
+}
+
+export async function hookConfigChanges(
+  entrypoint: string,
+  uninstall = false,
+  home = homedir(),
+  providers: readonly ("codex" | "claude")[] = ["codex", "claude"],
+): Promise<HookConfigChange[]> {
   const codexPath = join(home, ".codex", "hooks.json");
   const claudePath = join(home, ".claude", "settings.json");
   const codexBefore = await readJson(codexPath);
   const claudeBefore = await readJson(claudePath);
   const codexCommand = zimloHookCommand(entrypoint, "codex", "cli");
   const claudeCommand = zimloHookCommand(entrypoint, "claude", "auto");
+  const codexWithoutZimlo = removeZimloCommands(codexBefore, "codex");
+  const claudeWithoutZimlo = removeZimloCommands(claudeBefore, "claude");
   return [
     {
+      provider: "codex" as const,
       path: codexPath,
       before: codexBefore,
-      after: uninstall ? removeCommand(codexBefore, codexCommand) : appendHooks(codexBefore, CODEX_EVENTS, codexCommand, "codex"),
+      after: uninstall
+        ? removeCommand(codexWithoutZimlo, codexCommand)
+        : appendHooks(codexWithoutZimlo, CODEX_EVENTS, codexCommand, "codex"),
     },
     {
+      provider: "claude" as const,
       path: claudePath,
       before: claudeBefore,
-      after: uninstall ? removeCommand(claudeBefore, claudeCommand) : appendHooks(claudeBefore, CLAUDE_EVENTS, claudeCommand, "claude"),
+      after: uninstall
+        ? removeCommand(claudeWithoutZimlo, claudeCommand)
+        : appendHooks(claudeWithoutZimlo, CLAUDE_EVENTS, claudeCommand, "claude"),
     },
-  ];
+  ].filter((change) => providers.includes(change.provider))
+    .map(({ provider: _provider, ...change }) => change);
 }
 
 export async function applyHookChanges(changes: HookConfigChange[]): Promise<void> {

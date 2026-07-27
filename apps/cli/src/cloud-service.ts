@@ -29,6 +29,19 @@ interface PushInput {
   route: PushRouteEnvelope;
 }
 
+export interface CloudPairingRequest {
+  requestId: string;
+  clientPublicKey: string;
+  proof: string;
+  name?: string;
+}
+
+export interface CloudPairingResponse {
+  deviceId: string;
+  serverProof: string;
+  cloud?: DeviceCloudCredentials;
+}
+
 const IDENTITY_METADATA_KEY = "cloud_installation_identity_v1";
 const DEFAULT_CLOUD_URL = "https://zimlo-cloud.zimlo.workers.dev";
 
@@ -81,7 +94,47 @@ export class CloudService {
     return { relayURL: this.baseURL, accessToken };
   }
 
-  async registerPushDevice(deviceId: string, apnsToken: string, routePublicKey: string): Promise<string | null> {
+  async registerPairing(pairingId: string, relayToken: string, expiresAt: string): Promise<boolean> {
+    if (!await this.ensureReady()) return false;
+    const response = await this.signedFetch("/v1/pairings", "POST", {
+      pairingId,
+      tokenHash: sha256URL(relayToken),
+      expiresAt,
+    });
+    return response.ok;
+  }
+
+  async pendingPairingRequest(pairingId: string): Promise<CloudPairingRequest | null> {
+    if (!await this.ensureReady()) return null;
+    const pathname = `/v1/pairings/${encodeURIComponent(pairingId)}/request`;
+    const response = await this.signedFetch(pathname, "GET");
+    if (response.status === 204 || response.status === 410) return null;
+    if (!response.ok) throw new Error(`Cloud pairing request failed (${response.status})`);
+    return response.json() as Promise<CloudPairingRequest>;
+  }
+
+  async completePairing(
+    pairingId: string,
+    requestId: string,
+    responseBody: CloudPairingResponse | { error: string },
+    status = 200,
+  ): Promise<boolean> {
+    if (!await this.ensureReady()) return false;
+    const pathname = `/v1/pairings/${encodeURIComponent(pairingId)}/complete`;
+    const response = await this.signedFetch(pathname, "POST", {
+      requestId,
+      status,
+      response: responseBody,
+    });
+    return response.ok;
+  }
+
+  async registerPushDevice(
+    deviceId: string,
+    apnsToken: string,
+    routePublicKey: string,
+    environment: "development" | "production",
+  ): Promise<string | null> {
     if (!await this.ensureReady()) return null;
     const accessToken = this.store.getMetadata(`cloud_device_token:${deviceId}`);
     if (!accessToken) return null;
@@ -90,6 +143,7 @@ export class CloudService {
       accessTokenHash: sha256URL(accessToken),
       apnsToken,
       routePublicKey,
+      apnsEnvironment: environment,
     });
     if (!response.ok) return null;
     const result = await response.json() as { endpoint?: string };
@@ -187,9 +241,9 @@ export class CloudService {
     return identity;
   }
 
-  private async signedFetch(pathname: string, method: string, value: unknown): Promise<Response> {
+  private async signedFetch(pathname: string, method: string, value?: unknown): Promise<Response> {
     if (!this.baseURL) throw new Error("ZIMLO_CLOUD_URL is not configured");
-    const body = JSON.stringify(value);
+    const body = value === undefined ? "" : JSON.stringify(value);
     return fetch(`${this.baseURL}${pathname}`, {
       method,
       headers: {
@@ -197,7 +251,7 @@ export class CloudService {
         ...this.signedHeaders(method, pathname, body),
       },
       signal: AbortSignal.timeout(5_000),
-      body,
+      ...(body ? { body } : {}),
     });
   }
 

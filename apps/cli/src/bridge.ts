@@ -9,7 +9,7 @@ import { FEATURE_CAPABILITIES, type ClientCommand, type ServerMessage } from "@z
 import { ActionBroker } from "./action-broker.js";
 import { CloudService } from "./cloud-service.js";
 import { codexPluginDeepLink, inspectCodexPlugin, installCodexPlugin } from "./codex-plugin.js";
-import { DeviceManager } from "./device-manager.js";
+import { DeviceManager, type PairingResult } from "./device-manager.js";
 import { inspectIntegrationStatuses, installCliIntegrations } from "./integration-status.js";
 import { isLoopbackAddress, isTrustedLanAddress, preferredLanAddress } from "./network.js";
 import { RuntimeHub } from "./runtime.js";
@@ -21,6 +21,10 @@ interface PairBody {
   clientPublicKey?: string;
   proof?: string;
   name?: string;
+}
+
+interface LocalIntegrationBody {
+  target?: "all" | "codex_gui" | "cli";
 }
 
 export interface BridgeOptions {
@@ -37,6 +41,7 @@ export class BridgeServer {
   private readonly options: BridgeOptions;
   private readonly entrypoint: string;
   private readonly connections = new Set<SecureSocket>();
+  private readonly pairingWatchers = new Map<string, AbortController>();
   private app: FastifyInstance | null = null;
   private unsubscribe: (() => void) | null = null;
 
@@ -59,8 +64,13 @@ export class BridgeServer {
   }
 
   async start(): Promise<{ localUrl: string; lanUrl: string | null }> {
+    const trace = (phase: string): void => {
+      if (process.env.ZIMLO_STARTUP_TRACE === "1") console.error(`[zimlo:bridge] ${phase}`);
+    };
+    trace("create-fastify");
     const app = Fastify({ logger: false });
     this.app = app;
+    trace("register-websocket");
     await app.register(fastifyWebsocket);
 
     app.addHook("onRequest", async (request, reply) => {
@@ -74,6 +84,35 @@ export class BridgeServer {
       if (!isLoopbackAddress(request.ip)) return reply.code(403).send({ error: "Loopback only" });
       const device = this.devices.localAdmin();
       return { deviceId: device.id, deviceKey: device.keyBase64 };
+    });
+    app.get("/api/local/status", async (request, reply) => {
+      if (!isLoopbackAddress(request.ip)) return reply.code(403).send({ error: "Loopback only" });
+      return {
+        ready: true,
+        cloud: this.cloud.enabled,
+        integrations: await inspectIntegrationStatuses(this.entrypoint),
+      };
+    });
+    app.post("/api/local/integrations", async (request, reply) => {
+      if (!isLoopbackAddress(request.ip)) return reply.code(403).send({ error: "Loopback only" });
+      const body = request.body as LocalIntegrationBody | null;
+      if (body?.target === "all") {
+        await installCodexPlugin(this.entrypoint);
+        await installCliIntegrations(this.entrypoint);
+      } else if (body?.target === "codex_gui") await installCodexPlugin(this.entrypoint);
+      else if (body?.target === "cli") await installCliIntegrations(this.entrypoint);
+      else return reply.code(400).send({ error: "Unknown integration target" });
+      return { integrations: await inspectIntegrationStatuses(this.entrypoint) };
+    });
+    app.post("/api/local/pairing", async (request, reply) => {
+      if (!isLoopbackAddress(request.ip)) return reply.code(403).send({ error: "Loopback only" });
+      try {
+        return await this.createPairingPayload();
+      } catch (error) {
+        return reply.code(503).send({
+          error: error instanceof Error ? error.message : String(error),
+        });
+      }
     });
     app.post("/api/pair", async (request, reply) => {
       const body = request.body as PairBody | null;
@@ -112,6 +151,7 @@ export class BridgeServer {
     if (existsSync(publicRoot)) {
       // Keep a wildcard route so newly built, content-hashed assets are served
       // without requiring Fastify to have seen their filenames at startup.
+      trace("register-static");
       await app.register(fastifyStatic, { root: publicRoot });
       app.setNotFoundHandler((request, reply) => {
         if (request.method === "GET") return reply.sendFile("index.html");
@@ -120,13 +160,17 @@ export class BridgeServer {
     }
 
     this.unsubscribe = this.runtime.onMessage((message) => this.broadcast(message));
+    trace("listen");
     await app.listen({ port: this.options.port, host: this.options.lan ? "0.0.0.0" : "127.0.0.1" });
+    trace("listening");
     const localUrl = `http://127.0.0.1:${this.options.port}`;
     const address = this.options.lan ? preferredLanAddress() : null;
     return { localUrl, lanUrl: address ? `http://${address}:${this.options.port}` : null };
   }
 
   async stop(): Promise<void> {
+    for (const controller of this.pairingWatchers.values()) controller.abort();
+    this.pairingWatchers.clear();
     this.unsubscribe?.();
     this.unsubscribe = null;
     for (const connection of this.connections) connection.close();
@@ -390,7 +434,12 @@ export class BridgeServer {
       }
       case "notification.device.register": {
         const endpoint = command.token
-          ? await this.cloud.registerPushDevice(deviceId, command.token, command.publicKey)
+          ? await this.cloud.registerPushDevice(
+              deviceId,
+              command.token,
+              command.publicKey,
+              command.environment ?? "production",
+            )
           : command.endpoint ?? null;
         if (!endpoint) {
           return connection.send({
@@ -425,15 +474,15 @@ export class BridgeServer {
       }
       case "pairing.create": {
         if (!connection.isLocalAdmin) return connection.send({ type: "error", code: "forbidden", message: "仅 Mac 本机管理页可创建配对。" });
-        const host = preferredLanAddress();
-        if (!this.options.lan || !host) return connection.send({ type: "error", code: "lan_disabled", message: "请使用 zimlo start --lan 启动。" });
-        const result = this.devices.createPairing(`http://${host}:${this.options.port}`);
-        connection.send({
-          type: "pairing.created",
-          pairUrl: result.pairUrl,
-          qrDataUrl: await QRCode.toDataURL(result.pairUrl, { margin: 1, width: 320 }),
-          expiresAt: result.expiresAt,
-        });
+        try {
+          connection.send({ type: "pairing.created", ...await this.createPairingPayload() });
+        } catch (error) {
+          connection.send({
+            type: "error",
+            code: "pairing_unavailable",
+            message: error instanceof Error ? error.message : String(error),
+          });
+        }
         return;
       }
       case "lan.approvals.set":
@@ -449,5 +498,91 @@ export class BridgeServer {
 
   private devicesList() {
     return this.runtime.store.listDevices().map(({ keyBase64: _keyBase64, ...device }) => device);
+  }
+
+  private async createPairingPayload(): Promise<{
+    pairUrl: string;
+    qrDataUrl: string;
+    expiresAt: string;
+  }> {
+    const cloudReady = this.cloud.enabled && await this.cloud.ensureReady();
+    const host = preferredLanAddress();
+    const localBaseURL = this.options.lan && host
+      ? `http://${host}:${this.options.port}`
+      : null;
+    const baseURL = cloudReady ? this.cloud.relayURL : localBaseURL;
+    if (!baseURL) {
+      throw new Error("云端暂时无法连接，请检查网络后重试。");
+    }
+    const result = this.devices.createPairing(baseURL);
+    if (cloudReady) {
+      const registered = await this.cloud.registerPairing(
+        result.pairingId,
+        result.relayToken,
+        result.expiresAt,
+      );
+      if (!registered) throw new Error("云端配对暂时不可用，请稍后重试。");
+      this.startCloudPairingWatcher(result);
+    }
+    return {
+      pairUrl: result.pairUrl,
+      qrDataUrl: await QRCode.toDataURL(result.pairUrl, { margin: 1, width: 320 }),
+      expiresAt: result.expiresAt,
+    };
+  }
+
+  private startCloudPairingWatcher(pairing: PairingResult): void {
+    this.pairingWatchers.get(pairing.pairingId)?.abort();
+    const controller = new AbortController();
+    this.pairingWatchers.set(pairing.pairingId, controller);
+    void this.watchCloudPairing(pairing, controller.signal)
+      .finally(() => this.pairingWatchers.delete(pairing.pairingId));
+  }
+
+  private async watchCloudPairing(pairing: PairingResult, signal: AbortSignal): Promise<void> {
+    const deadline = new Date(pairing.expiresAt).getTime();
+    while (!signal.aborted && Date.now() < deadline) {
+      try {
+        const pending = await this.cloud.pendingPairingRequest(pairing.pairingId);
+        if (!pending) {
+          await this.waitForPairingPoll(signal);
+          continue;
+        }
+        const result = this.devices.completePairing({
+          pairingId: pairing.pairingId,
+          clientPublicKey: pending.clientPublicKey,
+          proof: pending.proof,
+          ...(pending.name ? { name: pending.name } : {}),
+        });
+        if (!result) {
+          await this.cloud.completePairing(
+            pairing.pairingId,
+            pending.requestId,
+            { error: "Pairing expired, used, or invalid" },
+            410,
+          );
+          return;
+        }
+        const cloud = await this.cloud.provisionDevice(result.device.id);
+        await this.cloud.completePairing(pairing.pairingId, pending.requestId, {
+          deviceId: result.device.id,
+          serverProof: result.serverProof,
+          ...(cloud ? { cloud } : {}),
+        });
+        return;
+      } catch {
+        await this.waitForPairingPoll(signal);
+      }
+    }
+  }
+
+  private async waitForPairingPoll(signal: AbortSignal): Promise<void> {
+    await new Promise<void>((resolve) => {
+      const timer = setTimeout(resolve, 500);
+      signal.addEventListener("abort", () => {
+        clearTimeout(timer);
+        resolve();
+      }, { once: true });
+    });
   }
 }

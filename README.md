@@ -1,6 +1,6 @@
-# Zimlo Local Web MVP
+# Zimlo
 
-Zimlo 是 Codex 与 Claude Code 的隐私优先移动状态层。它自动发现 Mac 上已经存在或正在运行的 session，同时给 Agent 提供显式的 `feed.post`、`feed.skip` 与 `signal.transition` 工具。手机在同一局域网时直连 Mac；离开局域网后自动通过 Cloudflare 转发端到端加密的 Bridge 帧。
+Zimlo 是 Codex 与 Claude Code 的隐私优先移动状态层。它自动发现 Mac 上已经存在或正在运行的 session，同时给 Agent 提供显式的 `feed.post`、`feed.skip` 与 `signal.transition` 工具。手机默认通过 Cloudflare 与 Mac 完成配对和远程同步；局域网直连只是更快的可选路径。
 
 ## 当前能力
 
@@ -29,18 +29,35 @@ Zimlo 是 Codex 与 Claude Code 的隐私优先移动状态层。它自动发现
 
 详细实现见 [架构说明](docs/ARCHITECTURE.md) 与 [验证手册](docs/TESTING.md)。
 
-## 环境要求
+## 普通用户：下载安装即可
+
+正式版本的使用方式是：
+
+1. 在 Mac 下载并打开 **Zimlo.app**，按首次启动引导完成 Agent 接入；
+2. Zimlo 常驻菜单栏并自动管理本机后台服务，不需要打开终端；
+3. 在 iPhone 安装 Zimlo，扫描 Mac 显示的二维码；
+4. 配对通过 Cloudflare 的两分钟临时房间完成，手机和 Mac 不需要连接同一个 Wi‑Fi；
+5. 手机离开局域网后仍可继续查看、批准、回复和审阅。Mac 必须保持开机并运行 Zimlo。
+
+当前仓库会生成一个供开发与内部验证使用的 ad-hoc 签名 macOS App：
+
+```bash
+pnpm macos:build
+open apps/macos/.build/Zimlo.app
+```
+
+该开发包已经是 Universal App，包含 Intel / Apple Silicon Node Runtime 和 Sparkle。正式发布命令会完成 Developer ID 签名、公证、DMG、Sparkle appcast 与 Cloudflare R2 上传；第一次公开发布仍需提供 Apple Developer 凭据、Sparkle 密钥并在 Cloudflare 账号中启用 R2。普通用户最终不会接触 `pnpm`、Node.js 或 `zimlo start`。
+
+## 开发者：从源码运行
+
+环境要求：
 
 - macOS 14+
 - Node.js 24+
-- Codex CLI 与/或 Claude Code（由用户自行安装、登录）
-- 源码开发使用 pnpm 10
+- pnpm 10
+- 已安装并登录 Codex 与/或 Claude Code
 
-## 快速启动
-
-### 在本仓库中首次启动
-
-先安装依赖、构建并检查本机环境：
+首次构建和检查：
 
 ```bash
 pnpm install
@@ -48,69 +65,39 @@ pnpm build
 node apps/cli/dist/index.js doctor
 ```
 
-首次给手机配对时，Mac 与手机必须在同一个可信局域网，并这样启动：
+启动开发 Bridge：
 
 ```bash
-node apps/cli/dist/index.js start --lan
+node apps/cli/dist/index.js start
 ```
 
 终端出现以下信息就表示启动成功：
 
 ```text
 Zimlo 已启动：http://127.0.0.1:4747
-可信局域网：http://<你的 Mac 局域网地址>:4747
 按 Ctrl-C 停止。
 ```
 
 保持这个终端窗口运行，然后：
 
 1. Mac 打开 [http://127.0.0.1:4747](http://127.0.0.1:4747)；
-2. 在右上角 **Settings → 配对手机 Safari** 生成二维码；
-3. 手机与 Mac 连接同一个可信局域网，用 Safari 扫码完成配对；配对响应会同时写入该手机独有的云端访问凭证；
-4. 原生 iOS App 也连接这个 `--lan` Bridge，构建与运行见 [iOS README](apps/ios/README.md)。
+2. 在右上角 **Settings → 配对手机** 生成二维码；
+3. 用 iPhone App 扫码。二维码包含短时 Cloudflare 配对房间，不要求同一局域网；
+4. iOS 构建与运行见 [iOS README](apps/ios/README.md)。
 
 手机审批必须由 Mac 在已知设备列表中逐台授权；授权会跨 Bridge 重启保留，高风险操作仍要求确认短语。
 手机管理 Project 自动化策略也必须由 Mac 在设备列表中单独授权；首次授权不能由手机自行提升。
 
-### 只在 Mac 本机使用
-
-不需要手机访问时可以省略 `--lan`：
-
-```bash
-node apps/cli/dist/index.js start
-```
-
-此时只监听 `127.0.0.1`，同一局域网内的手机无法连接。
-
-### 以后每天怎么启动
-
-依赖和代码没有变化时，不需要重复 `pnpm install` 或 `pnpm build`，直接运行：
-
-```bash
-node apps/cli/dist/index.js start
-```
-
-配置 Cloudflare 后，已经配对的手机不再依赖 `--lan`：Mac 会主动建立到 Cloudflare 的出站连接，手机在外网通过加密中继同步。只有新增手机或希望手机优先局域网直连时才需要 `--lan`。拉取新代码、切换分支或修改 Web/CLI 源码后，先重新执行 `pnpm build`。使用 `Ctrl-C` 可以安全停止 Bridge。
-
-### 已全局安装 CLI
-
-如果已经通过 npm 安装 `@zimlo/cli`，对应命令更短：
-
-```bash
-zimlo doctor
-zimlo start --lan
-```
-
-常用启动方式：
+需要验证局域网直连时才加 `--lan`；它是开发/诊断选项，不是普通用户步骤：
 
 ```text
-zimlo start                         # 仅 Mac 本机
-zimlo start --lan                   # Mac + 手机，推荐
-zimlo start --lan --port 4748       # 使用自定义端口
-zimlo open                          # 打开默认端口的本机管理页
+zimlo start                         # 默认：本机管理 + 云端配对/同步
+zimlo start --lan                   # 可选：同时开放可信局域网直连
+zimlo start --port 4748             # 开发时使用自定义端口
+zimlo open                          # 打开本机管理页
 ```
 
-Codex GUI 插件在调用 Zimlo MCP 时可以自动拉起仅本机 Bridge，但不会自动开放局域网。需要手机访问时，仍应在终端显式运行 `zimlo start --lan`。
+Codex GUI 插件调用 Zimlo MCP 时也可以按需拉起本机 Bridge，不要求用户先运行命令。
 
 启动后的健康检查仍使用 protocol v2，并通过 capability 增量声明新能力：
 
@@ -125,7 +112,7 @@ curl http://127.0.0.1:4747/healthz
 Cloudflare 不是任务数据库，Mac 仍是唯一的任务状态源：
 
 1. Mac 用安装私钥签名并建立到 Durable Object 的长连接；
-2. 手机先尝试 LAN，失败后使用配对时取得的设备令牌连接同一 Durable Object；
+2. 手机使用配对时取得的设备令牌连接同一 Durable Object；发现可信本地地址时也可优先走 LAN；
 3. Durable Object 只按安装与连接 ID 转发密文；现有 Bridge 在密文内部再次验证设备身份、加密消息并防重放；
 4. Mac 在线时，快照、审批、回复和审阅实时同步；Mac 离线时，Cloudflare 返回离线状态，手机显示最近缓存，写操作保存在设备 outbox；
 5. Mac 恢复连接后，客户端重新请求最新快照并幂等重放未确认操作。
@@ -144,9 +131,9 @@ export ZIMLO_CLOUD_URL="https://zimlo-cloud.<account>.workers.dev"
 
 ## iPhone 安装与通知
 
-开发阶段需要用 Xcode 将原生 App 安装到模拟器或已登记真机，详细步骤见 [iOS README](apps/ios/README.md)。Safari/PWA 仍可通过 `zimlo start --lan` 配对使用，但 APNs 主动通知只由原生 iOS App 提供。
+开发阶段需要用 Xcode 将原生 App 安装到模拟器或已登记真机，详细步骤见 [iOS README](apps/ios/README.md)。普通用户的目标路径是从 TestFlight / App Store 安装；不会要求运行 Mac 命令。APNs 主动通知只由原生 iOS App 提供。
 
-通知与远程同步共用 Cloudflare 服务，但用途分离：通知只负责唤醒用户，真实状态总是在 App 打开后向 Mac 同步。Cloudflare D1 只保存安装公钥、设备令牌哈希、APNs token、路由公钥和投递审计，不保存任务标题、提示词、代码或结果。
+通知与远程同步共用 Cloudflare 服务，但用途分离：通知只负责唤醒用户，真实状态总是在 App 打开后向 Mac 同步。Cloudflare D1 只保存安装公钥、设备令牌哈希、APNs token、每设备 sandbox/production 环境、路由公钥和投递审计，不保存任务标题、提示词、代码或结果。
 
 ## npm CLI
 
@@ -219,6 +206,6 @@ Feed V2 的 `feed.post` 使用结构化字段：`headline`、`takeaway`、最多
 
 ## 安全边界
 
-这是端到端加密远程同步 Beta，不是云端代码执行平台。首次配对网页仍通过可信局域网 HTTP 交付，无法抵抗局域网内主动篡改页面的攻击；完成配对后，LAN 与 Cloudflare 通道都使用相同的设备认证和应用层加密。Cloudflare 不提供远程 shell、任务正文存储、多人协作或代码编辑器。Beta 已对安装注册和中继认证启用 Cloudflare 速率限制；正式规模化发布前仍需补充账号或邀请体系以及账户级配额。
+这是端到端加密远程同步 Beta，不是云端代码执行平台。首次配对通过只有两分钟寿命的一次性 Cloudflare rendezvous 交换设备公钥与加密配置；配对服务不接触任务正文。完成配对后，LAN 与 Cloudflare 通道都使用相同的设备认证和应用层加密。Cloudflare 不提供远程 shell、任务正文存储、多人协作或代码编辑器。Beta 已对安装注册和中继认证启用 Cloudflare 速率限制；正式规模化发布前仍需补充账号或邀请体系以及账户级配额。
 
 实现为 clean-room 代码，没有复制 open-vibe-island 的 GPLv3 源码，也没有引入 CodeIsland 源码。

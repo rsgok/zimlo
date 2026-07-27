@@ -12,7 +12,7 @@ struct PairingView: View {
             ZimloAvatar(size: 72)
             VStack(spacing: 7) {
                 Text("连接你的 Mac").font(.system(size: 30, weight: .black, design: .rounded))
-                Text("在 Mac 上生成配对二维码，然后用这台 iPhone 扫描。密钥只保存在本机钥匙串。")
+                Text("在 Mac 上生成二维码后直接扫描。无需连接同一个 Wi-Fi，密钥只保存在你的设备上。")
                     .font(.system(size: 14, weight: .medium)).foregroundStyle(.white.opacity(0.58))
                     .multilineTextAlignment(.center).lineSpacing(3)
             }
@@ -27,7 +27,7 @@ struct PairingView: View {
                 Text("或粘贴配对链接").font(.caption.bold()).foregroundStyle(.white.opacity(0.42))
                 Rectangle().fill(.white.opacity(0.16)).frame(height: 1)
             }
-            TextField("http://Mac-IP:4747/#pairingId=…", text: $link)
+            TextField("粘贴 Zimlo 配对链接", text: $link)
                 .textInputAutocapitalization(.never).keyboardType(.URL)
                 .font(.system(size: 13, design: .monospaced))
                 .padding(14).background(.white.opacity(0.09)).clipShape(RoundedRectangle(cornerRadius: 14))
@@ -38,7 +38,7 @@ struct PairingView: View {
                 Text(error).font(.system(size: 12, weight: .semibold)).foregroundStyle(ZColor.coral).multilineTextAlignment(.center)
             }
             Spacer()
-            Text("Zimlo 不经过公网 Relay · 仅连接你的可信 LAN / VPN")
+            Text("任务内容端到端加密 · 云端只负责连接设备")
                 .font(.system(size: 10, weight: .semibold)).foregroundStyle(.white.opacity(0.38))
         }
         .padding(.horizontal, 28).padding(.vertical, 30)

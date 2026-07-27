@@ -220,6 +220,10 @@ export class HookServer {
     socket.once("close", () => {
       if (!responseStarted) cancellation.abort();
     });
+    // Agent hooks may exit as soon as they have written their request. A late
+    // response then raises EPIPE; treat that as cancellation instead of
+    // crashing the long-lived Bridge process.
+    socket.on("error", () => cancellation.abort());
     socket.on("data", (chunk: string) => {
       buffer += chunk;
       const newline = buffer.indexOf("\n");

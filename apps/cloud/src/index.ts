@@ -6,18 +6,21 @@ import {
   signedRequestMessage,
   verifyInstallationSignature,
 } from "./crypto.js";
+import { PairingRoom } from "./pairing-room.js";
+import { releaseAssetHeaders, releaseAssetKey } from "./release-assets.js";
 import { RelayRoom } from "./relay-room.js";
 
 interface Env {
   DB: D1Database;
   RELAY_ROOMS: DurableObjectNamespace;
+  PAIRING_ROOMS: DurableObjectNamespace;
+  RELEASES?: R2Bucket;
   REGISTRATION_RATE_LIMITER: RateLimit;
   AUTH_RATE_LIMITER: RateLimit;
   APNS_PRIVATE_KEY_P8?: string;
   APNS_KEY_ID?: string;
   APNS_TEAM_ID?: string;
   APNS_TOPIC?: string;
-  APNS_ENVIRONMENT?: "development" | "production";
 }
 
 interface InstallationRow {
@@ -30,6 +33,7 @@ interface DeviceRow {
   installation_id: string;
   device_id: string;
   apns_token: string | null;
+  apns_environment: "development" | "production";
   route_public_key: string | null;
 }
 
@@ -41,8 +45,37 @@ interface PushBody {
   route?: { ephemeralPublicKey?: string; nonce?: string; ciphertext?: string };
 }
 
+interface PairingRegistrationBody {
+  pairingId?: string;
+  tokenHash?: string;
+  expiresAt?: string;
+}
+
 function jsonError(status: number, error: string): Response {
   return Response.json({ error }, { status });
+}
+
+async function releaseAsset(request: Request, env: Env, pathname: string): Promise<Response> {
+  const key = releaseAssetKey(pathname);
+  if (!key) return jsonError(404, "release_not_found");
+  if (!env.RELEASES) return jsonError(503, "release_storage_unavailable");
+  const name = key.slice("macos/".length);
+  if (request.method === "HEAD") {
+    const object = await env.RELEASES.head(key);
+    if (!object) return jsonError(404, "release_not_found");
+    const headers = new Headers(releaseAssetHeaders(name));
+    object.writeHttpMetadata(headers);
+    headers.set("etag", object.httpEtag);
+    headers.set("x-content-type-options", "nosniff");
+    return new Response(null, { headers });
+  }
+  const object = await env.RELEASES.get(key);
+  if (!object) return jsonError(404, "release_not_found");
+  const headers = new Headers(releaseAssetHeaders(name));
+  object.writeHttpMetadata(headers);
+  headers.set("etag", object.httpEtag);
+  headers.set("x-content-type-options", "nosniff");
+  return new Response(object.body, { headers });
 }
 
 function validId(value: unknown, prefix: string): value is string {
@@ -125,12 +158,14 @@ async function upsertDevice(request: Request, env: Env): Promise<Response> {
   const deviceId = body.deviceId;
   const accessTokenHash = body.accessTokenHash;
   const apnsToken = body.apnsToken;
+  const apnsEnvironment = body.apnsEnvironment ?? "production";
   const routePublicKey = body.routePublicKey;
   if (
     !validId(deviceId, "device_")
     || typeof accessTokenHash !== "string"
     || accessTokenHash.length < 32
     || (apnsToken !== undefined && (typeof apnsToken !== "string" || !/^[a-f0-9]{64,256}$/u.test(apnsToken)))
+    || (apnsEnvironment !== "development" && apnsEnvironment !== "production")
     || (routePublicKey !== undefined && (typeof routePublicKey !== "string" || routePublicKey.length > 256))
   ) {
     return jsonError(400, "invalid_device");
@@ -145,11 +180,12 @@ async function upsertDevice(request: Request, env: Env): Promise<Response> {
   await env.DB.prepare(`
     INSERT INTO devices(
       installation_id, device_id, access_token_hash, apns_token,
-      route_public_key, active, created_at, updated_at
-    ) VALUES (?, ?, ?, ?, ?, 1, ?, ?)
+      apns_environment, route_public_key, active, created_at, updated_at
+    ) VALUES (?, ?, ?, ?, ?, ?, 1, ?, ?)
     ON CONFLICT(installation_id, device_id) DO UPDATE SET
       access_token_hash = excluded.access_token_hash,
       apns_token = COALESCE(excluded.apns_token, devices.apns_token),
+      apns_environment = excluded.apns_environment,
       route_public_key = COALESCE(excluded.route_public_key, devices.route_public_key),
       active = 1,
       updated_at = excluded.updated_at
@@ -158,6 +194,7 @@ async function upsertDevice(request: Request, env: Env): Promise<Response> {
     deviceId,
     accessTokenHash,
     apnsToken ?? null,
+    apnsEnvironment,
     routePublicKey ?? null,
     now,
     now,
@@ -227,11 +264,11 @@ async function sendPush(request: Request, env: Env): Promise<Response> {
     return jsonError(503, "apns_not_configured");
   }
   const device = await env.DB.prepare(`
-    SELECT installation_id, device_id, apns_token, route_public_key
+    SELECT installation_id, device_id, apns_token, apns_environment, route_public_key
     FROM devices WHERE installation_id = ? AND device_id = ? AND active = 1
   `).bind(installation.id, body.deviceId).first<DeviceRow>();
   if (!device?.apns_token) return jsonError(410, "device_inactive");
-  const origin = env.APNS_ENVIRONMENT === "production"
+  const origin = device.apns_environment === "production"
     ? "https://api.push.apple.com"
     : "https://api.sandbox.push.apple.com";
   const response = await fetch(`${origin}/3/device/${device.apns_token}`, {
@@ -317,6 +354,101 @@ async function relayWebSocket(request: Request, env: Env, role: "mac" | "device"
   return room.fetch(new Request(request, { headers }));
 }
 
+function pairingRoom(env: Env, pairingId: string): DurableObjectStub {
+  return env.PAIRING_ROOMS.get(env.PAIRING_ROOMS.idFromName(pairingId));
+}
+
+async function registerPairing(request: Request, env: Env): Promise<Response> {
+  const rawBody = await request.text();
+  const installation = await installationForSignedRequest(request, env, rawBody);
+  if (installation instanceof Response) return installation;
+  let body: PairingRegistrationBody;
+  try {
+    body = JSON.parse(rawBody) as PairingRegistrationBody;
+  } catch {
+    return jsonError(400, "invalid_json");
+  }
+  if (
+    !validId(body.pairingId, "019")
+    || typeof body.tokenHash !== "string"
+    || body.tokenHash.length < 32
+    || typeof body.expiresAt !== "string"
+    || new Date(body.expiresAt).getTime() <= Date.now()
+    || new Date(body.expiresAt).getTime() > Date.now() + 5 * 60 * 1_000
+  ) {
+    return jsonError(400, "invalid_pairing");
+  }
+  return pairingRoom(env, body.pairingId).fetch("https://pairing.internal/register", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({
+      installationId: installation.id,
+      tokenHash: body.tokenHash,
+      expiresAt: body.expiresAt,
+    }),
+  });
+}
+
+async function pendingPairingRequest(
+  request: Request,
+  env: Env,
+  pairingId: string,
+): Promise<Response> {
+  const installation = await installationForSignedRequest(request, env);
+  if (installation instanceof Response) return installation;
+  return pairingRoom(env, pairingId).fetch("https://pairing.internal/mac/request", {
+    headers: { "x-zimlo-installation-id": installation.id },
+  });
+}
+
+async function completePairing(
+  request: Request,
+  env: Env,
+  pairingId: string,
+): Promise<Response> {
+  const rawBody = await request.text();
+  const installation = await installationForSignedRequest(request, env, rawBody);
+  if (installation instanceof Response) return installation;
+  return pairingRoom(env, pairingId).fetch("https://pairing.internal/mac/complete", {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      "x-zimlo-installation-id": installation.id,
+    },
+    body: rawBody,
+  });
+}
+
+async function beginDevicePairing(request: Request, env: Env): Promise<Response> {
+  const body = await request.json<Record<string, unknown>>().catch(() => null);
+  const pairingId = body?.pairingId;
+  if (
+    !validId(pairingId, "019")
+    || typeof body?.pairingToken !== "string"
+    || typeof body?.clientPublicKey !== "string"
+    || typeof body?.proof !== "string"
+  ) {
+    return jsonError(400, "invalid_pairing");
+  }
+  return pairingRoom(env, pairingId).fetch("https://pairing.internal/device", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(body),
+  });
+}
+
+async function devicePairingResult(request: Request, env: Env): Promise<Response> {
+  const url = new URL(request.url);
+  const pairingId = url.searchParams.get("pairingId") ?? "";
+  if (!validId(pairingId, "019")) return jsonError(400, "invalid_pairing");
+  const internal = new URL("https://pairing.internal/device/result");
+  for (const key of ["pairingToken", "requestId"]) {
+    const value = url.searchParams.get(key);
+    if (value) internal.searchParams.set(key, value);
+  }
+  return pairingRoom(env, pairingId).fetch(internal);
+}
+
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {
     const url = new URL(request.url);
@@ -332,6 +464,12 @@ export default {
         ),
       });
     }
+    if (
+      (request.method === "GET" || request.method === "HEAD")
+      && url.pathname.startsWith("/releases/macos/")
+    ) {
+      return releaseAsset(request, env, url.pathname);
+    }
     if (request.method === "POST" && url.pathname === "/v1/installations") {
       const allowed = await env.REGISTRATION_RATE_LIMITER.limit({ key: actorKey(request) });
       if (!allowed.success) return jsonError(429, "registration_rate_limited");
@@ -339,6 +477,31 @@ export default {
     }
     if (request.method === "POST" && url.pathname === "/v1/devices") {
       return upsertDevice(request, env);
+    }
+    if (request.method === "POST" && url.pathname === "/v1/pairings") {
+      return registerPairing(request, env);
+    }
+    if (request.method === "GET" && /^\/v1\/pairings\/[^/]+\/request$/u.test(url.pathname)) {
+      const pairingId = decodeURIComponent(
+        url.pathname.slice("/v1/pairings/".length, -"/request".length),
+      );
+      return pendingPairingRequest(request, env, pairingId);
+    }
+    if (request.method === "POST" && /^\/v1\/pairings\/[^/]+\/complete$/u.test(url.pathname)) {
+      const pairingId = decodeURIComponent(
+        url.pathname.slice("/v1/pairings/".length, -"/complete".length),
+      );
+      return completePairing(request, env, pairingId);
+    }
+    if (request.method === "POST" && url.pathname === "/api/pair") {
+      const allowed = await env.AUTH_RATE_LIMITER.limit({ key: `pair:${actorKey(request)}` });
+      if (!allowed.success) return jsonError(429, "pairing_rate_limited");
+      return beginDevicePairing(request, env);
+    }
+    if (request.method === "GET" && url.pathname === "/api/pair") {
+      const allowed = await env.AUTH_RATE_LIMITER.limit({ key: `pair:${actorKey(request)}` });
+      if (!allowed.success) return jsonError(429, "pairing_rate_limited");
+      return devicePairingResult(request, env);
     }
     if (request.method === "DELETE" && /^\/v1\/devices\/[^/]+\/push$/u.test(url.pathname)) {
       const encodedDeviceId = url.pathname.slice("/v1/devices/".length, -"/push".length);
@@ -368,4 +531,4 @@ export default {
   },
 };
 
-export { RelayRoom };
+export { PairingRoom, RelayRoom };

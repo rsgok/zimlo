@@ -24,6 +24,7 @@ export interface PairingResult {
   pairingId: string;
   pairUrl: string;
   expiresAt: string;
+  relayToken: string;
 }
 
 export class DeviceManager {
@@ -69,11 +70,14 @@ export class DeviceManager {
       pairingId: id,
       secret: toBase64Url(pairing.secret),
       bridgeKey: toBase64Url(pairing.publicKey),
+      pairingToken: toBase64Url(randomBytes(32)),
     });
+    const relayToken = fragment.get("pairingToken")!;
     return {
       pairingId: id,
       pairUrl: `${baseUrl}/#${fragment.toString()}`,
       expiresAt: new Date(expiresAt).toISOString(),
+      relayToken,
     };
   }
 

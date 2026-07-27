@@ -38,7 +38,7 @@ final class BridgeClient: ObservableObject {
             do {
                 try await verifyProtocol(at: credentials.bridgeURL)
                 guard !Task.isCancelled else { return }
-                connect(remote: false)
+                connect(remote: prefersRemote(credentials))
             } catch {
                 guard !Task.isCancelled else { return }
                 if credentials.remoteRelayURL != nil, credentials.remoteAccessToken != nil {
@@ -76,7 +76,7 @@ final class BridgeClient: ObservableObject {
             self.credentials = credentials
             pairingRequired = false
             error = nil
-            connect(remote: false)
+            connect(remote: prefersRemote(credentials))
         } catch {
             self.error = error.localizedDescription
         }
@@ -270,6 +270,7 @@ final class BridgeClient: ObservableObject {
         guard let endpoint = pairEndpoint.url else { throw PairingError.invalidLink }
         let body = PairRequest(
             pairingId: pairingId,
+            pairingToken: values["pairingToken"],
             clientPublicKey: ZimloCrypto.base64URL(pair.publicKey.rawRepresentation),
             proof: ZimloCrypto.proof(key: pairKey, message: "client:\(pairingId)"),
             name: UIDevice.current.name
@@ -278,8 +279,21 @@ final class BridgeClient: ObservableObject {
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "content-type")
         request.httpBody = try JSONEncoder().encode(body)
-        let (data, response) = try await URLSession.shared.data(for: request)
-        guard let http = response as? HTTPURLResponse, http.statusCode == 200 else {
+        var (data, response) = try await URLSession.shared.data(for: request)
+        guard let http = response as? HTTPURLResponse else {
+            throw PairingError.expired
+        }
+        if http.statusCode == 202 {
+            guard let pairingToken = values["pairingToken"] else { throw PairingError.invalidResponse }
+            let pending = try JSONDecoder().decode(PairingPending.self, from: data)
+            (data, response) = try await pollPairing(
+                components: components,
+                pairingId: pairingId,
+                pairingToken: pairingToken,
+                requestId: pending.requestId
+            )
+        }
+        guard let completed = response as? HTTPURLResponse, completed.statusCode == 200 else {
             throw PairingError.expired
         }
         let result = try JSONDecoder().decode(PairResponse.self, from: data)
@@ -293,6 +307,38 @@ final class BridgeClient: ObservableObject {
             remoteRelayURL: result.cloud?.relayURL,
             remoteAccessToken: result.cloud?.accessToken
         )
+    }
+
+    private func pollPairing(
+        components: URLComponents,
+        pairingId: String,
+        pairingToken: String,
+        requestId: String
+    ) async throws -> (Data, URLResponse) {
+        for _ in 0..<120 {
+            try await Task.sleep(for: .milliseconds(500))
+            var resultEndpoint = components
+            resultEndpoint.path = "/api/pair"
+            resultEndpoint.queryItems = [
+                URLQueryItem(name: "pairingId", value: pairingId),
+                URLQueryItem(name: "pairingToken", value: pairingToken),
+                URLQueryItem(name: "requestId", value: requestId),
+            ]
+            guard let url = resultEndpoint.url else { throw PairingError.invalidLink }
+            var request = URLRequest(url: url)
+            request.timeoutInterval = 5
+            let (data, response) = try await URLSession.shared.data(for: request)
+            guard let http = response as? HTTPURLResponse else { continue }
+            if http.statusCode == 200 { return (data, response) }
+            if http.statusCode != 202 { throw PairingError.expired }
+        }
+        throw PairingError.expired
+    }
+
+    private func prefersRemote(_ credentials: DeviceCredentials) -> Bool {
+        guard credentials.remoteAccessToken != nil,
+              let remote = credentials.remoteRelayURL else { return false }
+        return remote.host == credentials.bridgeURL.host
     }
 
     private func verifyProtocol(at bridgeURL: URL) async throws {
@@ -336,9 +382,14 @@ private enum PairingError: LocalizedError {
 
 private struct PairRequest: Codable {
     var pairingId: String
+    var pairingToken: String?
     var clientPublicKey: String
     var proof: String
     var name: String
+}
+
+private struct PairingPending: Codable {
+    var requestId: String
 }
 
 private struct PairResponse: Codable {
