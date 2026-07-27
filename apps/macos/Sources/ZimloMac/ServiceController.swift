@@ -17,7 +17,36 @@ struct IntegrationStatus: Codable, Identifiable, Hashable {
 struct LocalServiceStatus: Codable {
     let ready: Bool
     let cloud: Bool
+    let pushNotifications: Bool
+    let pairedDeviceCount: Int
     let integrations: [IntegrationStatus]
+
+    private enum CodingKeys: String, CodingKey {
+        case ready, cloud, pushNotifications, pairedDeviceCount, integrations
+    }
+
+    init(
+        ready: Bool,
+        cloud: Bool,
+        pushNotifications: Bool,
+        pairedDeviceCount: Int,
+        integrations: [IntegrationStatus]
+    ) {
+        self.ready = ready
+        self.cloud = cloud
+        self.pushNotifications = pushNotifications
+        self.pairedDeviceCount = pairedDeviceCount
+        self.integrations = integrations
+    }
+
+    init(from decoder: Decoder) throws {
+        let values = try decoder.container(keyedBy: CodingKeys.self)
+        ready = try values.decode(Bool.self, forKey: .ready)
+        cloud = try values.decode(Bool.self, forKey: .cloud)
+        pushNotifications = try values.decodeIfPresent(Bool.self, forKey: .pushNotifications) ?? false
+        pairedDeviceCount = try values.decodeIfPresent(Int.self, forKey: .pairedDeviceCount) ?? 0
+        integrations = try values.decode([IntegrationStatus].self, forKey: .integrations)
+    }
 }
 
 struct PairingPayload: Codable {
@@ -144,7 +173,14 @@ final class ServiceController: ObservableObject {
                 let value = try? JSONDecoder().decode(ServiceError.self, from: data)
                 throw ServiceFailure.message(value?.error ?? "接入失败，请稍后重试。")
             }
-            status = try JSONDecoder().decode(IntegrationResponse.self, from: data).asStatus
+            let integrationResponse = try JSONDecoder().decode(IntegrationResponse.self, from: data)
+            status = LocalServiceStatus(
+                ready: true,
+                cloud: status?.cloud ?? true,
+                pushNotifications: status?.pushNotifications ?? false,
+                pairedDeviceCount: status?.pairedDeviceCount ?? 0,
+                integrations: integrationResponse.integrations
+            )
             state = .ready
         } catch {
             state = .unavailable(error.localizedDescription)
@@ -235,10 +271,6 @@ private struct ServiceError: Codable {
 
 private struct IntegrationResponse: Codable {
     let integrations: [IntegrationStatus]
-
-    var asStatus: LocalServiceStatus {
-        LocalServiceStatus(ready: true, cloud: true, integrations: integrations)
-    }
 }
 
 private enum ServiceFailure: LocalizedError {

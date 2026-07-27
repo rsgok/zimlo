@@ -175,25 +175,37 @@ private struct AgentStep: View {
 private struct PhoneStep: View {
     @ObservedObject var model: AppModel
 
+    private var isPaired: Bool {
+        (model.service.status?.pairedDeviceCount ?? 0) > 0
+    }
+
     var body: some View {
         StepShell {
             HStack(alignment: .top, spacing: 34) {
                 VStack(alignment: .leading, spacing: 16) {
-                    Text("把 Zimlo 带到手机")
+                    Text(isPaired ? "手机已经连接" : "把 Zimlo 带到手机")
                         .font(.system(size: 31, weight: .black, design: .rounded))
-                    Text("打开 iPhone 上的 Zimlo 扫描二维码。手机和 Mac 不需要连接同一个 Wi-Fi。")
+                    Text(isPaired
+                         ? "这台 iPhone 已安全配对。离开当前 Wi-Fi 后，Zimlo 会自动切换到加密云连接。"
+                         : "打开 iPhone 上的 Zimlo 扫描二维码。手机和 Mac 不需要连接同一个 Wi-Fi。")
                         .font(.system(size: 14, weight: .medium))
                         .foregroundStyle(ZColor.muted)
                         .lineSpacing(4)
-                    Label("二维码 2 分钟后自动失效", systemImage: "timer")
-                        .font(.system(size: 11, weight: .bold))
-                        .foregroundStyle(ZColor.muted)
-                    Label("云端只转发加密连接", systemImage: "lock.shield")
-                        .font(.system(size: 11, weight: .bold))
-                        .foregroundStyle(ZColor.muted)
+                    if isPaired {
+                        Label("配对密钥只保存在你的设备上", systemImage: "checkmark.shield")
+                            .font(.system(size: 11, weight: .bold))
+                            .foregroundStyle(ZColor.muted)
+                    } else {
+                        Label("二维码 2 分钟后自动失效", systemImage: "timer")
+                            .font(.system(size: 11, weight: .bold))
+                            .foregroundStyle(ZColor.muted)
+                        Label("云端只转发加密连接", systemImage: "lock.shield")
+                            .font(.system(size: 11, weight: .bold))
+                            .foregroundStyle(ZColor.muted)
+                    }
                 }
                 Spacer()
-                PairingCard(service: model.service)
+                PairingCard(service: model.service, isPaired: isPaired)
             }
         } footer: {
             Button("暂不连接手机") { model.onboarding.step = 3 }
@@ -201,13 +213,18 @@ private struct PhoneStep: View {
                 .font(.system(size: 12, weight: .bold))
                 .foregroundStyle(ZColor.muted)
             Spacer()
-            PrimaryButton("我已完成", disabled: false) {
+            PrimaryButton(isPaired ? "继续" : "等待手机连接", disabled: !isPaired) {
                 model.onboarding.step = 3
             }
         }
         .task {
             if model.service.pairing == nil {
                 await model.service.createPairing()
+            }
+            while !Task.isCancelled && !isPaired {
+                try? await Task.sleep(for: .seconds(1))
+                guard !Task.isCancelled else { return }
+                _ = await model.service.refreshStatus()
             }
         }
     }
@@ -363,13 +380,26 @@ private struct StepShell<Content: View, Footer: View>: View {
 
 private struct PairingCard: View {
     @ObservedObject var service: ServiceController
+    let isPaired: Bool
 
     var body: some View {
         VStack(spacing: 13) {
             ZStack {
                 RoundedRectangle(cornerRadius: 20, style: .continuous)
                     .fill(.white)
-                if let image = service.pairing?.qrImage {
+                if isPaired {
+                    VStack(spacing: 12) {
+                        ZStack {
+                            Circle().fill(ZColor.acid).frame(width: 72, height: 72)
+                            Image(systemName: "checkmark")
+                                .font(.system(size: 30, weight: .black))
+                                .foregroundStyle(ZColor.ink)
+                        }
+                        Text("iPhone 已连接")
+                            .font(.system(size: 13, weight: .black))
+                            .foregroundStyle(ZColor.ink)
+                    }
+                } else if let image = service.pairing?.qrImage {
                     Image(nsImage: image)
                         .resizable()
                         .interpolation(.none)
@@ -386,12 +416,14 @@ private struct PairingCard: View {
             .frame(width: 222, height: 222)
             .overlay(RoundedRectangle(cornerRadius: 20).stroke(Color.black.opacity(0.08)))
 
-            Button("刷新二维码") {
-                Task { await service.createPairing() }
+            if !isPaired {
+                Button("刷新二维码") {
+                    Task { await service.createPairing() }
+                }
+                .buttonStyle(.plain)
+                .font(.system(size: 11, weight: .bold))
+                .foregroundStyle(ZColor.muted)
             }
-            .buttonStyle(.plain)
-            .font(.system(size: 11, weight: .bold))
-            .foregroundStyle(ZColor.muted)
         }
     }
 }

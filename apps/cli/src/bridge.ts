@@ -91,6 +91,7 @@ export class BridgeServer {
         ready: true,
         cloud: this.cloud.enabled,
         pushNotifications: this.cloud.pushNotificationsAvailable,
+        pairedDeviceCount: this.devicesList().filter((device) => !device.isLocalAdmin && !device.revokedAt).length,
         integrations: await inspectIntegrationStatuses(this.entrypoint),
       };
     });

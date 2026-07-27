@@ -66,3 +66,27 @@ Bridge 在局域网使用用户提供的 HTTP / WebSocket 地址，但所有配�
 真机 APNs 需要 Apple Developer 签名、Push Notifications entitlement，以及已经部署的 Cloudflare Worker。App 本身不再包含 Relay URL 或全局注册密钥：Worker 地址和每台手机独有的随机访问令牌都由 Mac 在可信配对响应中下发。
 
 官方 Beta 默认使用已部署的 Cloudflare 服务；自建环境才需要在 Mac 端设置 `ZIMLO_CLOUD_URL`。APNs provider key 只作为 Cloudflare Worker secret 保存，绝不能写入 Xcode 配置或 App 包。完整步骤见 [Cloudflare 服务说明](../cloud/README.md)。
+
+## TestFlight Beta
+
+普通用户安装路径是 TestFlight，不需要 Xcode、数据线或终端。仓库中的
+`.github/workflows/release-ios.yml` 会使用 Release 配置归档主 App 与通知
+Service Extension，并直接上传到 App Store Connect。
+
+首次发布前在 GitHub Actions 配置：
+
+- `APPLE_TEAM_ID`
+- `APP_STORE_CONNECT_API_KEY_ID`
+- `APP_STORE_CONNECT_API_ISSUER_ID`
+- `APP_STORE_CONNECT_API_KEY_P8_BASE64`
+- `IOS_DISTRIBUTION_CERTIFICATE_P12_BASE64`
+- `IOS_DISTRIBUTION_CERTIFICATE_PASSWORD`
+- `IOS_KEYCHAIN_PASSWORD`
+
+随后手动运行 **Release iOS Beta**，输入语义化版本号和递增 build number。
+工作流会在缺少任何凭据、版本格式错误、签名或上传失败时停止，不会生成一个
+看似成功但无法安装的 Beta。
+
+主 App 随包包含 `PrivacyInfo.xcprivacy`：Zimlo 不声明收集或追踪用户数据，
+仅为设备内草稿、待发送操作和偏好设置声明 Apple 要求的 `UserDefaults`
+required-reason API 用途。

@@ -101,20 +101,21 @@ final class NotificationManager: NSObject, UNUserNotificationCenterDelegate {
     }
 }
 
+@MainActor
 final class ZimloAppDelegate: NSObject, UIApplicationDelegate {
     func application(
         _ application: UIApplication,
         didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]? = nil
     ) -> Bool {
-        Task { @MainActor in NotificationManager.shared.configure() }
+        NotificationManager.shared.configure()
         return true
     }
 
     func application(_ application: UIApplication, didRegisterForRemoteNotificationsWithDeviceToken deviceToken: Data) {
-        Task { @MainActor in NotificationManager.shared.didRegister(deviceToken: deviceToken) }
+        NotificationManager.shared.didRegister(deviceToken: deviceToken)
     }
 
     func application(_ application: UIApplication, didFailToRegisterForRemoteNotificationsWithError error: Error) {
-        Task { @MainActor in NotificationManager.shared.didFailRegistration(error) }
+        NotificationManager.shared.didFailRegistration(error)
     }
 }

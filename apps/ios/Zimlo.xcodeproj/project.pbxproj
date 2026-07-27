@@ -26,6 +26,7 @@
 		100000000000000000000012 /* NotificationService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 200000000000000000000015 /* NotificationService.swift */; };
 		100000000000000000000013 /* ZimloNotificationService.appex in Embed App Extensions */ = {isa = PBXBuildFile; fileRef = 200000000000000000000018 /* ZimloNotificationService.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
 		100000000000000000000014 /* SnapshotCache.swift in Sources */ = {isa = PBXBuildFile; fileRef = 200000000000000000000019 /* SnapshotCache.swift */; };
+		100000000000000000000015 /* PrivacyInfo.xcprivacy in Resources */ = {isa = PBXBuildFile; fileRef = 20000000000000000000001A /* PrivacyInfo.xcprivacy */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -71,6 +72,7 @@
 		200000000000000000000017 /* ZimloNotificationService.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = ZimloNotificationService.entitlements; sourceTree = "<group>"; };
 		200000000000000000000018 /* ZimloNotificationService.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = ZimloNotificationService.appex; sourceTree = BUILT_PRODUCTS_DIR; };
 		200000000000000000000019 /* SnapshotCache.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SnapshotCache.swift; sourceTree = "<group>"; };
+		20000000000000000000001A /* PrivacyInfo.xcprivacy */ = {isa = PBXFileReference; lastKnownFileType = text.xml; path = PrivacyInfo.xcprivacy; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -101,6 +103,7 @@
 				20000000000000000000000A, 20000000000000000000000B, 20000000000000000000000C,
 				20000000000000000000000D, 20000000000000000000000E, 200000000000000000000012,
 				200000000000000000000013, 200000000000000000000014, 200000000000000000000019,
+				20000000000000000000001A,
 			);
 		};
 		500000000000000000000003 /* ZimloTests */ = {isa = PBXGroup; path = ZimloTests; sourceTree = "<group>"; children = (20000000000000000000000F,); };
@@ -176,7 +179,7 @@
 /* End PBXProject section */
 
 /* Begin PBXResourcesBuildPhase section */
-		600000000000000000000002 = {isa = PBXResourcesBuildPhase; buildActionMask = 2147483647; files = (10000000000000000000000E, 100000000000000000000010,); runOnlyForDeploymentPostprocessing = 0; };
+		600000000000000000000002 = {isa = PBXResourcesBuildPhase; buildActionMask = 2147483647; files = (10000000000000000000000E, 100000000000000000000010, 100000000000000000000015,); runOnlyForDeploymentPostprocessing = 0; };
 		600000000000000000000005 = {isa = PBXResourcesBuildPhase; buildActionMask = 2147483647; files = (); runOnlyForDeploymentPostprocessing = 0; };
 /* End PBXResourcesBuildPhase section */
 

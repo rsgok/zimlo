@@ -15,6 +15,10 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: release-macos
+  cancel-in-progress: false
+
 jobs:
   release:
     runs-on: macos-15
@@ -43,6 +47,27 @@ jobs:
           cache: pnpm
 
       - run: pnpm install --frozen-lockfile
+
+      - name: Validate release configuration
+        shell: bash
+        env:
+          CERTIFICATE_P12_BASE64: ${{ secrets.MACOS_CERTIFICATE_P12_BASE64 }}
+          CERTIFICATE_PASSWORD: ${{ secrets.MACOS_CERTIFICATE_PASSWORD }}
+          KEYCHAIN_PASSWORD: ${{ secrets.MACOS_KEYCHAIN_PASSWORD }}
+          SPARKLE_PRIVATE_KEY: ${{ secrets.SPARKLE_PRIVATE_KEY }}
+        run: |
+          missing=()
+          for name in \
+            ZIMLO_SIGN_IDENTITY SPARKLE_PUBLIC_KEY APPLE_ID APPLE_TEAM_ID \
+            APPLE_APP_PASSWORD CLOUDFLARE_API_TOKEN CLOUDFLARE_ACCOUNT_ID \
+            CERTIFICATE_P12_BASE64 CERTIFICATE_PASSWORD KEYCHAIN_PASSWORD \
+            SPARKLE_PRIVATE_KEY; do
+            if [[ -z "${!name:-}" ]]; then missing+=("$name"); fi
+          done
+          if (( ${#missing[@]} > 0 )); then
+            printf 'Missing release configuration: %s\n' "${missing[*]}" >&2
+            exit 1
+          fi
 
       - name: Import Developer ID certificate
         env:
