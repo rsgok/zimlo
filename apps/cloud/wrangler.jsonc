@@ -36,10 +36,12 @@
       "migrations_dir": "migrations"
     }
   ],
-  // After enabling R2 and creating `zimlo-releases`, add:
-  // "r2_buckets": [
-  //   { "binding": "RELEASES", "bucket_name": "zimlo-releases" }
-  // ],
+  "r2_buckets": [
+    {
+      "binding": "RELEASES",
+      "bucket_name": "zimlo-releases"
+    }
+  ],
   "durable_objects": {
     "bindings": [
       {
