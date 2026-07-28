@@ -1,5 +1,7 @@
 # Zimlo
 
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+
 Zimlo 是 Codex 与 Claude Code 的隐私优先移动状态层。它自动发现 Mac 上已经存在或正在运行的 session，同时给 Agent 提供显式的 `feed.post`、`feed.skip` 与 `signal.transition` 工具。手机默认通过 Cloudflare 与 Mac 完成配对和远程同步；局域网直连只是更快的可选路径。
 
 ## 当前能力
@@ -209,3 +211,9 @@ Feed V2 的 `feed.post` 使用结构化字段：`headline`、`takeaway`、最多
 这是端到端加密远程同步 Beta，不是云端代码执行平台。首次配对通过只有两分钟寿命的一次性 Cloudflare rendezvous 交换设备公钥与加密配置；配对服务不接触任务正文。完成配对后，LAN 与 Cloudflare 通道都使用相同的设备认证和应用层加密。Cloudflare 不提供远程 shell、任务正文存储、多人协作或代码编辑器。Beta 已对安装注册和中继认证启用 Cloudflare 速率限制；正式规模化发布前仍需补充账号或邀请体系以及账户级配额。
 
 实现为 clean-room 代码，没有复制 open-vibe-island 的 GPLv3 源码，也没有引入 CodeIsland 源码。
+
+## 开源许可
+
+Zimlo 的源代码以 [MIT License](LICENSE) 开源，可自由使用、修改、分发和用于商业项目，但须保留版权与许可声明。
+
+`Zimlo` 名称、Logo 与官方发行身份不包含在 MIT 授权中；未经许可，不得以官方版本或官方服务的名义进行分发。
