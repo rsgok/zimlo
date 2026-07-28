@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { AppIcon } from "./AppIcon";
 
 interface SpeechRecognitionLike {
   lang: string;
@@ -68,7 +69,10 @@ export function VoiceInput({ value, onChange, placeholder, ariaLabel, rows = 2, 
         title={supported ? "语音输入" : "当前浏览器不支持网页语音，可使用系统键盘麦克风"}
         disabled={!supported || disabled}
         onClick={toggleVoice}
-      >{listening ? "■" : "●"}<span>{listening ? "正在听" : "语音"}</span></button>
+      >
+        <AppIcon name={listening ? "stop" : "mic"} />
+        <span>{listening ? "正在听" : "语音"}</span>
+      </button>
       <textarea
         aria-label={ariaLabel}
         value={value}

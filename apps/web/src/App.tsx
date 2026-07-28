@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import type { TaskCommand } from "@zimlo/protocol";
 import { FeedView } from "./components/FeedView";
 import { AppTopBar } from "./components/AppTopBar";
+import { AppIcon } from "./components/AppIcon";
 import { AgentProfileDetail } from "./components/AgentProfileDetail";
 import { AgentsView } from "./components/AgentsView";
 import { PairingRequired } from "./components/PairingRequired";
@@ -118,17 +119,29 @@ export function App() {
       </main>
 
       <nav className="bottom-nav" aria-label="主导航">
-        <button aria-current={tab === "feed" ? "page" : undefined} className={tab === "feed" ? "active" : ""} onClick={() => setTab("feed")}><span>◫</span>Feed</button>
-        <button aria-current={tab === "tasks" ? "page" : undefined} className={tab === "tasks" ? "active" : ""} onClick={() => setTab("tasks")}><span>◎</span>Tasks</button>
+        <button aria-current={tab === "feed" ? "page" : undefined} className={tab === "feed" ? "active" : ""} onClick={() => setTab("feed")}>
+          <span className="bottom-nav-icon"><AppIcon name="feed" /></span>
+          <span className="bottom-nav-label">Feed</span>
+        </button>
+        <button aria-current={tab === "tasks" ? "page" : undefined} className={tab === "tasks" ? "active" : ""} onClick={() => setTab("tasks")}>
+          <span className="bottom-nav-icon"><AppIcon name="tasks" /></span>
+          <span className="bottom-nav-label">Tasks</span>
+        </button>
         <button
           className={`new-task-nav ${newTaskOpen ? "active" : ""}`}
           aria-pressed={newTaskOpen}
           onClick={() => openNewTask()}
           aria-label="布置新任务"
-        ><span>＋</span><strong>新任务</strong></button>
-        <button aria-current={tab === "agents" ? "page" : undefined} className={tab === "agents" ? "active" : ""} onClick={() => setTab("agents")}><span>◉</span>Agents</button>
+        >
+          <span className="bottom-nav-icon bottom-nav-create"><AppIcon name="plus" /></span>
+          <strong className="bottom-nav-label">新任务</strong>
+        </button>
+        <button aria-current={tab === "agents" ? "page" : undefined} className={tab === "agents" ? "active" : ""} onClick={() => setTab("agents")}>
+          <span className="bottom-nav-icon"><AppIcon name="agents" /></span>
+          <span className="bottom-nav-label">Agents</span>
+        </button>
         <button aria-current={tab === "settings" ? "page" : undefined} className={tab === "settings" ? "active" : ""} onClick={openSettings} aria-label="个人设置">
-          <UserAvatar avatarId={bridge.snapshot.userProfile.avatarId} className="bottom-nav-avatar" alt="" />
+          <span className="bottom-nav-icon bottom-nav-user"><UserAvatar avatarId={bridge.snapshot.userProfile.avatarId} className="bottom-nav-avatar" alt="" /></span>
           <span className="bottom-nav-label">设置</span>
         </button>
       </nav>

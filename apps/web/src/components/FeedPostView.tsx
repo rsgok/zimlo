@@ -6,6 +6,7 @@ import { VoiceInput } from "./VoiceInput";
 import { sessionLocation } from "./sessionPresentation";
 import { ProviderBadge } from "./ProviderBadge";
 import { AgentAvatar } from "./UserAvatar";
+import { AppIcon } from "./AppIcon";
 
 interface FeedPostViewProps {
   post: FeedPost;
@@ -97,13 +98,15 @@ export function FeedPostView({ post, session, project, actions, review, send, on
             <VoiceInput compact value={reply} onChange={setReply} rows={1} ariaLabel="直接回复 Agent" placeholder="说出或输入回复…" disabled={!canReply || submitted} />
             <button
               className="action-submit"
+              aria-label={submitted ? "回复已保存，等待同步" : canReply ? "发送回复" : "请进入任务回复"}
+              title={submitted ? "回复已保存，等待同步" : canReply ? "发送回复" : "请进入任务回复"}
               disabled={!canReply || !reply.trim() || submitted}
               onClick={() => {
                 const accepted = send({ type: "task.follow_up", sessionId: session!.id, text: reply.trim(), idempotencyKey: crypto.randomUUID() });
                 if (!accepted) return;
                 setSubmitted(true);
               }}
-            >{submitted ? "已保存待同步" : canReply ? "回复" : "请进入任务回复"}</button>
+            ><AppIcon name={submitted ? "check" : "send"} /></button>
           </div>
         )}
         {review?.state === "unreviewed" && (
