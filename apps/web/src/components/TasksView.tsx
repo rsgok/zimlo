@@ -15,6 +15,7 @@ interface TasksViewProps {
 
 type TaskFilter = "all" | "attention" | "active" | "ready";
 const EMPTY_POSTS: FeedPost[] = [];
+const RECENT_TASK_WINDOW_MS = 7 * 24 * 60 * 60 * 1000;
 
 const FILTERS: Array<{ id: TaskFilter; label: string }> = [
   { id: "all", label: "全部" },
@@ -113,6 +114,18 @@ function statePriority(state: string): number {
   return 3;
 }
 
+function belongsInRecentTasks(
+  session: Session,
+  task: TaskRecord | undefined,
+  preference: TaskPreference | undefined,
+  now = Date.now(),
+): boolean {
+  if (preference?.pinnedAt) return true;
+  if (statePriority(effectiveState(session, task)) < 2) return true;
+  const lastActivityAt = new Date(session.lastActivityAt).getTime();
+  return Number.isFinite(lastActivityAt) && lastActivityAt >= now - RECENT_TASK_WINDOW_MS;
+}
+
 function isReadyTask(session: Session, state: string): boolean {
   if (statePriority(state) < 2) return false;
   return session.capabilities.resumable || session.capabilities.replyable || state === "idle";
@@ -150,7 +163,19 @@ export function TasksView({ projects, sessions, tasks, posts = EMPTY_POSTS, pref
   );
   const collapsed = useMemo(() => collapseProcessSessions(sessions), [sessions]);
   const managedSessions = collapsed.sessions;
-  const currentSessions = managedSessions.filter((session) => !preferenceBySession.get(session.id)?.archivedAt);
+  const currentSessions = managedSessions.filter((session) => {
+    const preference = preferenceBySession.get(session.id);
+    return !preference?.archivedAt && belongsInRecentTasks(session, taskBySession.get(session.id), preference);
+  });
+  const visibleSessionIds = useMemo(() => new Set(currentSessions.map((session) => session.id)), [currentSessions]);
+  const currentSessionCountByProject = useMemo(() => {
+    const counts = new Map<string, number>();
+    for (const session of currentSessions) {
+      if (!session.projectId) continue;
+      counts.set(session.projectId, (counts.get(session.projectId) ?? 0) + 1);
+    }
+    return counts;
+  }, [currentSessions]);
   const attentionCount = currentSessions.filter((session) => statePriority(effectiveState(session, taskBySession.get(session.id))) === 0).length;
   const activeCount = currentSessions.filter((session) => {
     const state = effectiveState(session, taskBySession.get(session.id));
@@ -165,6 +190,7 @@ export function TasksView({ projects, sessions, tasks, posts = EMPTY_POSTS, pref
       const state = effectiveState(session, task);
       const preference = preferenceBySession.get(session.id);
       if (showArchived !== Boolean(preference?.archivedAt)) return false;
+      if (!showArchived && !visibleSessionIds.has(session.id)) return false;
       if (projectId !== "all" && session.projectId !== projectId) return false;
       if (filter === "attention" && statePriority(state) !== 0) return false;
       if (filter === "active" && statePriority(state) !== 1) return false;
@@ -219,8 +245,8 @@ export function TasksView({ projects, sessions, tasks, posts = EMPTY_POSTS, pref
                 <span>项目</span>
                 <select value={projectId} onChange={(event) => { setProjectId(event.target.value); setShowAll(false); }} aria-label="按项目筛选任务">
                   <option value="all">全部项目 · {currentSessions.length}</option>
-                  {stableProjects.filter((project) => project.sessionCount > 0).map((project) => (
-                    <option value={project.id} key={project.id}>{project.name} · {project.sessionCount}</option>
+                  {stableProjects.filter((project) => (currentSessionCountByProject.get(project.id) ?? 0) > 0).map((project) => (
+                    <option value={project.id} key={project.id}>{project.name} · {currentSessionCountByProject.get(project.id)}</option>
                   ))}
                 </select>
               </label>
@@ -281,7 +307,7 @@ export function TasksView({ projects, sessions, tasks, posts = EMPTY_POSTS, pref
         <div className="task-empty"><strong>没有找到任务</strong><p>试试项目名、任务关键词或切换筛选。</p></div>
       )}
       {!normalizedQuery && filtered.length > visible.length && (
-        <button className="show-all-tasks" onClick={() => setShowAll(true)}>显示其余 {filtered.length - visible.length} 个任务</button>
+        <button className="show-all-tasks" onClick={() => setShowAll(true)}>显示最近 7 天内其余 {filtered.length - visible.length} 个任务</button>
       )}
     </section>
   );

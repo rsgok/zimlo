@@ -115,4 +115,57 @@ describe("TasksView", () => {
     expect(markup.indexOf("较早创建")).toBeLessThan(markup.indexOf("较晚创建"));
     expect(markup).toContain("已置顶");
   });
+
+  it("only counts settled tasks from the last seven days while keeping old attention tasks", () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-07-29T12:00:00.000Z"));
+    try {
+      const recent = Array.from({ length: 10 }, (_, index) => ({
+        ...session,
+        id: `recent-${index}`,
+        providerSessionId: `recent-${index}`,
+        title: `最近任务 ${index}`,
+        status: "idle" as const,
+        activePid: null,
+        lastActivityAt: `2026-07-${String(28 - index % 6).padStart(2, "0")}T12:00:00.000Z`,
+      }));
+      const old = Array.from({ length: 10 }, (_, index) => ({
+        ...session,
+        id: `old-${index}`,
+        providerSessionId: `old-${index}`,
+        title: `历史任务 ${index}`,
+        status: "idle" as const,
+        activePid: null,
+        lastActivityAt: "2026-07-20T12:00:00.000Z",
+      }));
+      const oldAttention = {
+        ...session,
+        id: "old-attention",
+        providerSessionId: "old-attention",
+        title: "仍需处理的旧任务",
+        status: "waiting" as const,
+        activePid: null,
+        lastActivityAt: "2026-07-01T12:00:00.000Z",
+      };
+
+      const markup = renderToStaticMarkup(
+        <TasksView
+          projects={[{ ...project, sessionCount: 21 }]}
+          sessions={[...recent, ...old, oldAttention]}
+          tasks={[]}
+          preferences={[]}
+          send={vi.fn()}
+          onOpen={vi.fn()}
+        />,
+      );
+
+      expect(markup).toContain("全部<span>11</span>");
+      expect(markup).toContain("zimlo · 11");
+      expect(markup).toContain("显示最近 7 天内其余 4 个任务");
+      expect(markup).toContain("仍需处理的旧任务");
+      expect(markup).not.toContain("历史任务 0");
+    } finally {
+      vi.useRealTimers();
+    }
+  });
 });

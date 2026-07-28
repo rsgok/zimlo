@@ -1,4 +1,7 @@
 import { execFile } from "node:child_process";
+import { readFile } from "node:fs/promises";
+import { homedir } from "node:os";
+import { join } from "node:path";
 import { promisify } from "node:util";
 import type { IntegrationStatus } from "@zimlo/protocol";
 import { resolveAgentCommand } from "./agent-command.js";
@@ -7,8 +10,43 @@ import { applyHookChanges, hookConfigChanges } from "./hook-config.js";
 
 const execFileAsync = promisify(execFile);
 
-async function mcpConfigured(command: string | null, entrypoint: string): Promise<boolean> {
+export function claudeMcpConfiguredFromConfig(
+  config: unknown,
+  entrypoint: string,
+  executable = process.execPath,
+): boolean {
+  if (!config || typeof config !== "object") return false;
+  const servers = (config as Record<string, unknown>).mcpServers;
+  if (!servers || typeof servers !== "object") return false;
+  const zimlo = (servers as Record<string, unknown>).zimlo;
+  if (!zimlo || typeof zimlo !== "object") return false;
+  const record = zimlo as Record<string, unknown>;
+  return record.command === executable
+    && Array.isArray(record.args)
+    && record.args.every((value) => typeof value === "string")
+    && record.args.includes(entrypoint);
+}
+
+async function claudeMcpConfigured(entrypoint: string): Promise<boolean> {
+  try {
+    const config = JSON.parse(await readFile(join(homedir(), ".claude.json"), "utf8")) as unknown;
+    return claudeMcpConfiguredFromConfig(config, entrypoint);
+  } catch {
+    return false;
+  }
+}
+
+async function mcpConfigured(
+  provider: "codex" | "claude",
+  command: string | null,
+  entrypoint: string,
+): Promise<boolean> {
   if (!command) return false;
+  // `claude mcp get` briefly creates a transcript even though it only reads
+  // configuration. Polling it from the desktop health check would therefore
+  // manufacture thousands of false sessions. User-scoped Claude MCP servers
+  // are persisted in ~/.claude.json, so inspect that file directly.
+  if (provider === "claude") return claudeMcpConfigured(entrypoint);
   try {
     const result = await execFileAsync(command, ["mcp", "get", "zimlo"], { timeout: 5_000, maxBuffer: 512 * 1024 });
     const output = `${result.stdout}\n${result.stderr}`;
@@ -43,8 +81,8 @@ export async function inspectIntegrationStatuses(entrypoint: string): Promise<In
   const [changes, plugin, codexMcp, claudeMcp] = await Promise.all([
     hookConfigChanges(entrypoint),
     inspectCodexPlugin(entrypoint),
-    mcpConfigured(codexCommand, entrypoint),
-    mcpConfigured(claudeCommand, entrypoint),
+    mcpConfigured("codex", codexCommand, entrypoint),
+    mcpConfigured("claude", claudeCommand, entrypoint),
   ]);
   const codexHooks = changes.some((change) => change.path.includes("/.codex/") && JSON.stringify(change.before) === JSON.stringify(change.after));
   const claudeHooks = changes.some((change) => change.path.includes("/.claude/") && JSON.stringify(change.before) === JSON.stringify(change.after));
@@ -87,8 +125,8 @@ export async function installCliIntegrations(entrypoint: string): Promise<void> 
   if (providers.length === 0) throw new Error("尚未发现 Codex 或 Claude Code。");
 
   const [codexReady, claudeReady] = await Promise.all([
-    mcpConfigured(codexCommand, entrypoint),
-    mcpConfigured(claudeCommand, entrypoint),
+    mcpConfigured("codex", codexCommand, entrypoint),
+    mcpConfigured("claude", claudeCommand, entrypoint),
   ]);
   await applyHookChanges(await hookConfigChanges(entrypoint, false, undefined, providers));
   if (codexCommand && !codexReady) {
