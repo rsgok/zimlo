@@ -11,6 +11,11 @@ describe("macOS release assets", () => {
   });
 
   it("keeps appcasts fresh and immutable disk images cacheable", () => {
+    expect(releaseAssetHeaders("latest.json")).toMatchObject({
+      "content-type": "application/json; charset=utf-8",
+      "cache-control": "public, max-age=300, must-revalidate",
+      "access-control-allow-origin": "*",
+    });
     expect(releaseAssetHeaders("appcast.xml")).toMatchObject({
       "content-type": "application/xml; charset=utf-8",
       "cache-control": "public, max-age=300, must-revalidate",

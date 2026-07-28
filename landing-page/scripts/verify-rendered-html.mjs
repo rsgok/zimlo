@@ -31,5 +31,7 @@ test("server-renders the finished Zimlo landing page", async () => {
   assert.match(html, /End-to-end encrypted/);
   assert.match(html, /ZERO COMMAND ONBOARDING/);
   assert.match(html, /Join the Mac Beta/);
+  assert.match(html, /Signed Mac download and iPhone TestFlight access will appear here/);
+  assert.match(html, /Beta opening soon/);
   assert.doesNotMatch(html, /codex-preview|react-loading-skeleton|Your site is taking shape/i);
 });

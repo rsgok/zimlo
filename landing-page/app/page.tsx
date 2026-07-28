@@ -1,5 +1,7 @@
 /* eslint-disable @next/next/no-img-element */
 
+import { BetaDownload } from "./BetaDownload";
+
 const features = [
   {
     index: "01",
@@ -216,13 +218,8 @@ export default function Home() {
         <div className="beta-orb"><BrandMark /></div>
         <span className="section-kicker">MACOS BETA</span>
         <h2>Follow the work.<br />Skip the noise.</h2>
-        <p>The macOS menu bar app and iPhone Beta are getting ready for the first group of users.</p>
-        <div className="beta-actions">
-          <span className="button button--primary button--disabled" aria-disabled="true">
-            Beta opening soon
-          </span>
-          <a className="button button--dark" href="#top">Back to top ↑</a>
-        </div>
+        <p>The macOS menu bar app and iPhone companion are opening to the first group of users.</p>
+        <BetaDownload />
       </section>
 
       <footer className="site-footer">

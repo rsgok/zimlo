@@ -14,6 +14,13 @@ export function releaseAssetKey(pathname: string): string | null {
 }
 
 export function releaseAssetHeaders(name: string): Record<string, string> {
+  if (name === "latest.json") {
+    return {
+      "content-type": "application/json; charset=utf-8",
+      "cache-control": "public, max-age=300, must-revalidate",
+      "access-control-allow-origin": "*",
+    };
+  }
   if (name === "appcast.xml") {
     return {
       "content-type": "application/xml; charset=utf-8",
