@@ -1,6 +1,6 @@
 import { execFileSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, realpathSync, rmSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { homedir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { EMPTY_CAPABILITIES, USER_AVATAR_IDS, type FeedPost, type Session } from "@zimlo/protocol";
@@ -9,7 +9,7 @@ import { ZimloStore } from "../src/store.js";
 const roots: string[] = [];
 
 function fixture() {
-  const root = mkdtempSync(join(tmpdir(), "zimlo-project-store-"));
+  const root = mkdtempSync(join(process.cwd(), ".zimlo-project-store-"));
   roots.push(root);
   const projectRoot = join(root, "product");
   execFileSync("git", ["init", "-q", projectRoot]);
@@ -134,8 +134,8 @@ describe("persistent project model", () => {
     const { root, database } = fixture();
     const alpha = join(root, "alpha");
     const zeta = join(root, "zeta");
-    mkdirSync(join(alpha, ".git"), { recursive: true });
-    mkdirSync(join(zeta, ".git"), { recursive: true });
+    execFileSync("git", ["init", "-q", alpha]);
+    execFileSync("git", ["init", "-q", zeta]);
     const store = new ZimloStore(database);
     store.upsertSession(session("zeta", zeta, "2026-07-23T02:00:00.000Z"));
     const cli = store.upsertSession(session("alpha", alpha, "2026-07-23T01:00:00.000Z"));
@@ -200,6 +200,92 @@ describe("persistent project model", () => {
 
     const reopened = new ZimloStore(database);
     expect(reopened.getUserProfile().avatarId).toBe("user-24");
+    reopened.close();
+  });
+
+  it("keeps generated worktrees attached to an existing Agent without registering them as reusable locations", () => {
+    const { projectRoot, database } = fixture();
+    const store = new ZimloStore(database);
+    const durable = store.upsertSession(session("durable", projectRoot, "2026-07-23T00:00:00.000Z"));
+    const generatedWorktree = join(projectRoot, ".claude", "worktrees", "agent-123");
+    mkdirSync(generatedWorktree, { recursive: true });
+
+    const temporary = store.upsertSession(session("temporary", generatedWorktree, "2026-07-23T01:00:00.000Z"));
+
+    expect(temporary.projectId).toBe(durable.projectId);
+    expect(store.getProject(durable.projectId!)?.paths).toEqual([realpathSync(projectRoot)]);
+    store.close();
+  });
+
+  it("keeps standalone scratch sessions out of the Agent directory", () => {
+    const { database } = fixture();
+    const store = new ZimloStore(database);
+    const scratchPath = join(homedir(), "Documents", "Claude", "2026-07-29", "one-off-task");
+
+    const scratch = store.upsertSession(session("standalone-scratch", scratchPath, "2026-07-29T00:00:00.000Z"));
+
+    expect(scratch.projectId).toBeNull();
+    expect(store.listProjects()).toEqual([]);
+    expect(store.listSessions()).toEqual([expect.objectContaining({ id: "standalone-scratch", cwd: scratchPath })]);
+    store.close();
+  });
+
+  it("removes historical scratch Agents while preserving their tasks and Feed history", () => {
+    const { database } = fixture();
+    const store = new ZimloStore(database);
+    const at = "2026-07-23T00:00:00.000Z";
+    const scratchPath = join(homedir(), "Documents", "Codex", "2026-07-23", "scratch-task");
+    const scratchProjectId = "project:scratch";
+    store.upsertSession(session("scratch", "/", at));
+    store.database.prepare(`
+      INSERT INTO projects(id, name, identity_key, created_at, last_used_at)
+      VALUES (?, 'scratch-task', 'path:scratch', ?, ?)
+    `).run(scratchProjectId, at, at);
+    store.database.prepare(`
+      INSERT INTO project_locations(path, project_id, first_seen_at, last_seen_at)
+      VALUES (?, ?, ?, ?)
+    `).run(scratchPath, scratchProjectId, at, at);
+    store.database.prepare("UPDATE sessions SET project_id = ?, cwd = ? WHERE id = 'scratch'")
+      .run(scratchProjectId, scratchPath);
+    store.insertFeedPost({
+      id: "scratch-post",
+      projectId: scratchProjectId,
+      taskId: "task-scratch",
+      runId: "provider-scratch",
+      agentId: "codex",
+      sessionId: "scratch",
+      kind: "result",
+      template: "paper",
+      headline: "临时任务完成",
+      takeaway: "历史仍需保留",
+      highlights: [],
+      actionRequired: false,
+      actions: [],
+      pendingActionIds: [],
+      dedupeKey: "scratch-result",
+      source: "agent",
+      createdAt: at,
+    });
+    store.insertTaskCommand({
+      id: "scratch-command",
+      idempotencyKey: "scratch-command",
+      kind: "create",
+      provider: "codex",
+      sessionId: "scratch",
+      workspaceId: scratchProjectId,
+      cwd: scratchPath,
+      text: "执行临时任务",
+      state: "completed",
+      createdAt: at,
+      updatedAt: at,
+    });
+    store.close();
+
+    const reopened = new ZimloStore(database);
+    expect(reopened.getProject(scratchProjectId)).toBeNull();
+    expect(reopened.getSession("scratch")).toMatchObject({ projectId: null, cwd: scratchPath });
+    expect(reopened.listFeedPosts()).toEqual([expect.objectContaining({ id: "scratch-post", projectId: null })]);
+    expect(reopened.getTaskCommand("scratch-command")).toMatchObject({ workspaceId: null, cwd: scratchPath });
     reopened.close();
   });
 });

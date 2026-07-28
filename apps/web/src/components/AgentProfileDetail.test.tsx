@@ -7,7 +7,7 @@ const project: Project = {
   id: "project-zimlo",
   name: "zimlo",
   primaryPath: "/Projects/zimlo",
-  paths: ["/Projects/zimlo"],
+  paths: ["/Projects/zimlo", "/Projects/zimlo-release"],
   providers: ["codex"],
   sessionCount: 10,
   postCount: 10,
@@ -45,6 +45,28 @@ function post(index: number): FeedPost {
 }
 
 describe("AgentProfileDetail", () => {
+  it("shows the complete primary and additional working directories", () => {
+    const markup = renderToStaticMarkup(
+      <AgentProfileDetail
+        project={project}
+        sessions={[]}
+        posts={[]}
+        commands={[]}
+        userAvatarId="user-02"
+        send={vi.fn()}
+        onOpenTask={vi.fn()}
+        onNewTask={vi.fn()}
+        onClose={vi.fn()}
+      />,
+    );
+
+    expect(markup).toContain("工作目录");
+    expect(markup).toContain("主目录");
+    expect(markup).toContain("/Projects/zimlo");
+    expect(markup).toContain("其他已识别目录");
+    expect(markup).toContain("/Projects/zimlo-release");
+  });
+
   it("keeps older Agent activity behind an explicit history action", () => {
     const markup = renderToStaticMarkup(
       <AgentProfileDetail

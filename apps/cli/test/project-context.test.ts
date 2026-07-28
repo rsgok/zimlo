@@ -1,9 +1,9 @@
 import { execFileSync } from "node:child_process";
 import { mkdtempSync, mkdirSync, realpathSync, rmSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { persistableProjectForCwd, projectContextForCwd } from "../src/project-context.js";
+import { ephemeralWorkspaceKind, persistableProjectForCwd, projectContextForCwd } from "../src/project-context.js";
 
 const temporaryPaths: string[] = [];
 
@@ -28,11 +28,32 @@ describe("project context", () => {
   });
 
   it("falls back to a path identity when git cannot inspect the directory", () => {
-    const missing = join(tmpdir(), `zimlo-missing-${Date.now()}`);
+    const missing = join(process.cwd(), `.zimlo-missing-${Date.now()}`);
 
     const project = persistableProjectForCwd(missing);
 
     expect(project?.root).toBe(missing);
     expect(project?.identityKey).toMatch(/^path:/u);
+  });
+
+  it.each([
+    [join(tmpdir(), "codex-run"), "system_temp"],
+    [join(homedir(), "Documents/Codex/2026-07-29/task/work"), "agent_scratch"],
+    [join(homedir(), "Documents/Claude/2026-07-29/task"), "agent_scratch"],
+    [join(homedir(), ".codex/worktrees/abcd/project"), "agent_worktree"],
+    [join(homedir(), "Code/project/.claude/worktrees/agent-123"), "agent_worktree"],
+    [join(homedir(), ".claude/projects/-private-tmp-project"), "agent_runtime"],
+    ["/Applications/Zimlo.app/Contents/Resources/runtime/cli", "agent_runtime"],
+    [join(homedir(), ".meee2/workspaces/global/canvas-123"), "managed_workspace"],
+    [join(homedir(), "multica_workspaces/run/session/workdir"), "managed_workspace"],
+  ] as const)("classifies generated workspace %s as %s", (path, kind) => {
+    expect(ephemeralWorkspaceKind(path)).toBe(kind);
+    expect(persistableProjectForCwd(path)).toBeNull();
+  });
+
+  it("keeps ordinary durable directories eligible", () => {
+    const path = join(homedir(), "Code/product");
+    expect(ephemeralWorkspaceKind(path)).toBeNull();
+    expect(persistableProjectForCwd(path)?.root).toBe(path);
   });
 });

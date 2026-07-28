@@ -29,7 +29,7 @@ import type {
   UserAvatarId,
   UserProfile,
 } from "@zimlo/protocol";
-import { persistableProjectForCwd } from "./project-context.js";
+import { ephemeralWorkspaceKind, persistableProjectForCwd, projectContextForCwd } from "./project-context.js";
 import { sanitizeEventPayload } from "./sanitization.js";
 
 interface DeviceRow {
@@ -427,6 +427,7 @@ export class ZimloStore {
       this.backfillProjects();
       this.database.prepare("INSERT OR REPLACE INTO metadata(key, value) VALUES ('project_backfill_v1', '1')").run();
     }
+    this.cleanupEphemeralProjects();
     this.backfillAgentAvatars();
     this.migrateFeedV2();
     this.database.prepare("UPDATE task_commands SET state = 'queued', updated_at = ?, error = NULL WHERE state IN ('dispatching', 'running')")
@@ -437,6 +438,17 @@ export class ZimloStore {
   }
 
   ensureProjectForCwd(cwd: string | null, seenAt: string, createdAt = seenAt): Project | null {
+    if (ephemeralWorkspaceKind(cwd)) {
+      const context = projectContextForCwd(cwd);
+      if (!context) return null;
+      const matched = this.database.prepare("SELECT id FROM projects WHERE identity_key = ?").get(context.identityKey) as { id: string } | undefined;
+      if (!matched) return null;
+      this.database.prepare(`
+        UPDATE projects SET last_used_at = CASE WHEN ? > last_used_at THEN ? ELSE last_used_at END
+        WHERE id = ?
+      `).run(seenAt, seenAt, matched.id);
+      return this.getProject(matched.id);
+    }
     const identity = persistableProjectForCwd(cwd);
     if (!identity) return null;
     const location = this.database.prepare("SELECT project_id FROM project_locations WHERE path = ?").get(identity.root) as { project_id: string } | undefined;
@@ -521,6 +533,38 @@ export class ZimloStore {
     const update = this.database.prepare("UPDATE projects SET agent_avatar = ? WHERE id = ?");
     for (const project of projects) {
       update.run(USER_AVATAR_IDS[randomInt(USER_AVATAR_IDS.length)] ?? USER_AVATAR_IDS[0], project.id);
+    }
+  }
+
+  private cleanupEphemeralProjects(): void {
+    const locations = this.database.prepare("SELECT path FROM project_locations").all() as Array<{ path: string }>;
+    const ephemeralPaths = locations
+      .map((location) => location.path)
+      .filter((path) => ephemeralWorkspaceKind(path) !== null);
+    if (ephemeralPaths.length === 0) return;
+
+    this.database.exec("BEGIN IMMEDIATE");
+    try {
+      const removeLocation = this.database.prepare("DELETE FROM project_locations WHERE path = ?");
+      for (const path of ephemeralPaths) removeLocation.run(path);
+
+      const orphaned = this.database.prepare(`
+        SELECT projects.id FROM projects
+        WHERE NOT EXISTS (
+          SELECT 1 FROM project_locations WHERE project_locations.project_id = projects.id
+        )
+      `).all() as Array<{ id: string }>;
+      const clearCommand = this.database.prepare("UPDATE task_commands SET workspace_id = NULL WHERE workspace_id = ?");
+      const removeProject = this.database.prepare("DELETE FROM projects WHERE id = ?");
+      for (const project of orphaned) {
+        clearCommand.run(project.id);
+        removeProject.run(project.id);
+      }
+
+      this.database.exec("COMMIT");
+    } catch (error) {
+      this.database.exec("ROLLBACK");
+      throw error;
     }
   }
 
@@ -672,7 +716,9 @@ export class ZimloStore {
 
   upsertSession(session: Session): Session {
     const inferredProject = this.ensureProjectForCwd(session.cwd, session.lastActivityAt, session.createdAt);
-    const projectId = session.projectId ?? inferredProject?.id ?? null;
+    const projectId = ephemeralWorkspaceKind(session.cwd)
+      ? inferredProject?.id ?? null
+      : session.projectId ?? inferredProject?.id ?? null;
     this.database.prepare(`
       INSERT INTO sessions (
         id, project_id, provider, surface, provider_session_id, title, cwd, transcript_path, status,
@@ -680,7 +726,10 @@ export class ZimloStore {
         correlation_uncertain, capabilities_json
       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       ON CONFLICT(id) DO UPDATE SET
-        project_id = COALESCE(excluded.project_id, sessions.project_id),
+        project_id = CASE
+          WHEN excluded.cwd IS NOT NULL THEN excluded.project_id
+          ELSE COALESCE(excluded.project_id, sessions.project_id)
+        END,
         surface = CASE WHEN excluded.surface = 'unknown' THEN sessions.surface ELSE excluded.surface END,
         title = excluded.title,
         cwd = COALESCE(excluded.cwd, sessions.cwd),

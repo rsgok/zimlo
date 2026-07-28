@@ -783,6 +783,16 @@ code, pre { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
 .agent-avatar-picker button { position: relative; padding: 2px; aspect-ratio: 1; overflow: hidden; background: transparent; border: 2px solid transparent; border-radius: 50%; cursor: pointer; }
 .agent-avatar-picker button img { width: 100%; height: 100%; border-radius: 50%; }
 .agent-avatar-picker button.selected { border-color: #52611e; box-shadow: 0 0 0 2px rgba(213,255,76,.72); }
+.agent-workspace-card { display: grid; gap: 12px; margin: 16px 22px; padding: 16px; background: #f3f1ea; border: 1px solid var(--line); border-radius: 15px; }
+.agent-workspace-card > header { display: flex; align-items: end; justify-content: space-between; gap: 14px; }
+.agent-workspace-card h2 { margin: 3px 0 0; font-size: 18px; }
+.agent-workspace-card > header > p { margin: 0; color: var(--muted); font-size: 9px; }
+.agent-workspace-list { display: grid; gap: 8px; }
+.agent-workspace-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 12px; padding: 11px 12px; background: #fff; border: 1px solid var(--line); border-radius: 11px; }
+.agent-workspace-row > div { display: grid; gap: 5px; min-width: 0; }
+.agent-workspace-row span { color: var(--muted); font-size: 8px; font-weight: 800; }
+.agent-workspace-row code { overflow-wrap: anywhere; color: #32362e; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 11px; line-height: 1.5; }
+.agent-workspace-row button { padding: 6px 9px; color: #405038; background: #edf5d8; border: 1px solid #d5dfbd; border-radius: 8px; cursor: pointer; font-size: 9px; font-weight: 800; }
 .agent-timeline { padding-bottom: 30px; }
 .agent-timeline-item { display: grid; grid-template-columns: 36px minmax(0, 1fr); gap: 11px; padding: 19px 22px; border-bottom: 1px solid var(--line); }
 .agent-timeline-item.is-user { background: #f5f3ec; }
@@ -943,6 +953,8 @@ code, pre { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
   .agent-directory-card { grid-template-columns: 1fr; }
   .agent-quick-task { min-height: 38px; border-top: 1px solid var(--line); border-left: 0; }
   .agent-profile-actions { position: static; margin-bottom: 18px; }
+  .agent-workspace-card { margin-inline: 18px; }
+  .agent-workspace-card > header { align-items: flex-start; flex-direction: column; gap: 4px; }
   .qr-wrap { grid-column: auto; }
   .composer-backdrop { padding: 0; }
   .new-task-sheet { width: 100%; max-height: 96dvh; border-inline: 0; border-bottom: 0; border-radius: 24px 24px 0 0; }

@@ -1,5 +1,4 @@
 import { mkdtempSync, rmSync } from "node:fs";
-import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { EMPTY_CAPABILITIES, type Session } from "@zimlo/protocol";
@@ -10,7 +9,7 @@ import { ZimloStore } from "../src/store.js";
 const temporaryDirectories: string[] = [];
 
 function setup() {
-  const directory = mkdtempSync(join(tmpdir(), "zimlo-test-"));
+  const directory = mkdtempSync(join(process.cwd(), ".zimlo-action-broker-"));
   temporaryDirectories.push(directory);
   const store = new ZimloStore(join(directory, "zimlo.db"));
   const runtime = new RuntimeHub(store);

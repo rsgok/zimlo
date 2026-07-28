@@ -32,6 +32,26 @@ function relativeTime(value: string): string {
   return new Intl.DateTimeFormat("zh-CN", { month: "short", day: "numeric" }).format(new Date(value));
 }
 
+async function copyPath(value: string): Promise<boolean> {
+  try {
+    if (navigator.clipboard?.writeText) {
+      await navigator.clipboard.writeText(value);
+      return true;
+    }
+    const textarea = document.createElement("textarea");
+    textarea.value = value;
+    textarea.style.position = "fixed";
+    textarea.style.opacity = "0";
+    document.body.append(textarea);
+    textarea.select();
+    const copied = document.execCommand("copy");
+    textarea.remove();
+    return copied;
+  } catch {
+    return false;
+  }
+}
+
 export function AgentProfileDetail({ project, sessions, posts, commands, trustPolicy, trustAudit = [], trustEnabled = true, userAvatarId, send, onOpenTask, onNewTask, onClose }: AgentProfileDetailProps) {
   const [editing, setEditing] = useState(false);
   const [displayName, setDisplayName] = useState(project.agentProfile.displayName);
@@ -39,10 +59,12 @@ export function AgentProfileDetail({ project, sessions, posts, commands, trustPo
   const [bio, setBio] = useState(project.agentProfile.bio);
   const [defaultProvider, setDefaultProvider] = useState<"codex" | "claude" | "">(project.agentProfile.defaultProvider ?? "");
   const [showAllActivity, setShowAllActivity] = useState(false);
+  const [copiedWorkspacePath, setCopiedWorkspacePath] = useState<string | null>(null);
   const sessionIds = useMemo(() => new Set(sessions.map((session) => session.id)), [sessions]);
   const sessionById = useMemo(() => new Map(sessions.map((session) => [session.id, session])), [sessions]);
   const running = collapseProcessSessions(sessions).sessions.filter((session) => session.status === "running").length;
   const visibleBio = agentBio(project);
+  const workspacePaths = useMemo(() => [...new Set([project.primaryPath, ...project.paths].filter(Boolean))], [project.paths, project.primaryPath]);
   const timeline = useMemo(() => [
     ...posts.map((post) => ({ type: "post" as const, id: post.id, at: post.createdAt, post })),
     ...commands.filter((command) => (command.sessionId && sessionIds.has(command.sessionId)) || command.workspaceId === project.id)
@@ -96,6 +118,29 @@ export function AgentProfileDetail({ project, sessions, posts, commands, trustPo
             </form>
           )}
         </section>
+        {workspacePaths.length > 0 && <section className="agent-workspace-card" aria-label="工作目录">
+          <header>
+            <div><span className="eyebrow">WORKSPACE</span><h2>工作目录</h2></div>
+            <p>新任务默认使用主目录</p>
+          </header>
+          <div className="agent-workspace-list">
+            {workspacePaths.map((path, index) => (
+              <div className="agent-workspace-row" key={path}>
+                <div>
+                  <span>{index === 0 ? "主目录" : "其他已识别目录"}</span>
+                  <code title={path}>{path}</code>
+                </div>
+                <button type="button" onClick={() => {
+                  void copyPath(path).then((copied) => {
+                    if (!copied) return;
+                    setCopiedWorkspacePath(path);
+                    window.setTimeout(() => setCopiedWorkspacePath((current) => current === path ? null : current), 1_800);
+                  });
+                }}>{copiedWorkspacePath === path ? "已复制" : "复制"}</button>
+              </div>
+            ))}
+          </div>
+        </section>}
         {trustEnabled && <section className="agent-trust-card" aria-label="自动化权限">
           <div>
             <span className="eyebrow">AUTOMATION</span>

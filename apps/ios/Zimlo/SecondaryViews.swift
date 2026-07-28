@@ -1,4 +1,5 @@
 import SwiftUI
+import UIKit
 
 private func collapsedDirectorySessions(_ sessions: [AgentSession]) -> [AgentSession] {
     var seenProcessGroups = Set<String>()
@@ -347,12 +348,17 @@ struct AgentDetailView: View {
     let project: Project
     @State private var editing = false
     @State private var showAllActivity = false
+    @State private var copiedWorkspacePath: String?
 
     private var sessions: [AgentSession] { model.snapshot.sessions.filter { $0.projectId == project.id } }
     private var managedSessions: [AgentSession] { collapsedDirectorySessions(sessions) }
     private var posts: [FeedPost] { model.snapshot.posts.filter { $0.projectId == project.id }.sorted { $0.createdAt > $1.createdAt } }
     private var visiblePosts: [FeedPost] { showAllActivity ? posts : Array(posts.prefix(8)) }
     private var running: Int { managedSessions.filter { $0.status == "running" }.count }
+    private var workspacePaths: [String] {
+        var seen = Set<String>()
+        return ([project.primaryPath] + project.paths).filter { !$0.isEmpty && seen.insert($0).inserted }
+    }
     private var visibleBio: String? {
         let value = project.agentProfile.bio.trimmingCharacters(in: .whitespacesAndNewlines)
         if value.isEmpty || value == "负责 \(project.name) 项目的长期工作与上下文。" { return nil }
@@ -388,6 +394,7 @@ struct AgentDetailView: View {
                         metric(project.agentProfile.defaultProvider?.label ?? "自动", "默认 Runtime")
                     }
                     .padding(.horizontal, 18).padding(.bottom, 14)
+                    if !workspacePaths.isEmpty { workspaceSection }
                     if model.snapshot.features.projectTrustPolicy { trustSection }
                     Rectangle().fill(ZColor.line).frame(height: 1)
                     HStack {
@@ -446,6 +453,52 @@ struct AgentDetailView: View {
             Text(value).font(.system(size: 14, weight: .black))
             Text(label).font(.system(size: 9, weight: .medium)).foregroundStyle(ZColor.muted)
         }.frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private var workspaceSection: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(alignment: .firstTextBaseline) {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("WORKSPACE").font(.system(size: 8, weight: .black)).foregroundStyle(ZColor.muted)
+                    Text("工作目录").font(.system(size: 16, weight: .black))
+                }
+                Spacer()
+                Text("新任务默认使用主目录").font(.system(size: 8, weight: .bold)).foregroundStyle(ZColor.muted)
+            }
+            ForEach(Array(workspacePaths.enumerated()), id: \.element) { index, path in
+                HStack(alignment: .center, spacing: 10) {
+                    VStack(alignment: .leading, spacing: 5) {
+                        Text(index == 0 ? "主目录" : "其他已识别目录")
+                            .font(.system(size: 8, weight: .black)).foregroundStyle(ZColor.muted)
+                        Text(path)
+                            .font(.system(size: 10, weight: .medium, design: .monospaced))
+                            .foregroundStyle(ZColor.ink)
+                            .fixedSize(horizontal: false, vertical: true)
+                            .textSelection(.enabled)
+                    }
+                    Spacer(minLength: 4)
+                    Button {
+                        UIPasteboard.general.string = path
+                        copiedWorkspacePath = path
+                    } label: {
+                        Text(copiedWorkspacePath == path ? "已复制" : "复制")
+                            .font(.system(size: 8, weight: .black))
+                            .padding(.horizontal, 9).padding(.vertical, 7)
+                            .background(ZColor.acid.opacity(0.16))
+                            .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+                    }
+                    .buttonStyle(.plain)
+                }
+                .padding(11)
+                .background(Color.white.opacity(0.72))
+                .clipShape(RoundedRectangle(cornerRadius: 11, style: .continuous))
+            }
+        }
+        .padding(14)
+        .background(Color.white.opacity(0.4))
+        .overlay(RoundedRectangle(cornerRadius: 15, style: .continuous).stroke(ZColor.line))
+        .clipShape(RoundedRectangle(cornerRadius: 15, style: .continuous))
+        .padding(.horizontal, 18).padding(.bottom, 14)
     }
 
     private var trustSection: some View {
