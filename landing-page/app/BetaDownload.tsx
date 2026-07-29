@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 
 const RELEASE_MANIFEST_URL = "https://zimlo-cloud.zimlo.workers.dev/releases/macos/latest.json";
 const RELEASE_BASE_URL = "https://zimlo-cloud.zimlo.workers.dev/releases/macos/";
@@ -26,38 +26,78 @@ function isMacRelease(value: unknown): value is MacRelease {
   );
 }
 
+type ReleaseState =
+  | { status: "loading" }
+  | { status: "ready"; release: MacRelease }
+  | { status: "closed" }   // manifest reachable, but no Beta published yet
+  | { status: "error" };   // network/parse failure — offer a retry
+
 export function BetaDownload() {
-  const [release, setRelease] = useState<MacRelease | null>(null);
+  const [state, setState] = useState<ReleaseState>({ status: "loading" });
+
+  const load = useCallback((signal?: AbortSignal) => {
+    return fetch(RELEASE_MANIFEST_URL, { cache: "no-store", signal })
+      .then(async (response) => {
+        if (!response.ok) return { status: "closed" } as const;
+        const value: unknown = await response.json().catch(() => null);
+        return isMacRelease(value)
+          ? { status: "ready", release: value } as const
+          : { status: "closed" } as const;
+      })
+      .then((next) => {
+        if (!signal?.aborted) setState(next);
+      })
+      .catch(() => {
+        if (!signal?.aborted) setState({ status: "error" });
+      });
+  }, []);
 
   useEffect(() => {
     const controller = new AbortController();
-    void fetch(RELEASE_MANIFEST_URL, { cache: "no-store", signal: controller.signal })
-      .then(async (response) => response.ok ? response.json() as Promise<unknown> : null)
-      .then((value) => {
-        if (isMacRelease(value)) setRelease(value);
-      })
-      .catch(() => undefined);
+    void load(controller.signal);
     return () => controller.abort();
-  }, []);
+  }, [load]);
+
+  function retry() {
+    setState({ status: "loading" });
+    void load();
+  }
 
   return (
     <>
-      <div className="beta-actions">
-        {release ? (
-          <a className="button button--primary" href={release.downloadURL}>
-            Download for Mac <span aria-hidden="true">↓</span>
-          </a>
-        ) : (
+      <div className="beta-actions" aria-live="polite" aria-busy={state.status === "loading"}>
+        {state.status === "loading" && (
+          <span className="button button--primary button--disabled" aria-disabled="true">
+            Checking for the Beta…
+          </span>
+        )}
+        {state.status === "closed" && (
           <span className="button button--primary button--disabled" aria-disabled="true">
             Beta opening soon
           </span>
         )}
-        <a className="button button--dark" href="#top">Back to top ↑</a>
+        {state.status === "error" && (
+          <button
+            className="button button--primary"
+            type="button"
+            onClick={retry}
+          >
+            Retry Beta check <span aria-hidden="true">↻</span>
+          </button>
+        )}
+        {state.status === "ready" && (
+          <a className="button button--primary" href={state.release.downloadURL}>
+            Download for Mac <span aria-hidden="true">↓</span>
+          </a>
+        )}
+        <a className="button button--dark" href="#demo">See real cards ↓</a>
       </div>
       <p className="beta-release-note">
-        {release
-          ? `Zimlo ${release.version} · Universal app · macOS ${release.minimumSystemVersion}+`
-          : "Signed Mac download and iPhone TestFlight access will appear here when the Beta opens."}
+        {state.status === "ready"
+          ? `Zimlo ${state.release.version} · Universal app · macOS ${state.release.minimumSystemVersion}+`
+          : state.status === "error"
+            ? "Could not reach the release server. Check your connection and retry."
+            : "Signed Mac download and iPhone TestFlight access will appear here when the Beta opens."}
       </p>
     </>
   );

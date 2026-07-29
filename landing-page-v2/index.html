@@ -1,0 +1,309 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Zimlo — The edited feed for your AI work</title>
+<meta name="description" content="Zimlo turns Codex and Claude Code activity into a calm, swipeable feed of the conclusions, decisions, and results that matter. End-to-end encrypted — your Mac stays the source of truth.">
+<meta property="og:title" content="Zimlo — Your AI work, edited down to what matters">
+<meta property="og:description" content="A calm, swipeable feed of the conclusions, decisions, and results that matter from your Codex and Claude Code agents.">
+<meta property="og:type" content="website">
+<!-- make og:image absolute once the deploy domain is known -->
+<meta property="og:image" content="assets/og.png">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:image" content="assets/og.png">
+<link rel="icon" href="assets/favicon.svg" type="image/svg+xml">
+<link rel="apple-touch-icon" href="assets/apple-touch-icon.png">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500;600&family=Space+Grotesk:wght@500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="styles.css">
+</head>
+<body id="top">
+
+<div class="bg" aria-hidden="true">
+  <div class="bg-grid"></div>
+  <div class="bg-glow"></div>
+</div>
+
+<header class="nav" id="nav">
+  <div class="wrap nav-inner">
+    <a class="brand" href="#top" aria-label="Zimlo home">
+      <img src="assets/favicon.svg" alt="" class="brand-mark" width="26" height="26">
+      <span class="brand-word">zimlo</span>
+    </a>
+    <nav class="nav-links" aria-label="Primary">
+      <a href="#feed">The feed</a>
+      <a href="#app">The app</a>
+      <a href="#privacy">Privacy</a>
+      <a href="#setup">Get started</a>
+    </nav>
+    <a class="gh-link" href="https://github.com/rsgok/zimlo" target="_blank" rel="noopener" aria-label="Zimlo on GitHub">
+      <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.49-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.58.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27s1.36.09 2 .27c1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.01 8.01 0 0 0 16 8c0-4.42-3.58-8-8-8z"/></svg>
+    </a>
+    <a class="btn btn-small btn-lime" href="#beta">Mac Beta</a>
+  </div>
+</header>
+
+<main>
+
+  <!-- ============ HERO ============ -->
+  <section class="hero" id="hero">
+    <div class="hero-pin wrap">
+      <div class="hero-copy reveal">
+        <p class="eyebrow"><span class="pulse" aria-hidden="true"></span>The edited feed for your AI work</p>
+        <h1>Your AI work,<br>edited down to <em>what&nbsp;matters.</em></h1>
+        <p class="lede">Zimlo turns Codex and Claude Code activity into a calm, swipeable feed. See one meaningful update at a time — then approve, reply, or keep scrolling.</p>
+        <div class="hero-ctas">
+          <a class="btn btn-lime" href="#beta">Download for Mac</a>
+          <a class="btn btn-ghost" href="#feed">See how it works<span class="arr" aria-hidden="true">↓</span></a>
+        </div>
+        <ul class="trust" aria-label="Highlights">
+          <li>No logs to babysit</li>
+          <li>One card at a time</li>
+          <li>End-to-end encrypted</li>
+        </ul>
+      </div>
+
+      <div class="hero-stage reveal">
+        <div class="phone-glow" aria-hidden="true"></div>
+        <div class="phone" id="phone">
+          <div class="phone-screen">
+            <div class="statusbar" aria-hidden="true">
+              <span class="sb-time">9:41</span>
+              <span class="sb-icons">
+                <svg width="17" height="11" viewBox="0 0 17 11" fill="currentColor"><rect x="0" y="7" width="3" height="4" rx="1"/><rect x="4.5" y="5" width="3" height="6" rx="1"/><rect x="9" y="2.5" width="3" height="8.5" rx="1"/><rect x="13.5" y="0" width="3" height="11" rx="1"/></svg>
+                <svg width="16" height="11" viewBox="0 0 16 11" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"><path d="M1.5 3.5a10 10 0 0 1 13 0"/><path d="M3.8 6a6.4 6.4 0 0 1 8.4 0"/><path d="M6.2 8.4a2.9 2.9 0 0 1 3.6 0"/><circle cx="8" cy="10" r="0.9" fill="currentColor" stroke="none"/></svg>
+                <svg width="25" height="12" viewBox="0 0 25 12" fill="none"><rect x="0.5" y="0.5" width="21" height="11" rx="3.2" stroke="currentColor" opacity="0.45"/><rect x="2" y="2" width="16" height="8" rx="1.8" fill="currentColor"/><path d="M23 4v4a2.2 2.2 0 0 0 0-4z" fill="currentColor" opacity="0.45"/></svg>
+              </span>
+            </div>
+            <div class="appbar">
+              <span class="app-avatar" aria-hidden="true">✦</span>
+              <span class="app-title">Feed</span>
+              <span class="chip-local"><i></i>Local</span>
+            </div>
+            <div class="feed-viewport" id="feedViewport" aria-live="polite"><!-- cards rendered by main.js --></div>
+            <div class="feed-dots" id="feedDots" aria-hidden="true"></div>
+            <nav class="tabbar" aria-hidden="true">
+              <span class="tab active">
+                <svg viewBox="0 0 20 20" width="19" height="19" fill="none" stroke="currentColor" stroke-width="1.7"><rect x="2" y="2" width="7" height="16" rx="1.6"/><rect x="11.5" y="2" width="7" height="9" rx="1.6"/><rect x="11.5" y="13.5" width="7" height="4.5" rx="1.6"/></svg>
+                Feed
+              </span>
+              <span class="tab">
+                <svg viewBox="0 0 20 20" width="19" height="19" fill="none" stroke="currentColor" stroke-width="1.7"><circle cx="10" cy="10" r="7.5"/></svg>
+                Tasks
+              </span>
+              <span class="tab">
+                <svg viewBox="0 0 20 20" width="19" height="19" fill="none" stroke="currentColor" stroke-width="1.7"><circle cx="10" cy="10" r="7.5"/><path d="M10 6.6v6.8M6.6 10h6.8"/></svg>
+                New task
+              </span>
+              <span class="tab">
+                <svg viewBox="0 0 20 20" width="19" height="19" fill="none" stroke="currentColor" stroke-width="1.7"><circle cx="10" cy="10" r="7.5"/><circle cx="10" cy="10" r="3" fill="currentColor" stroke="none"/></svg>
+                Agents
+              </span>
+              <span class="tab">
+                <svg viewBox="0 0 20 20" width="19" height="19" fill="none" stroke="currentColor" stroke-width="1.7"><circle cx="10" cy="7" r="3.4"/><path d="M3 17.5a7 7 0 0 1 14 0"/></svg>
+                Settings
+              </span>
+            </nav>
+          </div>
+        </div>
+        <p class="stage-hint" id="stageHint">Live mock — swipe up or wait</p>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============ SPEED STRIP ============ -->
+  <section class="strip">
+    <div class="wrap strip-inner">
+      <div class="stat"><b>3s</b><span>Know what needs attention</span></div>
+      <div class="stat"><b>10s</b><span>Approve, reply, or review</span></div>
+      <div class="stat"><b>20s</b><span>Brief a new task</span></div>
+      <p class="strip-tag">Signal, not activity.</p>
+    </div>
+  </section>
+
+  <!-- ============ PRODUCT ============ -->
+  <section class="section wrap" id="feed">
+    <p class="kicker reveal">One card. One decision.</p>
+    <h2 class="reveal">Agent activity is infinite.<br>Your attention is not.</h2>
+    <p class="section-sub reveal">Zimlo is not another terminal, inbox, or dashboard. It is an editorial layer that keeps only what changes your judgment, your action, or your confidence.</p>
+
+    <div class="features">
+      <article class="feature reveal">
+        <div class="f-icon" aria-hidden="true">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><rect x="3" y="6" width="18" height="13" rx="2.5"/><path d="M7 3.5h10M7.5 10.5h9M7.5 14h6"/></svg>
+        </div>
+        <p class="f-num">01 / Editorial feed</p>
+        <h3>See the signal.<br>Lose the transcript.</h3>
+        <p>Zimlo edits agent activity into the few conclusions, decisions, and results that can change what you do next.</p>
+      </article>
+      <article class="feature reveal">
+        <div class="f-icon" aria-hidden="true">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M8 7l-4.5 5L8 17M16 7l4.5 5L16 17"/><path d="M12.5 4.5h-1l-1 15h1z" opacity="0.55"/></svg>
+        </div>
+        <p class="f-num">02 / Swipe to collaborate</p>
+        <h3>Browse like TikTok.<br>Respond like X.</h3>
+        <p>One focused card at a time. Swipe through important work, open the thread, approve, reply, or request a revision in seconds.</p>
+      </article>
+      <article class="feature reveal">
+        <div class="f-icon" aria-hidden="true">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9.5a6 6 0 0 1 12 0c0 5 2 6 2 6H4s2-1 2-6z"/><path d="M10.3 20a2 2 0 0 0 3.4 0"/><path d="M4 4l16 16" opacity="0.9"/></svg>
+        </div>
+        <p class="f-num">03 / Quiet by design</p>
+        <h3>Your phone speaks only<br>when you are needed.</h3>
+        <p>Approvals, failures, and results to review make the cut. Progress logs, heartbeats, and routine tool calls stay silent.</p>
+      </article>
+    </div>
+  </section>
+
+  <!-- ============ BEYOND THE FEED ============ -->
+  <section class="section wrap" id="app">
+    <p class="kicker reveal">Beyond the feed</p>
+    <h2 class="reveal">When a card needs more,<br>the app goes deeper.</h2>
+    <p class="section-sub reveal">The feed is the front door. Behind it: full task context, agent identities, and explicit control.</p>
+
+    <div class="panels">
+      <article class="panel reveal">
+        <div class="mini-mock" aria-hidden="true">
+          <div class="mm-head"><span>Tasks</span><em>3 active</em></div>
+          <div class="mm-task"><i class="dot run"></i><div><b>Retry logic for push relay</b><small>zimlo · running 12m</small></div><span class="mm-pill run">RUNNING</span></div>
+          <div class="mm-task"><i class="dot need"></i><div><b>Drop legacy_id migration</b><small>cloud · review bundle ready</small></div><span class="mm-pill need">REVIEW</span></div>
+          <div class="mm-task"><i class="dot done"></i><div><b>Offline outbox flush</b><small>ios · 3 files · tests green</small></div><span class="mm-pill done">DONE</span></div>
+        </div>
+        <p class="f-num">Tasks</p>
+        <h3>Every task, with proof attached.</h3>
+        <p>Status, latest conclusion, and next step — plus review bundles that carry the real changed files and test evidence, not a summary of one.</p>
+      </article>
+
+      <article class="panel reveal">
+        <div class="mini-mock" aria-hidden="true">
+          <div class="mm-head"><span>Agents</span><em>2 runtimes</em></div>
+          <div class="mm-agent"><span class="mm-avatar">M</span><div><b>Moss</b><small>zimlo project · ships small, tests first</small></div><span class="mm-pill run">CODEX</span></div>
+          <div class="mm-agent"><span class="mm-avatar coral-bg">K</span><div><b>Kerno</b><small>cloud project · migration specialist</small></div><span class="mm-pill run">CLAUDE</span></div>
+          <div class="mm-row dim"><span>Identities are editable per project</span></div>
+        </div>
+        <p class="f-num">Agents</p>
+        <h3>An identity per project, not a process list.</h3>
+        <p>Name, avatar, bio, and a default runtime for each project. Codex and Claude Code are runtimes your agents use — never strangers scanning your Mac.</p>
+      </article>
+
+      <article class="panel reveal">
+        <div class="mini-mock" aria-hidden="true">
+          <div class="mm-head"><span>Settings</span><em>2 devices</em></div>
+          <div class="mm-row"><span>Phone approvals</span><i class="mm-toggle on"></i></div>
+          <div class="mm-row"><span>Safe automation · zimlo</span><i class="mm-toggle on"></i></div>
+          <div class="mm-row"><span>Safe automation · cloud</span><i class="mm-toggle"></i></div>
+          <div class="mm-row dim"><span>iPhone · paired 2 min ago</span></div>
+        </div>
+        <p class="f-num">Settings</p>
+        <h3>Explicit control, nothing behind your back.</h3>
+        <p>QR pairing, per-device approvals, and per-project trust policies. Risky actions ask for a confirmation phrase — automation is opt-in, per project.</p>
+      </article>
+    </div>
+  </section>
+
+  <!-- ============ PRIVACY ============ -->
+  <section class="section privacy" id="privacy">
+    <div class="wrap">
+      <p class="kicker reveal">Local source of truth</p>
+      <h2 class="reveal">The cloud connects.<br><span class="lime">Your Mac remembers.</span></h2>
+      <p class="section-sub reveal">Task text, code, and results never enter Zimlo Cloud. When your Mac is online, Cloudflare relays an already-encrypted connection. When it is offline, your phone shows its local cache and queues actions for reconnect.</p>
+
+      <div class="diagram reveal" role="img" aria-label="Diagram: your Mac is the source of truth, connected end-to-end encrypted to your iPhone through a Cloudflare relay that cannot read task content.">
+        <div class="node">
+          <span class="node-icon">⌘</span>
+          <b>Your Mac</b>
+          <small>Source of truth</small>
+        </div>
+        <div class="pipe">
+          <span class="pipe-label">
+            <svg width="13" height="13" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.6"><rect x="2.5" y="6" width="9" height="6.5" rx="1.6"/><path d="M4.5 6V4.5a2.5 2.5 0 0 1 5 0V6"/></svg>
+            End-to-end encrypted
+          </span>
+          <div class="pipe-line" aria-hidden="true"></div>
+        </div>
+        <div class="node">
+          <span class="node-icon">
+            <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><rect x="6.5" y="2.5" width="11" height="19" rx="2.6"/><path d="M10.5 18.5h3"/></svg>
+          </span>
+          <b>Your iPhone</b>
+          <small>Approve · Reply · Review</small>
+        </div>
+      </div>
+      <p class="diagram-cap reveal">Cloudflare relay · ciphertext only · cannot read task content</p>
+
+      <ul class="badges reveal">
+        <li>No code storage</li>
+        <li>No prompt storage</li>
+        <li>No remote shell</li>
+      </ul>
+    </div>
+  </section>
+
+  <!-- ============ SETUP ============ -->
+  <section class="section wrap" id="setup">
+    <p class="kicker reveal">Zero-command onboarding</p>
+    <h2 class="reveal">Download. Open. Scan.<br>No bridge to understand.</h2>
+    <p class="section-sub reveal">You should never have to run <code>zimlo start</code>. Zimlo lives in the menu bar and explains each permission only when it matters.</p>
+
+    <ol class="steps">
+      <li class="reveal">
+        <span class="s-num">01</span>
+        <h3>Download Zimlo</h3>
+        <p>Open it once. From then on, it stays quietly in your menu bar.</p>
+      </li>
+      <li class="reveal">
+        <span class="s-num">02</span>
+        <h3>Connect your agents</h3>
+        <p>Zimlo finds Codex and Claude Code, and changes nothing until you approve.</p>
+      </li>
+      <li class="reveal">
+        <span class="s-num">03</span>
+        <h3>Scan one QR code</h3>
+        <p>Your iPhone and Mac do not need to be on the same Wi-Fi network.</p>
+      </li>
+      <li class="reveal">
+        <span class="s-num">04</span>
+        <h3>Start with real value</h3>
+        <p>Your first meaningful card — not another settings screen — completes onboarding.</p>
+      </li>
+    </ol>
+  </section>
+
+  <!-- ============ BETA ============ -->
+  <section class="beta" id="beta">
+    <div class="wrap beta-inner reveal">
+      <p class="kicker kicker-dark">macOS Beta</p>
+      <h2>Follow the work.<br>Skip the noise.</h2>
+      <p class="beta-sub">The macOS menu bar app and iPhone companion are opening to the first group of users. Zimlo is open source — every line is on GitHub.</p>
+      <div class="beta-actions">
+        <a class="btn btn-dark is-disabled" id="betaBtn" href="#" aria-disabled="true">Beta opening soon</a>
+        <a class="btn btn-outline-dark" href="https://github.com/rsgok/zimlo" target="_blank" rel="noopener">GitHub ↗</a>
+      </div>
+      <p class="beta-note" id="betaNote">Signed Mac download and iPhone TestFlight access will appear here when the Beta opens.</p>
+    </div>
+  </section>
+
+</main>
+
+<footer class="footer">
+  <div class="wrap foot-inner">
+    <a class="brand" href="#top" aria-label="Zimlo home">
+      <img src="assets/favicon.svg" alt="" class="brand-mark" width="22" height="22">
+      <span class="brand-word">zimlo</span>
+    </a>
+    <p class="foot-tag">The edited feed for your AI work.</p>
+    <div class="foot-right">
+      <a href="#feed">The feed</a>
+      <a href="#app">The app</a>
+      <a href="#privacy">Privacy</a>
+      <a href="https://github.com/rsgok/zimlo" target="_blank" rel="noopener">GitHub</a>
+      <span class="foot-copy">© 2026 Zimlo</span>
+    </div>
+  </div>
+</footer>
+
+<script src="main.js"></script>
+</body>
+</html>

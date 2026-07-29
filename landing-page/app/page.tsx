@@ -1,6 +1,8 @@
 /* eslint-disable @next/next/no-img-element */
 
 import { BetaDownload } from "./BetaDownload";
+import { WaitlistForm } from "./WaitlistForm";
+import { isWaitlistLive } from "./waitlist-live";
 
 const features = [
   {
@@ -23,6 +25,48 @@ const features = [
   },
 ];
 
+const demoCards = [
+  {
+    tone: "result",
+    status: "RESULT",
+    agent: "CODEX",
+    time: "2 MIN AGO",
+    index: "01",
+    title: "PR #128 is ready to merge",
+    lines: [
+      "43 tests passed · 0 unresolved review threads",
+      "Retry logic extracted into a shared helper · +212 −148",
+    ],
+    actions: ["Review diff", "Merge"],
+  },
+  {
+    tone: "approval",
+    status: "APPROVAL",
+    agent: "CLAUDE CODE",
+    time: "JUST NOW",
+    index: "02",
+    title: "Approve a low-risk command?",
+    lines: [
+      "git push origin feat/retry-logic — first push of this branch",
+      "Runs on your Mac · nothing leaves the machine",
+    ],
+    actions: ["Approve", "Decline"],
+  },
+  {
+    tone: "failure",
+    status: "FAILURE",
+    agent: "CODEX",
+    time: "8 MIN AGO",
+    index: "03",
+    title: "Tests failed in the auth flow",
+    lines: [
+      "2 of 41 tests failing · src/auth/session.test.ts",
+      "A fix is already drafted and waiting for your review",
+    ],
+    actions: ["Review fix", "Reply"],
+  },
+];
+
 const setupSteps = [
   ["Download Zimlo", "Open it once. From then on, it stays quietly in your menu bar."],
   ["Connect your agents", "Zimlo finds Codex and Claude Code, and changes nothing until you approve."],
@@ -42,7 +86,9 @@ function ArrowIcon() {
   return <span aria-hidden="true">↗</span>;
 }
 
-export default function Home() {
+export default async function Home() {
+  const waitlistLive = await isWaitlistLive();
+
   return (
     <main>
       <header className="site-header">
@@ -52,6 +98,7 @@ export default function Home() {
         </a>
         <nav aria-label="Primary navigation">
           <a href="#product">Product</a>
+          <a href="#demo">Demo</a>
           <a href="#privacy">Privacy</a>
           <a href="#setup">Get started</a>
         </nav>
@@ -75,14 +122,18 @@ export default function Home() {
             Zimlo turns Codex and Claude Code activity into a calm, swipeable feed.
             See one meaningful update at a time—then approve, reply, or keep scrolling.
           </p>
-          <div className="hero-actions">
-            <a className="button button--primary" href="#beta">
-              Join the Mac Beta <ArrowIcon />
-            </a>
-            <a className="button button--ghost" href="#product">
-              See how it works
-            </a>
-          </div>
+          {waitlistLive ? (
+            <WaitlistForm source="hero" tone="dark" />
+          ) : (
+            <div className="hero-actions">
+              <a className="button button--primary" href="#beta">
+                Join the Mac Beta <ArrowIcon />
+              </a>
+              <a className="button button--ghost" href="#demo">
+                See how it works
+              </a>
+            </div>
+          )}
           <div className="hero-trust">
             <span>No logs to babysit</span>
             <span>One card at a time</span>
@@ -97,7 +148,7 @@ export default function Home() {
             <div className="real-desktop-chrome" aria-hidden="true">
               <div className="window-dots"><i /><i /><i /></div>
               <span>127.0.0.1 · Zimlo</span>
-              <span>PRODUCT MOCK</span>
+              <span>ENCRYPTED · LOCAL FIRST</span>
             </div>
             <img src="/zimlo-feed-desktop-en.png" width={1280} height={720} alt="Zimlo's English one-card Feed on macOS" />
           </figure>
@@ -106,7 +157,7 @@ export default function Home() {
             <div className="real-phone-screen">
               <img src="/zimlo-feed-mobile-en.png" width={393} height={852} alt="Zimlo's English mobile Feed at 393 by 852 pixels" />
             </div>
-            <figcaption>393 × 852 · PRODUCT-ACCURATE MOCK</figcaption>
+            <figcaption>393 × 852 · ONE CARD AT A TIME</figcaption>
           </figure>
         </div>
       </section>
@@ -128,10 +179,10 @@ export default function Home() {
         <div className="attention-demo">
           <figure className="attention-product-capture">
             <div className="attention-product-device">
-              <img src="/zimlo-feed-mobile-en.png" width={393} height={852} alt="An English mock of Zimlo's actual one-card mobile Feed" />
+              <img src="/zimlo-feed-mobile-en.png" width={393} height={852} alt="An English preview of Zimlo's actual one-card mobile Feed" />
             </div>
             <figcaption>
-              <span>PRODUCT-ACCURATE ENGLISH MOCK</span>
+              <span>ENGLISH FEED PREVIEW</span>
               <strong>One viewport. One card. One next move.</strong>
             </figcaption>
           </figure>
@@ -154,6 +205,37 @@ export default function Home() {
               <h3>{feature.title}</h3>
               <p>{feature.body}</p>
               <span className="feature-arrow">↗</span>
+            </article>
+          ))}
+        </div>
+      </section>
+
+      <section className="demo-section" id="demo">
+        <div className="section-intro">
+          <span className="section-kicker">WHAT THE FEED ACTUALLY SAYS</span>
+          <h2>Real cards.<br />Real next moves.</h2>
+          <p>Not screenshots of a terminal—three kinds of cards Zimlo pushes to your phone: a result to review, an approval to sign off, and a failure with a fix already attached.</p>
+        </div>
+
+        <div className="demo-card-grid">
+          {demoCards.map((card) => (
+            <article className={`demo-card demo-card--${card.tone}`} key={card.index}>
+              <div className="demo-card-topline">
+                <span className="demo-card-status">{card.status}</span>
+                <span className="demo-card-agent">{card.agent}</span>
+                <span className="demo-card-time">{card.time}</span>
+              </div>
+              <h3>{card.title}</h3>
+              <ul>
+                {card.lines.map((line) => (
+                  <li key={line}>{line}</li>
+                ))}
+              </ul>
+              <div className="demo-card-actions">
+                <span className="demo-card-action demo-card-action--primary">{card.actions[0]}</span>
+                <span className="demo-card-action">{card.actions[1]}</span>
+                <span className="demo-card-index" aria-hidden="true">{card.index} / 03</span>
+              </div>
             </article>
           ))}
         </div>
@@ -219,7 +301,11 @@ export default function Home() {
         <span className="section-kicker">MACOS BETA</span>
         <h2>Follow the work.<br />Skip the noise.</h2>
         <p>The macOS menu bar app and iPhone companion are opening to the first group of users.</p>
-        <BetaDownload />
+        {waitlistLive ? (
+          <WaitlistForm source="beta" tone="acid" />
+        ) : (
+          <BetaDownload />
+        )}
       </section>
 
       <footer className="site-footer">
@@ -228,6 +314,10 @@ export default function Home() {
           <span>ZIMLO</span>
         </a>
         <p>The edited feed for your AI work.</p>
+        <nav aria-label="Footer navigation">
+          <a href="https://github.com/rsgok/zimlo" rel="noopener noreferrer">GitHub</a>
+          <a href="/privacy">Privacy policy</a>
+        </nav>
         <span>© 2026 Zimlo</span>
       </footer>
     </main>
