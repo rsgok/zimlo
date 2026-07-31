@@ -122,7 +122,9 @@ final class OutboxFlowTests: XCTestCase {
         let entry = model.outboxEntries[0]
         XCTAssertTrue(CommandCancelRules.isOutboxEntryCancelable(entry, snapshot: model.snapshot))
         XCTAssertTrue(model.cancelOutboxEntry(entry))
-        XCTAssertEqual(model.pendingOutboxCount, 0)
+        XCTAssertFalse(model.outboxEntries.contains { $0.id == entry.id }, "原指令应从 outbox 移除")
+        XCTAssertEqual(model.pendingOutboxCount, 1, "撤回意图必须留在 outbox，等待 Bridge 确认")
+        XCTAssertEqual(model.outboxEntries.first?.command.type, "task.command.cancel")
     }
 
     func testCancelPersistsDistinctIntentWhenServerSnapshotHasNotArrived() {
