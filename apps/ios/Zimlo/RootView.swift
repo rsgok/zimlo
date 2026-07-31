@@ -38,54 +38,53 @@ struct RootView: View {
             }
             .background(ZColor.ink.ignoresSafeArea())
             .safeAreaInset(edge: .top, spacing: 0) {
-                VStack(spacing: 8) {
-                    // 顶层页面由 BottomBar 表达当前位置，不重复常驻标题、头像和
-                    // 在线状态；详情页仍保留返回、标题和任务状态。
-                    if isShowingDetail {
-                        AppTopBar(
-                            title: topBarTitle,
-                            connected: model.bridge.connected,
-                            connectionLabel: connectionLabel,
-                            onBack: clearDetail,
-                            status: detailStatus,
-                            onRetry: { model.bridge.retryNow() }
-                        )
-                    }
-
-                    statusBanners
-                        .padding(.horizontal, 14)
+                // 详情 header 是页面结构，需要正常占位；连接、通知和错误消息是
+                // 浮层，不能通过 safeAreaInset 改变所有页面的内容坐标。
+                if isShowingDetail {
+                    AppTopBar(
+                        title: topBarTitle,
+                        connected: model.bridge.connected,
+                        connectionLabel: connectionLabel,
+                        onBack: clearDetail,
+                        status: detailStatus,
+                        onRetry: { model.bridge.retryNow() }
+                    )
                 }
-                .frame(maxWidth: .infinity)
-                .background(ZColor.ink)
             }
             .overlay(alignment: .bottom) {
-                if let notice = model.notice {
-                    HStack(spacing: 12) {
-                        Text(notice).lineLimit(2)
-                        if let action = model.noticeAction {
-                            Button(action.label) {
-                                model.clearNotice()
-                                action.perform()
+                VStack(spacing: 8) {
+                    statusBanners
+                    if let notice = model.notice {
+                        HStack(spacing: 12) {
+                            Text(notice).lineLimit(2)
+                            if let action = model.noticeAction {
+                                Button(action.label) {
+                                    model.clearNotice()
+                                    action.perform()
+                                }
+                                .font(ZFont.caption)
+                                .padding(.horizontal, 10).padding(.vertical, 6)
+                                .background(ZColor.ink)
+                                .foregroundStyle(ZColor.acid)
+                                .clipShape(Capsule())
                             }
-                            .font(ZFont.caption)
-                            .padding(.horizontal, 10).padding(.vertical, 6)
-                            .background(ZColor.ink)
-                            .foregroundStyle(ZColor.acid)
-                            .clipShape(Capsule())
+                        }
+                        .font(ZFont.caption)
+                        .foregroundStyle(ZColor.ink)
+                        .padding(.horizontal, 16).padding(.vertical, 11)
+                        .background(ZColor.acid)
+                        .clipShape(Capsule())
+                        .task(id: notice) {
+                            // 带撤销操作的提示停留 6 秒，普通提示 4 秒。
+                            try? await Task.sleep(for: .seconds(model.noticeAction == nil ? 4 : 6))
+                            model.clearNotice(notice)
                         }
                     }
-                    .font(ZFont.caption)
-                    .foregroundStyle(ZColor.ink)
-                    .padding(.horizontal, 16).padding(.vertical, 11)
-                    .background(ZColor.acid)
-                    .clipShape(Capsule())
-                    .padding(.bottom, 74)
-                    .task(id: notice) {
-                        // 带撤销操作的提示停留 6 秒，普通提示 4 秒。
-                        try? await Task.sleep(for: .seconds(model.noticeAction == nil ? 4 : 6))
-                        model.clearNotice(notice)
-                    }
                 }
+                .frame(maxWidth: .infinity)
+                .padding(.horizontal, 14)
+                .padding(.bottom, 74)
+                .zIndex(10)
             }
             .sheet(isPresented: $model.showingNewTask) {
                 NewTaskView(model: model)
