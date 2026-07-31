@@ -1124,8 +1124,20 @@ export class ZimloStore {
 
   markFeedSeen(deviceId: string, postId: string): boolean {
     return this.database.prepare(`
-      INSERT OR IGNORE INTO feed_seen(device_id, post_id, seen_at) VALUES (?, ?, ?)
-    `).run(deviceId, postId, new Date().toISOString()).changes > 0;
+      INSERT OR IGNORE INTO feed_seen(device_id, post_id, seen_at)
+      SELECT ?, ?, ?
+      WHERE EXISTS (
+        SELECT 1 FROM devices WHERE id = ? AND revoked_at IS NULL
+      ) AND EXISTS (
+        SELECT 1 FROM feed_posts WHERE id = ?
+      )
+    `).run(
+      deviceId,
+      postId,
+      new Date().toISOString(),
+      deviceId,
+      postId,
+    ).changes > 0;
   }
 
   listSeenPostIds(deviceId: string): string[] {

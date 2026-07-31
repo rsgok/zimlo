@@ -707,6 +707,7 @@ private struct ZDivider: View {
 private struct PairingCard: View {
     @ObservedObject var service: ServiceController
     let isPaired: Bool
+    @State private var copiedPairingLink: String?
 
     var body: some View {
         VStack(spacing: 13) {
@@ -770,9 +771,25 @@ private struct PairingCard: View {
             if !isPaired {
                 OperationIssueView(issue: service.pairingIssue, alignment: .center)
                     .frame(width: 218, height: 34)
-                SecondaryButton("刷新二维码", disabled: service.pairingBusy) {
-                    Task { await service.createPairing() }
+                VStack(spacing: 8) {
+                    HStack(spacing: 8) {
+                        copyButton(
+                            id: "default",
+                            title: service.pairing?.localPairUrl == nil ? "复制连接码" : "复制通用码",
+                            link: service.pairing?.pairUrl
+                        )
+                        if let localPairUrl = service.pairing?.localPairUrl {
+                            copyButton(id: "local", title: "复制本地码", link: localPairUrl)
+                        }
+                    }
+                    refreshPairingButton
+                    if service.pairing?.localPairUrl != nil {
+                        Text("模拟器或同一 Wi-Fi 请使用本地码")
+                            .font(.system(size: 11, weight: .semibold))
+                            .foregroundStyle(ZColor.muted)
+                    }
                 }
+                .frame(width: 250)
             }
         }
         .task(id: service.pairing?.expiresAt) {
@@ -785,6 +802,30 @@ private struct PairingCard: View {
                   service.pairing?.expiresAt == pairing.expiresAt,
                   !isPaired else { return }
             await service.createPairing()
+        }
+    }
+
+    private func copyButton(id: String, title: String, link: String?) -> some View {
+        SecondaryButton(
+            copiedPairingLink == id ? "已复制" : title,
+            disabled: link == nil || service.pairingBusy
+        ) {
+            guard let link else { return }
+            NSPasteboard.general.clearContents()
+            NSPasteboard.general.setString(link, forType: .string)
+            copiedPairingLink = id
+            Task {
+                try? await Task.sleep(for: .seconds(2))
+                guard !Task.isCancelled else { return }
+                if copiedPairingLink == id { copiedPairingLink = nil }
+            }
+        }
+    }
+
+    private var refreshPairingButton: some View {
+        SecondaryButton("刷新二维码", disabled: service.pairingBusy) {
+            copiedPairingLink = nil
+            Task { await service.createPairing() }
         }
     }
 }

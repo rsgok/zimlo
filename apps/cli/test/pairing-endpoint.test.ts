@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { selectPairingEndpoint } from "../src/pairing-endpoint.js";
+import { pairingURLForBase, selectPairingEndpoint } from "../src/pairing-endpoint.js";
 
 describe("selectPairingEndpoint", () => {
   it("prefers cloud when it is ready", () => {
@@ -37,5 +37,19 @@ describe("selectPairingEndpoint", () => {
       lanHost: null,
       port: 4747,
     })).toBeNull();
+  });
+});
+
+describe("pairingURLForBase", () => {
+  it("keeps the one-time secret fragment while switching to the LAN Bridge", () => {
+    expect(pairingURLForBase(
+      "https://relay.example/#pairingId=p1&secret=s1&bridgeKey=k1",
+      "http://192.168.1.8:4747",
+    )).toBe("http://192.168.1.8:4747/#pairingId=p1&secret=s1&bridgeKey=k1");
+  });
+
+  it("rejects malformed or fragment-free pairing URLs", () => {
+    expect(pairingURLForBase("not a URL", "http://192.168.1.8:4747")).toBeNull();
+    expect(pairingURLForBase("https://relay.example/", "http://192.168.1.8:4747")).toBeNull();
   });
 });

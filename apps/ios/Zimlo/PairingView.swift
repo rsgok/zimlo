@@ -4,17 +4,37 @@ import UIKit
 
 struct PairingView: View {
     @ObservedObject var model: AppModel
+    var onCancel: (() -> Void)? = nil
+    var onPaired: (() -> Void)? = nil
+    var showsExistingError = true
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     @State private var link = ""
     @State private var scanning = false
     @State private var connecting = false
+    @State private var inputIssue: String?
+    @State private var attemptedPairing = false
     @FocusState private var linkFocused: Bool
 
     var body: some View {
         GeometryReader { geometry in
             ScrollView {
                 VStack(spacing: 22) {
-                    Spacer(minLength: dynamicTypeSize.isAccessibilitySize ? 8 : 36)
+                    if let onCancel {
+                        HStack {
+                            Spacer()
+                            Button(action: onCancel) {
+                                Image(systemName: "xmark")
+                                    .font(.body.weight(.bold))
+                                    .frame(width: 44, height: 44)
+                                    .background(ZColor.control)
+                                    .clipShape(Circle())
+                            }
+                            .buttonStyle(.plain)
+                            .accessibilityLabel("关闭重新配对")
+                        }
+                    } else {
+                        Spacer(minLength: dynamicTypeSize.isAccessibilitySize ? 8 : 36)
+                    }
 
                     ZimloAvatar(size: dynamicTypeSize.isAccessibilitySize ? 64 : 72)
                         .accessibilityHidden(true)
@@ -23,7 +43,7 @@ struct PairingView: View {
                         Text("连接你的 Mac")
                             .font(ZFont.title)
                             .fixedSize(horizontal: false, vertical: true)
-                        Text("在 Mac 上生成二维码后直接扫描。无需接入同一网络，密钥只保存在你的设备上。")
+                        Text("扫码最快；也可以在 Mac 复制连接码后粘贴。模拟器请复制本地码，密钥只保存在你的设备上。")
                             .font(ZFont.subheadline)
                             .foregroundStyle(ZColor.muted)
                             .multilineTextAlignment(.center)
@@ -42,7 +62,7 @@ struct PairingView: View {
                     .accessibilityHint("打开相机，扫描 Mac 上显示的二维码")
 
                     if dynamicTypeSize.isAccessibilitySize {
-                        Text("或粘贴配对链接")
+                        Text("或使用连接码")
                             .font(ZFont.footnote.weight(.semibold))
                             .foregroundStyle(ZColor.muted)
                             .multilineTextAlignment(.center)
@@ -50,7 +70,7 @@ struct PairingView: View {
                     } else {
                         HStack {
                             Rectangle().fill(ZColor.line).frame(height: 1)
-                            Text("或粘贴配对链接")
+                            Text("或使用连接码")
                                 .font(ZFont.caption2)
                                 .foregroundStyle(ZColor.muted)
                                 .fixedSize()
@@ -58,19 +78,42 @@ struct PairingView: View {
                         }
                     }
 
-                    TextField("粘贴 Zimlo 配对链接", text: $link)
-                        .focused($linkFocused)
-                        .textInputAutocapitalization(.never)
-                        .textContentType(.URL)
-                        .keyboardType(.URL)
-                        .autocorrectionDisabled()
-                        .submitLabel(.go)
-                        .font(.footnote.monospaced())
-                        .padding(14)
-                        .background(ZColor.control)
-                        .clipShape(RoundedRectangle(cornerRadius: ZRadius.control, style: .continuous))
-                        .accessibilityLabel("Zimlo 配对链接")
-                        .onSubmit { connect(link) }
+                    HStack(spacing: 9) {
+                        TextField("粘贴 Mac 上复制的连接码", text: $link)
+                            .focused($linkFocused)
+                            .textInputAutocapitalization(.never)
+                            .textContentType(.URL)
+                            .keyboardType(.URL)
+                            .autocorrectionDisabled()
+                            .submitLabel(.go)
+                            .font(.footnote.monospaced())
+                            .padding(14)
+                            .background(ZColor.control)
+                            .clipShape(RoundedRectangle(cornerRadius: ZRadius.control, style: .continuous))
+                            .accessibilityLabel("Zimlo 连接码")
+                            .onSubmit { connect(link) }
+
+                        Button(action: pastePairingLink) {
+                            Label("粘贴", systemImage: "doc.on.clipboard")
+                                .font(ZFont.caption.weight(.bold))
+                                .padding(.horizontal, 12)
+                                .frame(minWidth: 70, minHeight: 48)
+                                .foregroundStyle(ZColor.acid)
+                                .background(ZColor.control)
+                                .clipShape(RoundedRectangle(cornerRadius: ZRadius.control, style: .continuous))
+                        }
+                        .buttonStyle(.plain)
+                        .accessibilityLabel("粘贴连接码")
+                        .accessibilityHint("读取剪贴板中由 Mac Zimlo 复制的连接码")
+                    }
+
+                    if let inputIssue {
+                        Text(inputIssue)
+                            .font(ZFont.footnote.weight(.semibold))
+                            .foregroundStyle(ZColor.coralText)
+                            .multilineTextAlignment(.center)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
 
                     Button {
                         connect(link)
@@ -83,7 +126,9 @@ struct PairingView: View {
                     .buttonStyle(PairingButtonStyle())
                     .disabled(connecting || PairingLinkRules.validatedURL(link) == nil)
 
-                    if !connecting, let error = model.bridge.error {
+                    if !connecting,
+                       (showsExistingError || attemptedPairing),
+                       let error = model.bridge.error {
                         Text(userFacingPairingError(error))
                             .font(ZFont.footnote.weight(.semibold))
                             .foregroundStyle(ZColor.coralText)
@@ -129,15 +174,36 @@ struct PairingView: View {
             .ignoresSafeArea()
         }
         .onOpenURL { connect($0.absoluteString) }
+        .onChange(of: link) { _, _ in inputIssue = nil }
     }
 
     private func connect(_ value: String) {
-        guard !connecting, let url = PairingLinkRules.validatedURL(value) else { return }
+        guard !connecting else { return }
+        guard let url = PairingLinkRules.validatedURL(value) else {
+            inputIssue = "连接码无效。请回到 Mac 刷新二维码后重新复制。"
+            return
+        }
         linkFocused = false
+        inputIssue = nil
+        attemptedPairing = true
         connecting = true
         Task {
             await model.bridge.pair(using: url)
             connecting = false
+            if !model.bridge.pairingRequired, model.bridge.error == nil {
+                onPaired?()
+            }
+        }
+    }
+
+    private func pastePairingLink() {
+        guard let value = UIPasteboard.general.string, !value.isEmpty else {
+            inputIssue = "剪贴板里没有连接码。请先在 Mac 点击“复制连接码”。"
+            return
+        }
+        link = value
+        if PairingLinkRules.validatedURL(value) == nil {
+            inputIssue = "剪贴板里的内容不是有效连接码，请在 Mac 重新复制。"
         }
     }
 
@@ -149,10 +215,10 @@ struct PairingView: View {
         if normalized.contains("could not connect")
             || normalized.contains("couldn’t connect")
             || normalized.contains("connection refused") {
-            return "无法连接 Mac，请确认 Zimlo Bridge 正在运行后重试。"
+            return "无法连接 Mac。请打开 Mac 上的 Zimlo 并刷新连接码；本地连接还需确认两台设备在同一 Wi-Fi。"
         }
         if normalized.contains("timed out") || normalized.contains("timeout") {
-            return "连接 Mac 超时，请检查网络后重试。"
+            return "连接 Mac 超时。请在 Mac 刷新连接码后重试；本地连接需保持同一 Wi-Fi。"
         }
         return error
     }

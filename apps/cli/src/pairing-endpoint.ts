@@ -20,3 +20,17 @@ export function selectPairingEndpoint(input: {
   }
   return null;
 }
+
+export function pairingURLForBase(pairURL: string, baseURL: string): string | null {
+  try {
+    const source = new URL(pairURL);
+    if (!source.hash) return null;
+    const target = new URL(baseURL);
+    target.pathname = "/";
+    target.search = "";
+    target.hash = source.hash;
+    return target.toString();
+  } catch {
+    return null;
+  }
+}

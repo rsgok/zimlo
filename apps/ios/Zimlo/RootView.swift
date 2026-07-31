@@ -77,6 +77,13 @@ struct RootView: View {
                     .presentationDragIndicator(.visible)
                     .presentationBackground(ZColor.paper)
             }
+            .sheet(isPresented: $model.showingConnectionRecovery) {
+                ConnectionRecoveryView(model: model)
+                    .environment(\.colorScheme, .dark)
+                    .presentationDetents([.large])
+                    .presentationDragIndicator(.visible)
+                    .presentationBackground(ZColor.paper)
+            }
             .onChange(of: model.showingNewTask) { _, showing in
                 if !showing { model.newTaskProjectId = nil }
             }
@@ -134,18 +141,18 @@ struct RootView: View {
                 model.clearNotice(expectedGeneration: generation)
             }
         } else if let error = model.bridge.error {
-            Button { model.bridge.retryNow() } label: {
+            Button { model.showingConnectionRecovery = true } label: {
                 ViewThatFits(in: .horizontal) {
                     HStack(spacing: 9) {
                         Image(systemName: "exclamationmark.triangle.fill")
                         Text(userFacingBridgeError(error)).lineLimit(2)
                         Spacer(minLength: 0)
-                        Text("重试").bold()
+                        Text("处理").bold()
                     }
                     VStack(alignment: .leading, spacing: 5) {
                         Label(userFacingBridgeError(error), systemImage: "exclamationmark.triangle.fill")
                             .fixedSize(horizontal: false, vertical: true)
-                        Text("重试").bold()
+                        Text("查看重连步骤").bold()
                     }
                 }
             }
@@ -155,11 +162,14 @@ struct RootView: View {
             .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
             .background(ZColor.coral)
             .clipShape(RoundedRectangle(cornerRadius: ZRadius.control, style: .continuous))
-            .accessibilityHint("重新连接 Mac")
+            .accessibilityHint("查看重连步骤，也可以使用新的连接码重新配对")
         } else if model.pendingOutboxCount > 0 || !model.bridge.connected {
             Button {
-                if !model.bridge.connected { model.bridge.retryNow() }
-                if model.pendingOutboxCount > 0 { model.showingOutbox = true }
+                if !model.bridge.connected {
+                    model.showingConnectionRecovery = true
+                } else if model.pendingOutboxCount > 0 {
+                    model.showingOutbox = true
+                }
             } label: {
                 ViewThatFits(in: .horizontal) {
                     HStack(spacing: 8) {
@@ -168,7 +178,7 @@ struct RootView: View {
                             Text(statusLine)
                         }
                         if model.pendingOutboxCount > 0 { Text("\(model.pendingOutboxCount) 条").bold() }
-                        if !model.bridge.connected { Text("点按重连").foregroundStyle(ZColor.muted) }
+                        if !model.bridge.connected { Text("查看重连步骤").foregroundStyle(ZColor.muted) }
                     }
                     VStack(alignment: .leading, spacing: 4) {
                         HStack(spacing: 8) {
@@ -180,7 +190,7 @@ struct RootView: View {
                         }
                         HStack(spacing: 8) {
                             if model.pendingOutboxCount > 0 { Text("\(model.pendingOutboxCount) 条待确认").bold() }
-                            if !model.bridge.connected { Text("点按重连").foregroundStyle(ZColor.muted) }
+                            if !model.bridge.connected { Text("查看重连步骤").foregroundStyle(ZColor.muted) }
                         }
                     }
                 }
@@ -237,10 +247,10 @@ struct RootView: View {
     private func userFacingBridgeError(_ error: String) -> String {
         let normalized = error.lowercased()
         if normalized.contains("could not connect") || normalized.contains("connection refused") {
-            return "无法连接 Mac，请确认 Bridge 正在运行"
+            return "无法连接 Mac，点按查看重连步骤"
         }
         if normalized.contains("timed out") || normalized.contains("timeout") {
-            return "连接 Mac 超时，点按上方状态重试"
+            return "连接 Mac 超时，点按查看重连步骤"
         }
         return error
     }

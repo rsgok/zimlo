@@ -120,6 +120,7 @@ final class BridgeClient: ObservableObject {
 
     func pair(using pairingURL: URL) async {
         intentionallyStopped = false
+        error = nil
         startupTask?.cancel()
         startupTask = nil
         startupGeneration = nil

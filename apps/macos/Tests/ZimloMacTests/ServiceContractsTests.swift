@@ -140,6 +140,13 @@ final class PairingPayloadTests: XCTestCase {
     func testDecodesLANTransport() throws {
         let payload = try JSONDecoder().decode(PairingPayload.self, from: Data(#"{"pairUrl":"http://192.168.1.8:4747/#pair","qrDataUrl":"data:image/png;base64,AA==","expiresAt":"2026-08-01T00:00:00.000Z","transport":"lan"}"#.utf8))
         XCTAssertEqual(payload.transport, .lan)
+        XCTAssertNil(payload.localPairUrl)
+    }
+
+    func testDecodesCloudPayloadWithLocalFallback() throws {
+        let payload = try JSONDecoder().decode(PairingPayload.self, from: Data(#"{"pairUrl":"https://cloud.example/#pair","localPairUrl":"http://192.168.1.8:4747/#pair","qrDataUrl":"data:image/png;base64,AA==","expiresAt":"2026-08-01T00:00:00.000Z","transport":"cloud"}"#.utf8))
+        XCTAssertEqual(payload.transport, .cloud)
+        XCTAssertEqual(payload.localPairUrl, "http://192.168.1.8:4747/#pair")
     }
 
     func testOlderBridgePayloadRemainsCompatible() throws {

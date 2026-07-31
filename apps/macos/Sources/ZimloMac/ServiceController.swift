@@ -69,6 +69,7 @@ enum PairingTransport: String, Codable {
 
 struct PairingPayload: Codable {
     let pairUrl: String
+    let localPairUrl: String?
     let qrDataUrl: String
     let expiresAt: String
     let transport: PairingTransport?

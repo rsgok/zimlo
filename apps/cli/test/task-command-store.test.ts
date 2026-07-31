@@ -69,6 +69,9 @@ describe("task command and per-device feed state", () => {
     };
     store.insertFeedPost(post);
     expect(store.markFeedSeen("device-a", "post-a")).toBe(true);
+    expect(store.markFeedSeen("device-a", "post-a")).toBe(false);
+    expect(store.markFeedSeen("device-a", "missing-post")).toBe(false);
+    expect(store.markFeedSeen("missing-device", "post-a")).toBe(false);
     expect(store.listSeenPostIds("device-a")).toEqual(["post-a"]);
     expect(store.listSeenPostIds("device-b")).toEqual([]);
     expect(store.dismissFeedItem("device-a", "post:post-a")).toBe(true);

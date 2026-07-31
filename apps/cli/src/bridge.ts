@@ -14,7 +14,7 @@ import { DeviceManager, type PairingResult } from "./device-manager.js";
 import { applyFeedDismissSet } from "./feed-dismiss.js";
 import { inspectIntegrationStatuses, installCliIntegrations } from "./integration-status.js";
 import { isLoopbackAddress, isTrustedLanAddress, preferredLanAddress } from "./network.js";
-import { selectPairingEndpoint, type PairingTransport } from "./pairing-endpoint.js";
+import { pairingURLForBase, selectPairingEndpoint, type PairingTransport } from "./pairing-endpoint.js";
 import { RuntimeHub } from "./runtime.js";
 import { SecureSocket } from "./secure-socket.js";
 import { TaskCommandService } from "./task-command-service.js";
@@ -192,7 +192,16 @@ export class BridgeServer {
           this.connections.add(authenticated);
           authenticated.send({ type: "session.snapshot", snapshot: this.runtime.snapshot(authenticated.deviceId!) });
         },
-        onCommand: (authenticated, command) => void this.handleCommand(authenticated, command),
+        onCommand: (authenticated, command) => {
+          void this.handleCommand(authenticated, command).catch((error: unknown) => {
+            console.error(`[zimlo:bridge] ${command.type} 处理失败:`, error);
+            authenticated.send({
+              type: "error",
+              code: "command_failed",
+              message: "操作未完成，请稍后重试。",
+            });
+          });
+        },
       });
       socket.once("close", () => this.connections.delete(connection));
     });
@@ -429,6 +438,8 @@ export class BridgeServer {
       }
       case "feed.seen": {
         this.runtime.store.markFeedSeen(deviceId, command.postId);
+        // A cached receipt can outlive its post. Acknowledge the no-op so the
+        // client can retire that stale outbox entry instead of replaying it.
         connection.send({ type: "feed.seen.updated", postId: command.postId });
         return;
       }
@@ -611,19 +622,24 @@ export class BridgeServer {
     qrDataUrl: string;
     expiresAt: string;
     transport: PairingTransport;
+    localPairUrl?: string;
   }> {
     const cloudReady = this.cloud.enabled && await this.cloud.ensureReady();
+    const lanHost = preferredLanAddress();
     const endpoint = selectPairingEndpoint({
       cloudReady,
       cloudURL: this.cloud.relayURL,
       lanEnabled: this.options.lan,
-      lanHost: preferredLanAddress(),
+      lanHost,
       port: this.options.port,
     });
     if (!endpoint) {
       throw new Error("云端暂时无法连接，请检查网络后重试。");
     }
     const result = this.devices.createPairing(endpoint.baseURL);
+    const localPairUrl = endpoint.transport === "cloud" && this.options.lan && lanHost
+      ? pairingURLForBase(result.pairUrl, `http://${lanHost}:${this.options.port}`)
+      : null;
     if (endpoint.transport === "cloud") {
       const registered = await this.cloud.registerPairing(
         result.pairingId,
@@ -638,6 +654,7 @@ export class BridgeServer {
       qrDataUrl: await QRCode.toDataURL(result.pairUrl, { margin: 1, width: 320 }),
       expiresAt: result.expiresAt,
       transport: endpoint.transport,
+      ...(localPairUrl ? { localPairUrl } : {}),
     };
   }
 

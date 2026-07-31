@@ -740,6 +740,157 @@ private enum SettingsSheet: String, Identifiable {
     var id: String { rawValue }
 }
 
+struct ConnectionRecoveryView: View {
+    @ObservedObject var model: AppModel
+    @Environment(\.dismiss) private var dismiss
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+    @State private var isRePairing = false
+    @State private var isRetrying = false
+
+    var body: some View {
+        Group {
+            if isRePairing {
+                PairingView(
+                    model: model,
+                    onCancel: { isRePairing = false },
+                    onPaired: { dismiss() },
+                    showsExistingError: false
+                )
+            } else {
+                recoveryGuide
+            }
+        }
+        .onChange(of: model.bridge.connected) { _, connected in
+            if connected { dismiss() }
+        }
+    }
+
+    private var recoveryGuide: some View {
+        NavigationStack {
+            ScrollView {
+                VStack(alignment: .leading, spacing: 18) {
+                    VStack(alignment: .leading, spacing: 8) {
+                        Label("当前未连接", systemImage: "wifi.exclamationmark")
+                            .font(ZFont.title3)
+                            .foregroundStyle(ZColor.coralText)
+                        Text("先尝试使用现有配对重连；如果 Mac 重装过、设备已撤销或仍然失败，请生成新的连接码重新配对。")
+                            .font(ZFont.subheadline)
+                            .foregroundStyle(ZColor.muted)
+                            .lineSpacing(3)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                    .padding(16)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .background(ZColor.raised)
+                    .overlay(RoundedRectangle(cornerRadius: ZRadius.inner).stroke(ZColor.line))
+                    .clipShape(RoundedRectangle(cornerRadius: ZRadius.inner, style: .continuous))
+
+                    VStack(alignment: .leading, spacing: 0) {
+                        recoveryStep(
+                            number: "1",
+                            title: "打开 Mac 上的 Zimlo",
+                            detail: "确认 Dock 或菜单栏中的 Zimlo 正在运行。"
+                        )
+                        Divider().overlay(ZColor.line).padding(.leading, 52)
+                        recoveryStep(
+                            number: "2",
+                            title: "进入“连接手机”",
+                            detail: "刷新二维码；真机可复制通用码，模拟器或同一 Wi-Fi 请复制本地码。"
+                        )
+                        Divider().overlay(ZColor.line).padding(.leading, 52)
+                        recoveryStep(
+                            number: "3",
+                            title: "重新连接",
+                            detail: "真机可扫码；模拟器请选择粘贴连接码。使用本地连接时，两台设备需在同一 Wi-Fi。"
+                        )
+                    }
+                    .background(ZColor.raised)
+                    .overlay(RoundedRectangle(cornerRadius: ZRadius.inner).stroke(ZColor.line))
+                    .clipShape(RoundedRectangle(cornerRadius: ZRadius.inner, style: .continuous))
+                }
+                .padding(16)
+                .padding(.bottom, dynamicTypeSize.isAccessibilitySize ? 190 : 132)
+            }
+            .scrollIndicators(.hidden)
+            .background(ZColor.paper)
+            .navigationTitle("重新连接 Mac")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("关闭") { dismiss() }
+                }
+            }
+            .safeAreaInset(edge: .bottom, spacing: 0) {
+                VStack(spacing: 9) {
+                    Button(action: retryExistingPairing) {
+                        HStack(spacing: 8) {
+                            if isRetrying { ProgressView().tint(ZColor.onAccent) }
+                            Text(isRetrying ? "正在重试" : "立即重试")
+                        }
+                        .font(ZFont.callout.weight(.black))
+                        .frame(maxWidth: .infinity, minHeight: 50)
+                        .foregroundStyle(ZColor.onAccent)
+                        .background(ZColor.acid)
+                        .clipShape(RoundedRectangle(cornerRadius: ZRadius.control, style: .continuous))
+                    }
+                    .buttonStyle(.plain)
+                    .disabled(isRetrying)
+
+                    Button {
+                        isRetrying = false
+                        isRePairing = true
+                    } label: {
+                        Label("使用新连接码", systemImage: "qrcode")
+                            .font(ZFont.callout.weight(.bold))
+                            .frame(maxWidth: .infinity, minHeight: 48)
+                            .foregroundStyle(ZColor.ink)
+                            .background(ZColor.control)
+                            .overlay(RoundedRectangle(cornerRadius: ZRadius.control).stroke(ZColor.line))
+                            .clipShape(RoundedRectangle(cornerRadius: ZRadius.control, style: .continuous))
+                    }
+                    .buttonStyle(.plain)
+                }
+                .padding(.horizontal, 16)
+                .padding(.top, 12)
+                .padding(.bottom, 10)
+                .background(.ultraThinMaterial)
+            }
+        }
+    }
+
+    private func recoveryStep(number: String, title: String, detail: String) -> some View {
+        HStack(alignment: .top, spacing: 12) {
+            Text(number)
+                .font(ZFont.caption.weight(.black))
+                .foregroundStyle(ZColor.onAccent)
+                .frame(width: 30, height: 30)
+                .background(ZColor.acid)
+                .clipShape(Circle())
+            VStack(alignment: .leading, spacing: 4) {
+                Text(title).font(ZFont.subheadline.weight(.bold))
+                Text(detail)
+                    .font(ZFont.footnote)
+                    .foregroundStyle(ZColor.muted)
+                    .lineSpacing(2)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+        .foregroundStyle(ZColor.ink)
+        .padding(14)
+    }
+
+    private func retryExistingPairing() {
+        guard !isRetrying else { return }
+        isRetrying = true
+        model.bridge.retryNow()
+        Task {
+            try? await Task.sleep(for: .seconds(4))
+            guard !Task.isCancelled, !model.bridge.connected else { return }
+            isRetrying = false
+        }
+    }
+}
+
 struct SettingsView: View {
     @ObservedObject var model: AppModel
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
@@ -874,11 +1025,25 @@ struct SettingsView: View {
 
     private var connectionSection: some View {
         settingsSection("这台手机") {
-            settingsValueRow(
-                "连接",
-                value: model.bridge.connected ? "已连接" : "离线",
-                systemImage: "link"
-            )
+            if model.bridge.connected {
+                settingsValueRow("连接", value: "已连接", systemImage: "link")
+            } else {
+                Button { model.showingConnectionRecovery = true } label: {
+                    HStack(spacing: 11) {
+                        settingsLabel("连接", systemImage: "link")
+                        Spacer()
+                        Text("重新连接").foregroundStyle(ZColor.sageText)
+                        Image(systemName: "chevron.right")
+                            .font(ZFont.caption2)
+                            .foregroundStyle(ZColor.muted)
+                    }
+                    .font(ZFont.subheadline)
+                    .frame(minHeight: 44)
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .accessibilityHint("查看重连步骤或使用新的连接码")
+            }
             Divider().overlay(ZColor.line)
             Button { model.showingOutbox = true } label: {
                 HStack(spacing: 11) {

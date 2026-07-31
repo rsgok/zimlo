@@ -88,6 +88,7 @@ final class AppModel: ObservableObject {
     @Published var selectedProject: Project?
     @Published var showingNewTask = false
     @Published var showingOutbox = false
+    @Published var showingConnectionRecovery = false
     @Published var newTaskProjectId: String?
     @Published private(set) var notice: String?
     @Published private(set) var noticeAction: NoticeAction?

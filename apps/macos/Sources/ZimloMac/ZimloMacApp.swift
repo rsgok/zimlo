@@ -21,11 +21,29 @@ struct ZimloMacApp: App {
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationDidFinishLaunching(_ notification: Notification) {
-        NSApp.setActivationPolicy(.accessory)
+        // Zimlo has a real app window in addition to its menu-bar control.
+        // A regular activation policy keeps the app discoverable in the Dock,
+        // app switcher, and macOS application menu while that window is open.
+        NSApp.setActivationPolicy(.regular)
         Task { await AppModel.shared.service.start() }
         if !AppModel.shared.onboarding.completed {
             WindowCoordinator.shared.showOnboarding()
+        } else {
+            WindowCoordinator.shared.showMainApp()
         }
+    }
+
+    func applicationShouldHandleReopen(
+        _ sender: NSApplication,
+        hasVisibleWindows flag: Bool
+    ) -> Bool {
+        guard !flag else { return true }
+        if AppModel.shared.onboarding.completed {
+            WindowCoordinator.shared.showMainApp()
+        } else {
+            WindowCoordinator.shared.showOnboarding()
+        }
+        return true
     }
 
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
@@ -76,8 +94,7 @@ final class WindowCoordinator: NSObject, NSWindowDelegate {
             blue: 0.049,
             alpha: 1
         )
-        window.titlebarAppearsTransparent = true
-        window.titleVisibility = .hidden
+        installBrandChrome(on: window)
         window.isMovableByWindowBackground = true
         window.center()
         window.contentView = NSHostingView(rootView: content)
@@ -121,7 +138,7 @@ final class WindowCoordinator: NSObject, NSWindowDelegate {
             blue: 0.049,
             alpha: 1
         )
-        window.titleVisibility = .hidden
+        installBrandChrome(on: window)
         window.minSize = NSSize(width: 860, height: 600)
         window.collectionBehavior.insert(.fullScreenPrimary)
         window.center()
@@ -141,6 +158,40 @@ final class WindowCoordinator: NSObject, NSWindowDelegate {
             mainAppWindow = nil
             mainAppRoute = nil
         }
+    }
+
+    private func installBrandChrome(on window: NSWindow) {
+        window.title = "Zimlo"
+        window.titleVisibility = .hidden
+        window.titlebarAppearsTransparent = false
+        window.miniwindowImage = NSApplication.shared.applicationIconImage
+
+        let accessory = NSTitlebarAccessoryViewController()
+        accessory.layoutAttribute = .left
+        let brand = NSHostingView(rootView: WindowBrandView())
+        let fittingSize = brand.fittingSize
+        brand.frame = NSRect(x: 0, y: 0, width: max(92, fittingSize.width), height: 28)
+        accessory.view = brand
+        window.addTitlebarAccessoryViewController(accessory)
+    }
+}
+
+private struct WindowBrandView: View {
+    var body: some View {
+        HStack(spacing: 7) {
+            Image(nsImage: NSApplication.shared.applicationIconImage)
+                .resizable()
+                .interpolation(.high)
+                .scaledToFit()
+                .frame(width: 18, height: 18)
+            Text("Zimlo")
+                .font(.system(size: 12, weight: .semibold))
+                .foregroundStyle(.primary)
+        }
+        .padding(.horizontal, 6)
+        .frame(height: 28)
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel("Zimlo")
     }
 }
 
