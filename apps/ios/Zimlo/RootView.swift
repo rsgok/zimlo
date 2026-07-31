@@ -6,7 +6,6 @@ import SwiftUI
 // （UNNotificationCategory）同属下一批，随推送路由升级一起做。
 struct RootView: View {
     @ObservedObject var model: AppModel
-    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
 
     var body: some View {
         if model.bridge.pairingRequired {
@@ -37,62 +36,22 @@ struct RootView: View {
             }
             .background(ZColor.ink.ignoresSafeArea())
             .safeAreaInset(edge: .top, spacing: 0) {
-                ZStack(alignment: .top) {
-                    AppTopBar(
-                        title: topBarTitle,
-                        connected: model.bridge.connected,
-                        connectionLabel: connectionLabel,
-                        onBack: isShowingDetail ? clearDetail : nil,
-                        status: detailStatus,
-                        onRetry: { model.bridge.retryNow() }
-                    )
-                    VStack(spacing: 8) {
-                        if model.pendingRouteSessionId != nil {
-                            // 通知路由占位条：session 未同步到本机前持久显示，可重试。
-                            HStack(spacing: 10) {
-                                Text("通知的任务尚未同步到手机")
-                                Spacer()
-                                Button("重试") { model.retryPendingRoute() }
-                                Button("任务列表") { model.goToTasksForPendingRoute() }
-                            }
-                            .font(ZFont.caption)
-                            .foregroundStyle(ZColor.ink)
-                            .padding(.horizontal, 14).padding(.vertical, 10)
-                            .background(ZColor.paper)
-                            .clipShape(Capsule())
-                        }
-                        if model.pendingOutboxCount > 0 || !model.bridge.connected {
-                            Button {
-                                if !model.bridge.connected { model.bridge.retryNow() }
-                                if model.pendingOutboxCount > 0 { model.showingOutbox = true }
-                            } label: {
-                                HStack(spacing: 8) {
-                                    Circle().fill(model.bridge.connected ? ZColor.sage : Color.orange).frame(width: 6, height: 6)
-                                    TimelineView(.periodic(from: .now, by: 30)) { _ in
-                                        Text(statusLine)
-                                    }
-                                    if model.pendingOutboxCount > 0 { Text("\(model.pendingOutboxCount) 条").bold() }
-                                    if !model.bridge.connected { Text("点按重连").foregroundStyle(ZColor.muted) }
-                                }
-                            }
-                            .font(ZFont.caption2)
-                            .foregroundStyle(ZColor.ink)
-                            .padding(.horizontal, 12).padding(.vertical, 8)
-                            .background(ZColor.paper)
-                            .clipShape(Capsule())
-                        }
-                        if let error = model.bridge.error {
-                            Text(error)
-                                .font(ZFont.caption)
-                                .foregroundStyle(.white)
-                                .padding(.horizontal, 14).padding(.vertical, 9)
-                                .background(ZColor.coral)
-                                .clipShape(Capsule())
-                        }
+                VStack(spacing: 8) {
+                    // 顶层页面由 BottomBar 表达当前位置，不重复常驻标题、头像和
+                    // 在线状态；详情页仍保留返回、标题和任务状态。
+                    if isShowingDetail {
+                        AppTopBar(
+                            title: topBarTitle,
+                            connected: model.bridge.connected,
+                            connectionLabel: connectionLabel,
+                            onBack: clearDetail,
+                            status: detailStatus,
+                            onRetry: { model.bridge.retryNow() }
+                        )
                     }
-                    .offset(y: AppTopBar.contentHeight(for: dynamicTypeSize) + 8)
-                    .padding(.horizontal, 14)
-                    .zIndex(2)
+
+                    statusBanners
+                        .padding(.horizontal, 14)
                 }
             }
             .overlay(alignment: .bottom) {
@@ -139,6 +98,52 @@ struct RootView: View {
             .onChange(of: model.showingNewTask) { _, showing in
                 if !showing { model.newTaskProjectId = nil }
             }
+        }
+    }
+
+    @ViewBuilder
+    private var statusBanners: some View {
+        if model.pendingRouteSessionId != nil {
+            // 通知路由占位条：session 未同步到本机前持久显示，可重试。
+            HStack(spacing: 10) {
+                Text("通知的任务尚未同步到手机")
+                Spacer()
+                Button("重试") { model.retryPendingRoute() }
+                Button("任务列表") { model.goToTasksForPendingRoute() }
+            }
+            .font(ZFont.caption)
+            .foregroundStyle(ZColor.ink)
+            .padding(.horizontal, 14).padding(.vertical, 10)
+            .background(ZColor.paper)
+            .clipShape(Capsule())
+        }
+        if model.pendingOutboxCount > 0 || !model.bridge.connected {
+            Button {
+                if !model.bridge.connected { model.bridge.retryNow() }
+                if model.pendingOutboxCount > 0 { model.showingOutbox = true }
+            } label: {
+                HStack(spacing: 8) {
+                    Circle().fill(model.bridge.connected ? ZColor.sage : Color.orange).frame(width: 6, height: 6)
+                    TimelineView(.periodic(from: .now, by: 30)) { _ in
+                        Text(statusLine)
+                    }
+                    if model.pendingOutboxCount > 0 { Text("\(model.pendingOutboxCount) 条").bold() }
+                    if !model.bridge.connected { Text("点按重连").foregroundStyle(ZColor.muted) }
+                }
+            }
+            .font(ZFont.caption2)
+            .foregroundStyle(ZColor.ink)
+            .padding(.horizontal, 12).padding(.vertical, 8)
+            .background(ZColor.paper)
+            .clipShape(Capsule())
+        }
+        if let error = model.bridge.error {
+            Text(error)
+                .font(ZFont.caption)
+                .foregroundStyle(.white)
+                .padding(.horizontal, 14).padding(.vertical, 9)
+                .background(ZColor.coral)
+                .clipShape(Capsule())
         }
     }
 
