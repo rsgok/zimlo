@@ -1,8 +1,8 @@
 {
   "testFiles": 65,
   "testCases": 368,
-  "commit": "6c71d66",
-  "dirty": true,
+  "commit": "c652b43",
+  "dirty": false,
   "commitBaseUrl": "https://github.com/rsgok/zimlo/commit/",
-  "generatedAt": "2026-07-31T11:00:56.763Z"
+  "generatedAt": "2026-07-31T11:04:01.340Z"
 }
