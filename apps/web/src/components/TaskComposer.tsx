@@ -3,6 +3,7 @@ import type { ClientCommand, Project, Provider, TrustedWorkspace } from "@zimlo/
 import { agentAvatarStyle } from "./AgentsView";
 import { ProviderBadge } from "./ProviderBadge";
 import { AgentAvatar } from "./UserAvatar";
+import { useModalFocus } from "./useModalFocus";
 import { VoiceInput } from "./VoiceInput";
 
 interface TaskComposerProps {
@@ -37,6 +38,8 @@ export function TaskComposer({ workspaces, projects, initialProjectId = null, se
   const [projectQuery, setProjectQuery] = useState("");
   const [choosingAgent, setChoosingAgent] = useState(false);
   const sending = useRef(false);
+  const sheetRef = useRef<HTMLElement | null>(null);
+  useModalFocus(sheetRef);
   const orderedWorkspaces = useMemo(() => [...workspaces].sort((left, right) => right.lastUsedAt.localeCompare(left.lastUsedAt) || left.label.localeCompare(right.label, "zh-CN")), [workspaces]);
   const visibleWorkspaces = useMemo(() => {
     const normalized = projectQuery.trim().toLocaleLowerCase();
@@ -78,7 +81,7 @@ export function TaskComposer({ workspaces, projects, initialProjectId = null, se
     <div className="composer-backdrop" role="presentation" onMouseDown={(event) => {
       if (event.currentTarget === event.target) onClose();
     }}>
-      <section className="new-task-sheet" role="dialog" aria-modal="true" aria-labelledby="new-task-title">
+      <section className="new-task-sheet" role="dialog" aria-modal="true" aria-labelledby="new-task-title" ref={sheetRef}>
         <header className="new-task-header">
           <div>
             <h2 id="new-task-title">新任务</h2>

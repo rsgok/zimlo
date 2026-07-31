@@ -15,6 +15,27 @@
 - 局域网连接失败时自动切到 Cloudflare 加密中继；最近快照保存在受文件保护的数据目录，离线操作进入持久 outbox。
 - 新任务草稿、最近 Runtime / Project、断网 outbox、重连重放与幂等 key。
 - 用户与 Project Agent 共用 24 个预置头像；Agent 初次创建时随机分配并可编辑，另有固定 Zimlo 头像和原生语音输入。
+- 高风险审批走底部 Sheet：完整展示风险、作用域、目标命令与确认短语，「填入确认短语」+「确认执行」双确认，取消或过期自动清空。
+- Feed 回复、审批回答与 follow-up 发送即清空：先持久化 outbox，成功后清空输入与草稿并立即展示本地 pending；服务端拒绝标失败，可在 outbox 详情里重试或重新编辑。
+- 右滑移除 Feed、归档任务均乐观更新并提供 6 秒撤销；任务列表有「已归档」筛选可找回。
+- Outbox 详情（设置页或顶部胶囊进入）展示每条指令的类型、目标、预览与状态；本地或服务端仍 queued 的 create/follow-up 可撤回（task.command.cancel）。
+- 重连使用共享退避序列 [1,2,4,8,16,30]s ±20% 抖动，系统离线时暂停，认证成功或回前台重置；离线/重连胶囊与顶栏状态都可点按立即重试。
+- 离线快照带 savedAt，离线胶囊显示「数据更新于 X 分钟前」。
+- 通知权限被拒时设置页给出持久引导与「打开系统设置」；冷启动点通知但 session 未同步时，Feed 顶部保留可重试的路由占位条。
+- 低风险审批（无确认短语的批准一次/拒绝）支持锁屏快捷操作（UNNotificationCategory `ZIMLO_LOW_RISK_APPROVAL`）：category 是明文通用标识，决策 id 只在设备端解密的 PushRouteV1 加密路由内；高风险与需输入的审批仍进 App 完成。旧客户端收到未知 category 按普通打开处理，快捷路由解析失败同样回退普通打开。
+
+## 规范对齐与测试
+
+Feed 合并（6h 窗口）、优先级（covered +6 / 已读 +10 / needsAction 0）、outbox 语义键、
+重连退避、撤回状态与快捷审批规则由 `Zimlo/SharedRules.swift` 实现，与
+`packages/protocol/src/policy.ts` 逐行对齐。`ZimloTests/VectorTests.swift` 直接读取
+`packages/protocol/test-vectors/` 下的 6 个 JSON 向量文件（共 83 个 case）逐个断言，
+与 apps/web 的 vitest 使用同一组输入与期望。
+
+## 本轮明确不做（遗留）
+
+- 不迁 NavigationStack、不加边缘右滑返回手势：全屏 Feed 卡的横向手势与边缘返回冲突，
+  且详情页开关状态深嵌 AppModel，迁移需要单独一轮（RootView.swift 头部有同样注释）。
 
 ## 本地构建
 

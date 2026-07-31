@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, type KeyboardEvent } from "react";
 import { AppIcon } from "./AppIcon";
 
 interface SpeechRecognitionLike {
@@ -28,10 +28,15 @@ interface VoiceInputProps {
   disabled?: boolean;
   autoFocus?: boolean;
   compact?: boolean;
+  /** 提供后 Enter（不含 Shift）提交，并启用 enterKeyHint="send" */
+  onSubmit?: (() => void) | undefined;
 }
 
-export function VoiceInput({ value, onChange, placeholder, ariaLabel, rows = 2, disabled = false, autoFocus = false, compact = false }: VoiceInputProps) {
+export function VoiceInput({ value, onChange, placeholder, ariaLabel, rows = 2, disabled = false, autoFocus = false, compact = false, onSubmit }: VoiceInputProps) {
   const recognition = useRef<SpeechRecognitionLike | null>(null);
+  // 识别期间的基线文本：用户在识别过程中的手动编辑会成为新的基线，
+  // 不会被后续的 onresult 覆盖。
+  const recognitionBase = useRef("");
   const [listening, setListening] = useState(false);
   const SpeechRecognition = typeof window === "undefined"
     ? undefined
@@ -40,15 +45,27 @@ export function VoiceInput({ value, onChange, placeholder, ariaLabel, rows = 2, 
 
   useEffect(() => () => recognition.current?.stop(), []);
 
+  const handleChange = (next: string) => {
+    if (listening) recognitionBase.current = next;
+    onChange(next);
+  };
+
+  const handleKeyDown = (event: KeyboardEvent<HTMLTextAreaElement>) => {
+    if (!onSubmit || event.key !== "Enter" || event.shiftKey || event.nativeEvent.isComposing) return;
+    event.preventDefault();
+    onSubmit();
+  };
+
   const toggleVoice = () => {
     if (!SpeechRecognition || disabled) return;
     if (listening) return recognition.current?.stop();
     const instance = new SpeechRecognition();
-    const base = value.trimEnd();
+    recognitionBase.current = value.trimEnd();
     instance.lang = navigator.language?.startsWith("zh") ? navigator.language : "zh-CN";
     instance.continuous = false;
     instance.interimResults = true;
     instance.onresult = (event) => {
+      const base = recognitionBase.current;
       const transcript = Array.from(event.results).map((result) => result[0]?.transcript ?? "").join("").trim();
       onChange([base, transcript].filter(Boolean).join(base ? " " : ""));
     };
@@ -76,12 +93,13 @@ export function VoiceInput({ value, onChange, placeholder, ariaLabel, rows = 2, 
       <textarea
         aria-label={ariaLabel}
         value={value}
-        onChange={(event) => onChange(event.target.value)}
+        onChange={(event) => handleChange(event.target.value)}
+        onKeyDown={handleKeyDown}
         placeholder={placeholder}
         rows={rows}
         disabled={disabled}
         autoFocus={autoFocus}
-        enterKeyHint="send"
+        {...(onSubmit ? { enterKeyHint: "send" as const } : {})}
       />
     </div>
   );

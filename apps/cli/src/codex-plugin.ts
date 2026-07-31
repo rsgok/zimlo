@@ -6,6 +6,7 @@ import { dirname, join, resolve } from "node:path";
 import { promisify } from "node:util";
 import { resolveAgentCommand } from "./agent-command.js";
 import { codexPluginHooks } from "./hook-config.js";
+import { integrationProbeCache, invalidateIntegrationProbes } from "./probe-cache.js";
 
 type JsonObject = Record<string, unknown>;
 const execFileAsync = promisify(execFile);
@@ -117,15 +118,19 @@ export function parseCodexRuntimePlugin(value: unknown): CodexRuntimePlugin {
 }
 
 async function inspectCodexRuntime(command: string): Promise<CodexRuntimePlugin> {
-  try {
-    const result = await execFileAsync(command, ["plugin", "list", "--json"], {
-      timeout: 10_000,
-      maxBuffer: 2 * 1024 * 1024,
-    });
-    return parseCodexRuntimePlugin(JSON.parse(result.stdout));
-  } catch {
-    return { installed: false, enabled: false, version: null };
-  }
+  // `codex plugin list --json` is the second subprocess the status poll used
+  // to spawn every time; share the integration probe cache (10s, single-flight).
+  return integrationProbeCache.get(`codex-runtime:${command}`, async () => {
+    try {
+      const result = await execFileAsync(command, ["plugin", "list", "--json"], {
+        timeout: 10_000,
+        maxBuffer: 2 * 1024 * 1024,
+      });
+      return parseCodexRuntimePlugin(JSON.parse(result.stdout));
+    } catch {
+      return { installed: false, enabled: false, version: null };
+    }
+  });
 }
 
 async function activateCodexRuntime(command: string, prior: CodexRuntimePlugin): Promise<void> {
@@ -233,7 +238,15 @@ export async function installCodexPlugin(entrypoint: string, options: CodexPlugi
     if (movedPrevious) await rename(previous, paths.plugin);
     throw error;
   }
-  if (codexCommand) await activateCodexRuntime(codexCommand, runtimeBefore);
+  if (codexCommand) {
+    try {
+      await activateCodexRuntime(codexCommand, runtimeBefore);
+    } finally {
+      // Runtime plugin state changed (or half-changed): drop cached probes so
+      // the post-install inspect below and any status poll see fresh data.
+      invalidateIntegrationProbes();
+    }
+  }
   return inspectCodexPlugin(entrypoint, options);
 }
 
@@ -316,6 +329,7 @@ export async function uninstallCodexPlugin(options: CodexPluginOptions = {}): Pr
   if (manifest?.name === PLUGIN_NAME) await rm(paths.plugin, { recursive: true, force: true });
   const legacyManifest = await readJson(join(paths.legacyPlugin, ".codex-plugin", "plugin.json"));
   if (legacyManifest?.name === PLUGIN_NAME) await rm(paths.legacyPlugin, { recursive: true, force: true });
+  invalidateIntegrationProbes();
   return {
     installed: false,
     runtimeInstalled: false,

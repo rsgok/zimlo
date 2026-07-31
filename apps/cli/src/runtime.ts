@@ -129,7 +129,7 @@ export class RuntimeHub extends EventEmitter {
     if (stored.state === "pending" || stored.state === "submitted") {
       const post = this.store.linkPendingAction(action.sessionId, action.actionId);
       if (post) this.send({ type: "feed.posted", post });
-      this.push.notify("approval", stored.sessionId, this.store.getSession(stored.sessionId)?.title);
+      this.push.notify("approval", stored.sessionId, this.store.getSession(stored.sessionId)?.title, stored);
     }
     return stored;
   }

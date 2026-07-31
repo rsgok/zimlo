@@ -1,0 +1,20 @@
+{
+  "version": 1,
+  "cases": [
+    { "name": "first retry waits one second", "input": { "attempt": 0, "randomValue": 0.5 }, "expected": { "delayMs": 1000 } },
+    { "name": "second retry", "input": { "attempt": 1, "randomValue": 0.5 }, "expected": { "delayMs": 2000 } },
+    { "name": "third retry", "input": { "attempt": 2, "randomValue": 0.5 }, "expected": { "delayMs": 4000 } },
+    { "name": "fourth retry", "input": { "attempt": 3, "randomValue": 0.5 }, "expected": { "delayMs": 8000 } },
+    { "name": "fifth retry", "input": { "attempt": 4, "randomValue": 0.5 }, "expected": { "delayMs": 16000 } },
+    { "name": "sixth retry reaches the cap", "input": { "attempt": 5, "randomValue": 0.5 }, "expected": { "delayMs": 30000 } },
+    { "name": "attempts past the schedule clamp to the cap", "input": { "attempt": 6, "randomValue": 0.5 }, "expected": { "delayMs": 30000 } },
+    { "name": "far future attempts stay clamped", "input": { "attempt": 99, "randomValue": 0.5 }, "expected": { "delayMs": 30000 } },
+    { "name": "negative attempts clamp to the first delay", "input": { "attempt": -1, "randomValue": 0.5 }, "expected": { "delayMs": 1000 } },
+    { "name": "lower jitter bound shaves twenty percent", "input": { "attempt": 0, "randomValue": 0 }, "expected": { "delayMs": 800 } },
+    { "name": "upper jitter bound adds twenty percent", "input": { "attempt": 0, "randomValue": 1 }, "expected": { "delayMs": 1200 } },
+    { "name": "negative jitter on a mid schedule attempt", "input": { "attempt": 3, "randomValue": 0.25 }, "expected": { "delayMs": 7200 } },
+    { "name": "positive jitter on a mid schedule attempt", "input": { "attempt": 4, "randomValue": 0.75 }, "expected": { "delayMs": 17600 } },
+    { "name": "jitter result rounds to whole milliseconds", "input": { "attempt": 2, "randomValue": 0.1 }, "expected": { "delayMs": 3360 } },
+    { "name": "fractional attempts truncate", "input": { "attempt": 2.7, "randomValue": 0.5 }, "expected": { "delayMs": 4000 } }
+  ]
+}

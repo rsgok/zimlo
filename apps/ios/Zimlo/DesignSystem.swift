@@ -11,6 +11,30 @@ enum ZColor {
     static let line = Color.black.opacity(0.12)
 }
 
+// 语义字体：映射系统 text style，天然支持 Dynamic Type。正文与标题一律从这里取，
+// 不再手写 point size（历史遗留的小字号徽标除外）。
+enum ZFont {
+    static let hero = Font.system(.largeTitle, design: .rounded).weight(.black)
+    static let title = Font.title.weight(.black)
+    static let title2 = Font.title2.weight(.black)
+    static let title3 = Font.title3.weight(.black)
+    static let headline = Font.headline
+    static let body = Font.body
+    static let callout = Font.callout
+    static let subheadline = Font.subheadline
+    static let footnote = Font.footnote
+    static let caption = Font.caption.weight(.bold)
+    static let caption2 = Font.caption2.weight(.bold)
+}
+
+enum ZRadius {
+    static let card: CGFloat = 30
+    static let sheet: CGFloat = 28
+    static let inner: CGFloat = 15
+    static let control: CGFloat = 14
+    static let small: CGFloat = 11
+}
+
 struct ProviderIcon: View {
     let provider: Provider
     var size: CGFloat = 14
@@ -54,7 +78,7 @@ struct ProviderBadge: View {
         HStack(spacing: 5) {
             ProviderIcon(provider: provider)
             if !iconOnly, let surfaceLabel {
-                Text(surfaceLabel).font(.system(size: 10, weight: .bold, design: .monospaced))
+                Text(surfaceLabel).font(ZFont.caption2.monospaced().weight(.bold))
             }
         }
         .padding(.horizontal, iconOnly ? 6 : 7).padding(.vertical, 5)
@@ -135,6 +159,7 @@ struct AppTopBar: View {
     var connectionLabel: String?
     var onBack: (() -> Void)?
     var status: String?
+    var onRetry: (() -> Void)?
 
     static func contentHeight(for size: DynamicTypeSize) -> CGFloat {
         size.isAccessibilitySize ? 52 : 44
@@ -143,14 +168,14 @@ struct AppTopBar: View {
     var body: some View {
         ZStack {
             Text(title)
-                .font(.system(size: 14, weight: .bold))
+                .font(ZFont.subheadline.weight(.bold))
                 .lineLimit(1)
                 .padding(.horizontal, 80)
             HStack {
                 if let onBack {
                     Button(action: onBack) {
                         Image(systemName: "arrow.left")
-                            .font(.system(size: 17, weight: .semibold))
+                            .font(.body.weight(.semibold))
                             .frame(width: 34, height: 34)
                     }
                 } else {
@@ -159,16 +184,20 @@ struct AppTopBar: View {
                 Spacer()
                 if let status {
                     Text(status)
-                        .font(.system(size: 9, weight: .bold))
+                        .font(ZFont.caption2)
                         .padding(.horizontal, 9).padding(.vertical, 6)
                         .background(Color.white.opacity(0.1))
                         .clipShape(Capsule())
                 } else {
-                    HStack(spacing: 6) {
-                        Circle().fill(connected ? ZColor.acid : Color.orange).frame(width: 6, height: 6)
-                        Text(connectionLabel ?? (connected ? "实时" : "重连"))
-                            .font(.system(size: 10, weight: .semibold))
+                    // 断线时胶囊可点按，立即触发一次重连，不必等退避循环。
+                    Button(action: { onRetry?() }) {
+                        HStack(spacing: 6) {
+                            Circle().fill(connected ? ZColor.acid : Color.orange).frame(width: 6, height: 6)
+                            Text(connectionLabel ?? (connected ? "实时" : "点按重连"))
+                                .font(ZFont.caption2)
+                        }
                     }
+                    .disabled(connected || onRetry == nil)
                 }
             }
             .padding(.horizontal, 14)
@@ -182,6 +211,6 @@ struct AppTopBar: View {
 extension View {
     func zCard() -> some View {
         self.background(ZColor.paper)
-            .clipShape(RoundedRectangle(cornerRadius: 30, style: .continuous))
+            .clipShape(RoundedRectangle(cornerRadius: ZRadius.card, style: .continuous))
     }
 }

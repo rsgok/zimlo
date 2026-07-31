@@ -1,0 +1,12 @@
+{
+  "version": 1,
+  "cases": [
+    { "name": "queued is cancelable", "input": { "state": "queued" }, "expected": { "cancelable": true } },
+    { "name": "dispatching is not cancelable", "input": { "state": "dispatching" }, "expected": { "cancelable": false } },
+    { "name": "running is not cancelable", "input": { "state": "running" }, "expected": { "cancelable": false } },
+    { "name": "completed is not cancelable", "input": { "state": "completed" }, "expected": { "cancelable": false } },
+    { "name": "failed is not cancelable", "input": { "state": "failed" }, "expected": { "cancelable": false } },
+    { "name": "canceled is not cancelable", "input": { "state": "canceled" }, "expected": { "cancelable": false } },
+    { "name": "unknown states are not cancelable", "input": { "state": "unknown" }, "expected": { "cancelable": false } }
+  ]
+}

@@ -1,20 +1,24 @@
 import { existsSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import Fastify, { type FastifyInstance } from "fastify";
+import Fastify, { type FastifyError, type FastifyInstance } from "fastify";
 import fastifyStatic from "@fastify/static";
 import fastifyWebsocket from "@fastify/websocket";
 import QRCode from "qrcode";
 import type { ClientCommand, ServerMessage } from "@zimlo/protocol";
 import { ActionBroker } from "./action-broker.js";
+import { ApiError, classifyIntegrationError, classifyLocalApiError, sendApiError } from "./api-error.js";
 import { CloudService } from "./cloud-service.js";
 import { codexPluginDeepLink, inspectCodexPlugin, installCodexPlugin } from "./codex-plugin.js";
 import { DeviceManager, type PairingResult } from "./device-manager.js";
+import { applyFeedDismissSet } from "./feed-dismiss.js";
 import { inspectIntegrationStatuses, installCliIntegrations } from "./integration-status.js";
 import { isLoopbackAddress, isTrustedLanAddress, preferredLanAddress } from "./network.js";
 import { RuntimeHub } from "./runtime.js";
 import { SecureSocket } from "./secure-socket.js";
 import { TaskCommandService } from "./task-command-service.js";
+import { setTaskArchivedIdempotent, setTaskPinnedIdempotent } from "./task-preferences.js";
+import { ZIMLO_PROTOCOL_VERSION, ZIMLO_VERSION } from "./version.js";
 
 interface PairBody {
   pairingId?: string;
@@ -63,7 +67,7 @@ export class BridgeServer {
     this.options = input.options;
   }
 
-  async start(): Promise<{ localUrl: string; lanUrl: string | null }> {
+  async start(): Promise<{ localUrl: string; lanUrl: string | null; port: number }> {
     const trace = (phase: string): void => {
       if (process.env.ZIMLO_STARTUP_TRACE === "1") console.error(`[zimlo:bridge] ${phase}`);
     };
@@ -73,47 +77,80 @@ export class BridgeServer {
     trace("register-websocket");
     await app.register(fastifyWebsocket);
 
+    // Last-resort stable error shape: an unforeseen route failure must never
+    // surface Fastify's default "Internal Server Error" to the macOS app.
+    app.setErrorHandler((error: FastifyError, request, reply) => {
+      console.error(`[zimlo:bridge] ${request.method} ${request.url} 未处理错误: ${error.message}`);
+      return sendApiError(reply, new ApiError(
+        "internal_error",
+        "本地服务出现未预期错误，详情见日志。",
+        500,
+        true,
+        "运行 zimlo logs 查看日志，或 zimlo doctor 检查环境。",
+      ));
+    });
+
+    const loopbackOnly = () => ({ code: "loopback_only", message: "仅允许本机访问。", recoverable: false });
+
     app.addHook("onRequest", async (request, reply) => {
       if (this.options.lan && !isTrustedLanAddress(request.ip)) {
-        return reply.code(403).send({ error: "Zimlo only accepts trusted LAN addresses." });
+        return reply.code(403).send({ code: "lan_restricted", message: "Zimlo 只接受可信局域网地址。", recoverable: false });
       }
     });
 
-    app.get("/healthz", async () => ({ ok: true, version: "0.2.0", protocolVersion: 2, features: this.runtime.features() }));
+    app.get("/healthz", async () => ({ ok: true, version: ZIMLO_VERSION, protocolVersion: ZIMLO_PROTOCOL_VERSION, features: this.runtime.features() }));
     app.get("/api/local-bootstrap", async (request, reply) => {
-      if (!isLoopbackAddress(request.ip)) return reply.code(403).send({ error: "Loopback only" });
-      const device = this.devices.localAdmin();
-      return { deviceId: device.id, deviceKey: device.keyBase64 };
+      if (!isLoopbackAddress(request.ip)) return reply.code(403).send(loopbackOnly());
+      try {
+        const device = this.devices.localAdmin();
+        return { deviceId: device.id, deviceKey: device.keyBase64 };
+      } catch (error) {
+        return sendApiError(reply, classifyLocalApiError(error, "bootstrap_unavailable", "本机管理设备初始化失败。"));
+      }
     });
     app.get("/api/local/status", async (request, reply) => {
-      if (!isLoopbackAddress(request.ip)) return reply.code(403).send({ error: "Loopback only" });
-      return {
-        ready: true,
-        cloud: this.cloud.enabled,
-        pushNotifications: this.cloud.pushNotificationsAvailable,
-        pairedDeviceCount: this.devicesList().filter((device) => !device.isLocalAdmin && !device.revokedAt).length,
-        integrations: await inspectIntegrationStatuses(this.entrypoint),
-      };
+      if (!isLoopbackAddress(request.ip)) return reply.code(403).send(loopbackOnly());
+      try {
+        return {
+          ready: true,
+          cloud: this.cloud.enabled,
+          pushNotifications: this.cloud.pushNotificationsAvailable,
+          pairedDeviceCount: this.devicesList().filter((device) => !device.isLocalAdmin && !device.revokedAt).length,
+          integrations: await inspectIntegrationStatuses(this.entrypoint),
+        };
+      } catch (error) {
+        return sendApiError(reply, classifyLocalApiError(error, "status_unavailable", "本地状态检查失败。"));
+      }
     });
     app.post("/api/local/integrations", async (request, reply) => {
-      if (!isLoopbackAddress(request.ip)) return reply.code(403).send({ error: "Loopback only" });
+      if (!isLoopbackAddress(request.ip)) return reply.code(403).send(loopbackOnly());
       const body = request.body as LocalIntegrationBody | null;
-      if (body?.target === "all") {
-        await installCodexPlugin(this.entrypoint);
-        await installCliIntegrations(this.entrypoint);
-      } else if (body?.target === "codex_gui") await installCodexPlugin(this.entrypoint);
-      else if (body?.target === "cli") await installCliIntegrations(this.entrypoint);
-      else return reply.code(400).send({ error: "Unknown integration target" });
-      return { integrations: await inspectIntegrationStatuses(this.entrypoint) };
+      try {
+        if (body?.target === "all") {
+          await installCodexPlugin(this.entrypoint);
+          await installCliIntegrations(this.entrypoint);
+        } else if (body?.target === "codex_gui") await installCodexPlugin(this.entrypoint);
+        else if (body?.target === "cli") await installCliIntegrations(this.entrypoint);
+        else {
+          return sendApiError(reply, new ApiError("unknown_integration_target", "未知的集成目标。", 400, false, "target 仅支持 all、codex_gui、cli。"));
+        }
+        return { integrations: await inspectIntegrationStatuses(this.entrypoint) };
+      } catch (error) {
+        return sendApiError(reply, classifyIntegrationError(error));
+      }
     });
     app.post("/api/local/pairing", async (request, reply) => {
-      if (!isLoopbackAddress(request.ip)) return reply.code(403).send({ error: "Loopback only" });
+      if (!isLoopbackAddress(request.ip)) return reply.code(403).send(loopbackOnly());
       try {
         return await this.createPairingPayload();
       } catch (error) {
-        return reply.code(503).send({
-          error: error instanceof Error ? error.message : String(error),
-        });
+        return sendApiError(reply, new ApiError(
+          "pairing_create_failed",
+          error instanceof Error ? error.message : String(error),
+          503,
+          true,
+          "检查网络连接后重试。",
+        ));
       }
     });
     app.post("/api/pair", async (request, reply) => {
@@ -121,19 +158,29 @@ export class BridgeServer {
       if (!body?.pairingId || !body.clientPublicKey || !body.proof) {
         return reply.code(400).send({ error: "Invalid pairing request" });
       }
-      const result = this.devices.completePairing({
-        pairingId: body.pairingId,
-        clientPublicKey: body.clientPublicKey,
-        proof: body.proof,
-        ...(body.name ? { name: body.name } : {}),
-      });
-      if (!result) return reply.code(410).send({ error: "Pairing expired, used, or invalid" });
-      const cloud = await this.cloud.provisionDevice(result.device.id);
-      return {
-        deviceId: result.device.id,
-        serverProof: result.serverProof,
-        ...(cloud ? { cloud } : {}),
-      };
+      try {
+        const result = this.devices.completePairing({
+          pairingId: body.pairingId,
+          clientPublicKey: body.clientPublicKey,
+          proof: body.proof,
+          ...(body.name ? { name: body.name } : {}),
+        });
+        if (!result) return reply.code(410).send({ error: "Pairing expired, used, or invalid" });
+        const cloud = await this.cloud.provisionDevice(result.device.id);
+        return {
+          deviceId: result.device.id,
+          serverProof: result.serverProof,
+          ...(cloud ? { cloud } : {}),
+        };
+      } catch (error) {
+        return sendApiError(reply, new ApiError(
+          "pairing_complete_failed",
+          "配对确认失败，请重新扫码。",
+          500,
+          true,
+          "在管理页重新生成配对二维码后再试。",
+        ));
+      }
     });
     app.get("/ws", { websocket: true }, (socket) => {
       let connection: SecureSocket;
@@ -165,9 +212,13 @@ export class BridgeServer {
     trace("listen");
     await app.listen({ port: this.options.port, host: this.options.lan ? "0.0.0.0" : "127.0.0.1" });
     trace("listening");
-    const localUrl = `http://127.0.0.1:${this.options.port}`;
+    // Resolve the port actually bound so tests and --port 0 callers get a
+    // usable URL back instead of the configured value.
+    const bound = app.server.address();
+    const port = bound && typeof bound === "object" ? bound.port : this.options.port;
+    const localUrl = `http://127.0.0.1:${port}`;
     const address = this.options.lan ? preferredLanAddress() : null;
-    return { localUrl, lanUrl: address ? `http://${address}:${this.options.port}` : null };
+    return { localUrl, lanUrl: address ? `http://${address}:${port}` : null, port };
   }
 
   async stop(): Promise<void> {
@@ -338,6 +389,43 @@ export class BridgeServer {
         else connection.send({ type: "error", code: "task_command_not_found", message: "这条任务指令已不存在。" });
         return;
       }
+      case "task.command.cancel": {
+        const result = this.taskCommands.cancel({
+          deviceId,
+          ...(command.commandId !== undefined ? { commandId: command.commandId } : {}),
+          ...(command.idempotencyKey !== undefined ? { idempotencyKey: command.idempotencyKey } : {}),
+        });
+        if (result.ok) {
+          connection.send({ type: "task.command.updated", command: result.command });
+          connection.send({
+            type: "task.command.cancel.result",
+            ...(command.commandId !== undefined ? { commandId: command.commandId } : {}),
+            ...(command.idempotencyKey !== undefined ? { idempotencyKey: command.idempotencyKey } : {}),
+            ok: true,
+            message: "指令已撤回。",
+          });
+        }
+        else if (result.code === "task_command_not_found") {
+          // 原指令从未到达 Bridge 与已经被清理都满足“不会执行”，按幂等撤回成功处理。
+          connection.send({
+            type: "task.command.cancel.result",
+            ...(command.commandId !== undefined ? { commandId: command.commandId } : {}),
+            ...(command.idempotencyKey !== undefined ? { idempotencyKey: command.idempotencyKey } : {}),
+            ok: true,
+            message: "指令未执行，已从队列撤回。",
+          });
+        } else {
+          if (result.command) connection.send({ type: "task.command.updated", command: result.command });
+          connection.send({
+            type: "task.command.cancel.result",
+            ...(command.commandId !== undefined ? { commandId: command.commandId } : {}),
+            ...(command.idempotencyKey !== undefined ? { idempotencyKey: command.idempotencyKey } : {}),
+            ok: false,
+            message: "指令已在执行或已结束，无法取消。",
+          });
+        }
+        return;
+      }
       case "feed.seen": {
         this.runtime.store.markFeedSeen(deviceId, command.postId);
         connection.send({ type: "feed.seen.updated", postId: command.postId });
@@ -348,6 +436,19 @@ export class BridgeServer {
         connection.send({ type: "feed.dismissed.updated", itemId: command.itemId });
         return;
       }
+      case "feed.dismiss.set": {
+        const result = applyFeedDismissSet(this.runtime.store, deviceId, command.itemId, command.dismissed, command.idempotencyKey);
+        if (result.dismissed) {
+          // 与旧 feed.dismiss 相同的轻量确认；dismissed 是按设备存储的，
+          // 只有发起方需要更新。
+          connection.send({ type: "feed.dismissed.updated", itemId: command.itemId });
+        } else {
+          // 协议没有"取消移除"的增量消息，用设备作用域的快照让发起方
+          // 拿到权威的 dismissedFeedItemIds。
+          connection.send({ type: "session.snapshot", snapshot: this.runtime.snapshot(deviceId) });
+        }
+        return;
+      }
       case "task.timeline.seen": {
         this.runtime.store.markTaskTimelineSeen(deviceId, command.sessionId, command.itemId);
         connection.send({ type: "task.timeline.seen.updated", sessionId: command.sessionId, itemId: command.itemId });
@@ -355,12 +456,14 @@ export class BridgeServer {
       }
       case "task.pin": {
         if (!this.runtime.store.getSession(command.sessionId)) return connection.send({ type: "error", code: "session_not_found", message: "这个任务已不存在。" });
-        connection.send({ type: "task.preference.updated", preference: this.runtime.store.setTaskPinned(command.sessionId, command.pinned) });
+        const result = setTaskPinnedIdempotent(this.runtime.store, deviceId, command.sessionId, command.pinned, command.idempotencyKey);
+        connection.send({ type: "task.preference.updated", preference: result.preference });
         return;
       }
       case "task.archive": {
         if (!this.runtime.store.getSession(command.sessionId)) return connection.send({ type: "error", code: "session_not_found", message: "这个任务已不存在。" });
-        connection.send({ type: "task.preference.updated", preference: this.runtime.store.setTaskArchived(command.sessionId, command.archived) });
+        const result = setTaskArchivedIdempotent(this.runtime.store, deviceId, command.sessionId, command.archived, command.idempotencyKey);
+        connection.send({ type: "task.preference.updated", preference: result.preference });
         return;
       }
       case "review.list":

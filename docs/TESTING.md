@@ -22,6 +22,15 @@ node apps/cli/dist/index.js doctor
 
 `pnpm test` 覆盖 Codex/Claude fixture parser、Project 回填与卡片归属、测试命令识别、脱敏、Feed 发帖去重与结束检查点、Action Broker 幂等与重启过期、网络地址判断、协议加密/防重放，以及 Codex app-server 审批值映射。
 
+本轮新增的自动化覆盖：
+
+- `packages/protocol`：`packages/protocol/test-vectors/` 的 6 组版本化 JSON 向量（共 83 case）逐条断言 `policy.ts` 的 Feed 合并/优先级、outbox 语义键、重连退避、快捷审批资格与可撤回状态；`client-commands` 测试覆盖 `task.command.cancel`（恰选其一定位）、`feed.dismiss.set` 与旧 `feed.dismiss` 兼容、归档/置顶的可选 idempotencyKey，以及 PushRouteV1 推送路由 schema。
+- `apps/cli` 新增 11 个测试文件：稳定 API 错误结构（api-error）、设备列表（device-list）、doctor、feed.dismiss.set 幂等（feed-dismiss）、hooks 事件级摘要（hook-config-summary）、集成探测（integration-probes）、探测缓存（probe-cache）、服务探测（service-inspect）、服务状态文件（service-state）、指令撤回（task-command-cancel）与任务偏好（task-preferences）。
+- `apps/web`：feedSequence 固定序列/锚定/移除调和、reconnect 退避控制器、OutboxSheet 撤回语义，以及直接引用 `@zimlo/protocol` 策略函数保证与 iOS 的向量一致性。
+- `apps/ios`：`VectorTests` 用 XCTest 读取同一组 JSON 向量逐 case 断言 `SharedRules.swift`；`BehaviorTests` 覆盖高风险双确认状态机、快照缓存 savedAt 迁移、dismiss/undo 乐观更新、outbox 撤回与快捷审批路由解析。在没有 iOS 模拟器运行时的机器上，纯逻辑层（`SharedRules.swift`、`QuickApprove.swift`，均不 import UIKit）可用 macOS SDK 的 swiftc 直接编译驱动向量与逻辑断言，作为 XCTest 之外的兜底验证方式。
+- `apps/macos`（`pnpm macos:test`）：`ServiceRecoveryTests`（22 个）覆盖退避/熔断、启动日志故障分类、端口占用解析、二维码倒计时与版本号；`ServiceContractsTests`（8 个）覆盖 manual-stop 标记、service.json 描述符与 /healthz 协议版本契约。
+- `landing-page`：waitlist 单元测试 18 个 + Worker 集成测试 8 个（`npm test` 随构建运行）。
+
 启动 Bridge 后可运行端到端加密握手 smoke：
 
 ```bash

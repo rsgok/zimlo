@@ -45,3 +45,14 @@ export async function resolveAgentCommand(command: "codex" | "claude"): Promise<
   }
   return null;
 }
+
+export async function detectInstalledProviders(): Promise<Array<"codex" | "claude">> {
+  const [codexCommand, claudeCommand] = await Promise.all([
+    resolveAgentCommand("codex"),
+    resolveAgentCommand("claude"),
+  ]);
+  return [
+    ...(codexCommand ? ["codex" as const] : []),
+    ...(claudeCommand ? ["claude" as const] : []),
+  ];
+}

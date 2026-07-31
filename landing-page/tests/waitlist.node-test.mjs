@@ -5,7 +5,6 @@ import {
   handleWaitlistPost,
   isValidEmail,
   isWaitlistEnabled,
-  MIN_SUBMIT_INTERVAL_MS,
   normalizeEmail,
   parseBetaEndedAt,
   parseWaitlistPayload,
@@ -72,19 +71,9 @@ test("parseWaitlistPayload silently ignores honeypot fills", () => {
   assert.equal(result.kind, "ignore");
 });
 
-test("parseWaitlistPayload silently ignores impossibly fast submits", () => {
-  assert.equal(
-    parseWaitlistPayload(validPayload({ startedAt: NOW - MIN_SUBMIT_INTERVAL_MS + 1 }), NOW).kind,
-    "ignore",
-  );
-  assert.equal(
-    parseWaitlistPayload(validPayload({ startedAt: NOW + 60_000 }), NOW).kind,
-    "ignore",
-  );
-  assert.equal(
-    parseWaitlistPayload(validPayload({ startedAt: NOW - MIN_SUBMIT_INTERVAL_MS }), NOW).kind,
-    "signup",
-  );
+test("parseWaitlistPayload accepts fast submissions because dwell time is client-controlled", () => {
+  assert.equal(parseWaitlistPayload(validPayload({ startedAt: NOW }), NOW).kind, "signup");
+  assert.equal(parseWaitlistPayload(validPayload({ startedAt: NOW + 60_000 }), NOW).kind, "signup");
 });
 
 test("parseWaitlistPayload rejects missing/invalid startedAt", () => {
@@ -128,10 +117,10 @@ function post(body, headers = {}) {
   });
 }
 
-test("handleWaitlistPost: new signup → 201, duplicate → 200 with identical copy", async () => {
+test("handleWaitlistPost: new and duplicate signups return the same 200 response", async () => {
   const store = memoryStore();
   const first = await handleWaitlistPost(post(validPayload()), store, NOW);
-  assert.equal(first.status, 201);
+  assert.equal(first.status, 200);
   const firstBody = await first.json();
   assert.equal(firstBody.message, WAITLIST_SUCCESS_MESSAGE);
 
@@ -158,7 +147,7 @@ test("handleWaitlistPost: invalid email / missing consent → 400, nothing store
   assert.equal(store.rows.length, 0);
 });
 
-test("handleWaitlistPost: honeypot and too-fast submits → 200, nothing stored", async () => {
+test("handleWaitlistPost: honeypot is ignored but a fast real signup is stored", async () => {
   const store = memoryStore();
   const honey = await handleWaitlistPost(post(validPayload({ website: "x" })), store, NOW);
   assert.equal(honey.status, 200);
@@ -167,7 +156,8 @@ test("handleWaitlistPost: honeypot and too-fast submits → 200, nothing stored"
   const fast = await handleWaitlistPost(post(validPayload({ startedAt: NOW })), store, NOW);
   assert.equal(fast.status, 200);
 
-  assert.equal(store.rows.length, 0);
+  assert.equal(store.rows.length, 1);
+  assert.equal(store.rows[0].email, "kai@example.com");
 });
 
 test("handleWaitlistPost: malformed JSON → 400, oversized bodies → 413", async () => {

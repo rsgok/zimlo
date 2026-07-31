@@ -44,7 +44,7 @@ private struct OnboardingSidebar: View {
                 ZimloMark(size: 38)
                 VStack(alignment: .leading, spacing: 1) {
                     Text("ZIMLO").font(.system(size: 15, weight: .black, design: .rounded))
-                    Text("把 Agent 带在身边").font(.system(size: 10, weight: .semibold))
+                    Text("把 Agent 带在身边").font(.system(size: 11, weight: .semibold))
                         .foregroundStyle(.white.opacity(0.46))
                 }
             }
@@ -59,11 +59,11 @@ private struct OnboardingSidebar: View {
                                 .frame(width: 25, height: 25)
                             if index < step {
                                 Image(systemName: "checkmark")
-                                    .font(.system(size: 10, weight: .black))
+                                    .font(.system(size: 11, weight: .black))
                                     .foregroundStyle(ZColor.ink)
                             } else {
                                 Text("\(index + 1)")
-                                    .font(.system(size: 10, weight: .black, design: .monospaced))
+                                    .font(.system(size: 11, weight: .black, design: .monospaced))
                                     .foregroundStyle(index == step ? ZColor.ink : .white.opacity(0.44))
                             }
                         }
@@ -75,7 +75,7 @@ private struct OnboardingSidebar: View {
             }
             Spacer()
             Text("任务正文和代码不会存进云端")
-                .font(.system(size: 10, weight: .medium))
+                .font(.system(size: 11, weight: .medium))
                 .foregroundStyle(.white.opacity(0.35))
         }
         .padding(30)
@@ -112,10 +112,18 @@ private struct WelcomeStep: View {
             PrimaryButton("继续", disabled: !model.service.isReady) {
                 model.onboarding.step = 1
             }
+            if case .manualStopped = model.service.state {
+                VStack(alignment: .trailing, spacing: 5) {
+                    Text("后台服务已通过 zimlo stop 手动停止。")
+                        .font(.system(size: 11, weight: .semibold)).foregroundStyle(ZColor.muted)
+                    Button("启动服务") { Task { await model.service.retry() } }
+                        .buttonStyle(.plain).font(.system(size: 11, weight: .bold))
+                }
+            }
             if case .unavailable(let message) = model.service.state {
                 VStack(alignment: .trailing, spacing: 5) {
                     Text(message).font(.system(size: 11, weight: .semibold)).foregroundStyle(ZColor.coral)
-                    Button("重新准备") { Task { await model.service.start() } }
+                    Button("重新准备") { Task { await model.service.retry() } }
                         .buttonStyle(.plain).font(.system(size: 11, weight: .bold))
                 }
             }
@@ -160,6 +168,18 @@ private struct AgentStep: View {
                 .font(.system(size: 12, weight: .bold))
                 .foregroundStyle(ZColor.muted)
             Spacer()
+            if let issue = model.service.integrationIssue {
+                VStack(alignment: .trailing, spacing: 2) {
+                    Text(issue.message)
+                    if let action = issue.action {
+                        Text(action).foregroundStyle(ZColor.muted)
+                    }
+                }
+                .font(.system(size: 11, weight: .semibold))
+                .foregroundStyle(ZColor.coral)
+                .lineLimit(2)
+                .frame(maxWidth: 280, alignment: .trailing)
+            }
             if !allReady {
                 SecondaryButton(model.service.busy ? "正在连接…" : "一键连接") {
                     Task { await model.service.installIntegration("all") }
@@ -266,6 +286,15 @@ struct MenuPanel: View {
     @ObservedObject var model: AppModel
     @State private var launchAtLogin = SMAppService.mainApp.status == .enabled
 
+    private var subtitle: String {
+        switch model.service.state {
+        case .ready: "正在守候重要任务"
+        case .starting: "正在准备后台服务"
+        case .manualStopped: "已手动停止"
+        case .unavailable: "需要修复"
+        }
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             HStack {
@@ -274,8 +303,8 @@ struct MenuPanel: View {
                     Text("Zimlo")
                         .font(.system(size: 15, weight: .black, design: .rounded))
                         .foregroundStyle(ZColor.ink)
-                    Text(model.service.isReady ? "正在守候重要任务" : "正在恢复连接")
-                        .font(.system(size: 10, weight: .semibold))
+                    Text(subtitle)
+                        .font(.system(size: 11, weight: .semibold))
                         .foregroundStyle(ZColor.muted)
                 }
                 Spacer()
@@ -285,9 +314,28 @@ struct MenuPanel: View {
             }
             .padding(18)
 
+            if case .unavailable(let message) = model.service.state {
+                Text(message)
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundStyle(ZColor.coral)
+                    .lineLimit(4)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .padding(.horizontal, 18)
+                    .padding(.bottom, 12)
+            }
+
             Divider()
 
             VStack(spacing: 4) {
+                if case .manualStopped = model.service.state {
+                    MenuAction(icon: "play", label: "启动服务") {
+                        Task { await model.service.retry() }
+                    }
+                } else if !model.service.isReady {
+                    MenuAction(icon: "arrow.clockwise", label: "重试") {
+                        Task { await model.service.retry() }
+                    }
+                }
                 MenuAction(icon: "rectangle.stack", label: "打开 Zimlo") {
                     model.service.openDashboard()
                 }
@@ -298,6 +346,12 @@ struct MenuPanel: View {
                 MenuAction(icon: "wand.and.stars", label: "设置 Agent") {
                     model.onboarding.step = 1
                     WindowCoordinator.shared.showOnboarding()
+                }
+                MenuAction(icon: "doc.text.magnifyingglass", label: "查看日志") {
+                    model.service.openLog()
+                }
+                MenuAction(icon: "folder", label: "打开服务目录") {
+                    model.service.openServiceDirectory()
                 }
                 if model.updates.isConfigured {
                     MenuAction(icon: "arrow.triangle.2.circlepath", label: "检查更新") {
@@ -335,9 +389,9 @@ struct MenuPanel: View {
                     .buttonStyle(.plain)
                     .foregroundStyle(ZColor.ink)
                 Spacer()
-                Text("0.3 Beta").foregroundStyle(ZColor.muted)
+                Text(AppVersion.display).foregroundStyle(ZColor.muted)
             }
-            .font(.system(size: 10, weight: .semibold))
+            .font(.system(size: 11, weight: .semibold))
             .padding(16)
         }
         .frame(width: 310)
@@ -384,39 +438,82 @@ private struct PairingCard: View {
 
     var body: some View {
         VStack(spacing: 13) {
-            ZStack {
-                RoundedRectangle(cornerRadius: 20, style: .continuous)
-                    .fill(.white)
-                if isPaired {
-                    VStack(spacing: 12) {
-                        ZStack {
-                            Circle().fill(ZColor.acid).frame(width: 72, height: 72)
-                            Image(systemName: "checkmark")
-                                .font(.system(size: 30, weight: .black))
-                                .foregroundStyle(ZColor.ink)
+            TimelineView(.periodic(from: .now, by: 1)) { context in
+                let expiresAt = service.pairing?.expiresAtDate
+                let expired = expiresAt.map { PairingCountdown.isExpired(expiresAt: $0, now: context.date) } ?? false
+                VStack(spacing: 13) {
+                    ZStack {
+                        RoundedRectangle(cornerRadius: 20, style: .continuous)
+                            .fill(.white)
+                        if isPaired {
+                            VStack(spacing: 12) {
+                                ZStack {
+                                    Circle().fill(ZColor.acid).frame(width: 72, height: 72)
+                                    Image(systemName: "checkmark")
+                                        .font(.system(size: 30, weight: .black))
+                                        .foregroundStyle(ZColor.ink)
+                                }
+                                Text("iPhone 已连接")
+                                    .font(.system(size: 13, weight: .black))
+                                    .foregroundStyle(ZColor.ink)
+                            }
+                        } else if let image = service.pairing?.qrImage {
+                            Image(nsImage: image)
+                                .resizable()
+                                .interpolation(.none)
+                                .scaledToFit()
+                                .padding(16)
+                                .grayscale(expired ? 1 : 0)
+                                .opacity(expired ? 0.25 : 1)
+                            if expired {
+                                Text("已过期")
+                                    .font(.system(size: 11, weight: .black))
+                                    .padding(.horizontal, 12)
+                                    .padding(.vertical, 6)
+                                    .background(ZColor.ink)
+                                    .foregroundStyle(.white)
+                                    .clipShape(Capsule())
+                            }
+                        } else if service.busy {
+                            ProgressView().controlSize(.large)
+                        } else {
+                            Image(systemName: "wifi.exclamationmark")
+                                .font(.system(size: 28, weight: .medium))
+                                .foregroundStyle(ZColor.muted)
                         }
-                        Text("iPhone 已连接")
-                            .font(.system(size: 13, weight: .black))
-                            .foregroundStyle(ZColor.ink)
                     }
-                } else if let image = service.pairing?.qrImage {
-                    Image(nsImage: image)
-                        .resizable()
-                        .interpolation(.none)
-                        .scaledToFit()
-                        .padding(16)
-                } else if service.busy {
-                    ProgressView().controlSize(.large)
-                } else {
-                    Image(systemName: "wifi.exclamationmark")
-                        .font(.system(size: 28, weight: .medium))
-                        .foregroundStyle(ZColor.muted)
+                    .frame(width: 222, height: 222)
+                    .overlay(RoundedRectangle(cornerRadius: 20).stroke(Color.black.opacity(0.08)))
+
+                    if !isPaired, let expiresAt {
+                        if expired {
+                            Label("二维码已过期，请刷新", systemImage: "exclamationmark.triangle")
+                                .font(.system(size: 11, weight: .bold))
+                                .foregroundStyle(ZColor.coral)
+                        } else {
+                            Label("二维码 \(PairingCountdown.remainingSeconds(expiresAt: expiresAt, now: context.date)) 秒后失效", systemImage: "timer")
+                                .font(.system(size: 11, weight: .bold))
+                                .foregroundStyle(ZColor.muted)
+                                .monospacedDigit()
+                        }
+                    }
                 }
             }
-            .frame(width: 222, height: 222)
-            .overlay(RoundedRectangle(cornerRadius: 20).stroke(Color.black.opacity(0.08)))
 
             if !isPaired {
+                if let issue = service.pairingIssue {
+                    VStack(spacing: 2) {
+                        Text(issue.message)
+                        if let action = issue.action {
+                            Text(action).foregroundStyle(ZColor.muted)
+                        }
+                    }
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundStyle(ZColor.coral)
+                    .lineLimit(2)
+                    .multilineTextAlignment(.center)
+                    .frame(maxWidth: 240)
+                }
                 Button("刷新二维码") {
                     Task { await service.createPairing() }
                 }
@@ -461,13 +558,13 @@ private struct IntegrationCard: View {
             VStack(alignment: .leading, spacing: 4) {
                 Text(label).font(.system(size: 13, weight: .bold))
                 Text(detail)
-                    .font(.system(size: 10, weight: .medium))
+                    .font(.system(size: 11, weight: .medium))
                     .foregroundStyle(ZColor.muted)
                     .lineLimit(2)
             }
             Spacer()
             Text(ready ? "已连接" : "可稍后连接")
-                .font(.system(size: 9, weight: .black))
+                .font(.system(size: 11, weight: .black))
                 .padding(.horizontal, 9)
                 .padding(.vertical, 6)
                 .background(ready ? ZColor.acid : Color.black.opacity(0.06))
@@ -503,7 +600,7 @@ private struct StatusPill: View {
         HStack(spacing: 7) {
             Circle().fill(ready ? ZColor.acid : Color.orange).frame(width: 7, height: 7)
             Text(label.uppercased())
-                .font(.system(size: 10, weight: .black, design: .monospaced))
+                .font(.system(size: 11, weight: .black, design: .monospaced))
         }
         .padding(.horizontal, 11)
         .padding(.vertical, 7)
@@ -519,7 +616,7 @@ private struct ValueChip: View {
 
     var body: some View {
         Label(text, systemImage: icon)
-            .font(.system(size: 10, weight: .bold))
+            .font(.system(size: 11, weight: .bold))
             .padding(.horizontal, 11)
             .padding(.vertical, 8)
             .background(Color.black.opacity(0.055))
@@ -589,7 +686,7 @@ private struct MenuAction: View {
                 Text(label)
                 Spacer()
                 Image(systemName: "chevron.right")
-                    .font(.system(size: 9, weight: .bold))
+                    .font(.system(size: 11, weight: .bold))
                     .foregroundStyle(ZColor.muted)
             }
             .font(.system(size: 12, weight: .semibold))

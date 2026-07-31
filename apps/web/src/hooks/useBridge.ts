@@ -23,13 +23,18 @@ import {
 } from "../lib/credentials";
 import { isInternalZimloAction, normalizeFeedPost, normalizeSnapshot } from "../lib/feedCompatibility";
 import {
+  clearDeviceLocalData,
   enqueueCommand,
   isDurableCommand,
+  isOutboxEntryCancelable,
+  outboxEntryIdempotencyKey,
+  patchOutboxEntries,
   readCommandOutbox,
   removeAcknowledged,
   saveCommandOutbox,
   type CommandOutboxEntry,
 } from "../lib/commandOutbox";
+import { ReconnectController } from "../lib/reconnect";
 
 const EMPTY_SNAPSHOT: Snapshot = {
   userProfile: { avatarId: "user-01", updatedAt: "" },
@@ -94,6 +99,14 @@ interface BridgeState {
   notice: string | null;
   pendingOutboxCount: number;
   pendingCommandEntries: CommandOutboxEntry[];
+  /** 已连续重连失败的次数（下一次尝试的序号） */
+  reconnectAttempt: number;
+  /** 下一次自动重试的时间戳；无计划时为 null */
+  nextRetryAt: number | null;
+  /** 因设备离线而暂停重连计时 */
+  reconnectPausedOffline: boolean;
+  /** 当前快照的落盘/到达时间，断线时展示"数据更新于 X 分钟前" */
+  snapshotSavedAt: string | null;
 }
 
 function isLocalHost(): boolean {
@@ -175,9 +188,31 @@ function upsertById<T extends { id: string }>(values: T[], value: T): T[] {
   return next;
 }
 
+// 快照到达时按权威状态吸收 outbox 意图（dismiss 两个方向、pin/archive）。
+function snapshotSatisfies(command: ClientCommand, snapshot: Snapshot): boolean {
+  switch (command.type) {
+    case "feed.dismiss":
+      return snapshot.dismissedFeedItemIds.includes(command.itemId);
+    case "feed.dismiss.set":
+      return snapshot.dismissedFeedItemIds.includes(command.itemId) === command.dismissed;
+    case "task.pin": {
+      const preference = snapshot.taskPreferences.find((candidate) => candidate.sessionId === command.sessionId);
+      return Boolean(preference?.pinnedAt) === command.pinned;
+    }
+    case "task.archive": {
+      const preference = snapshot.taskPreferences.find((candidate) => candidate.sessionId === command.sessionId);
+      return Boolean(preference?.archivedAt) === command.archived;
+    }
+    default:
+      return false;
+  }
+}
+
 export function useBridge() {
   const outboxRef = useRef<CommandOutboxEntry[]>(readCommandOutbox());
   const rawSendRef = useRef<(command: ClientCommand) => boolean>(() => false);
+  const reconnectRef = useRef<ReconnectController | null>(null);
+  const snapshotPersistRef = useRef<{ timer: number | null; latest: Snapshot | null }>({ timer: null, latest: null });
   const [state, setState] = useState<BridgeState>({
     snapshot: EMPTY_SNAPSHOT,
     events: {},
@@ -193,19 +228,79 @@ export function useBridge() {
     notice: null,
     pendingOutboxCount: outboxRef.current.length,
     pendingCommandEntries: outboxRef.current,
+    reconnectAttempt: 0,
+    nextRetryAt: null,
+    reconnectPausedOffline: false,
+    snapshotSavedAt: null,
   });
   const sendRef = useRef<(command: ClientCommand) => boolean>(() => false);
+
+  const replaceOutbox = useCallback((entries: CommandOutboxEntry[]) => {
+    outboxRef.current = entries;
+    saveCommandOutbox(entries);
+    setState((current) => ({ ...current, pendingOutboxCount: entries.length, pendingCommandEntries: entries }));
+  }, []);
+
+  const markOutboxFailed = useCallback((predicate: (entry: CommandOutboxEntry) => boolean, message: string) => {
+    const next = patchOutboxEntries(outboxRef.current, predicate, (entry) => ({ ...entry, state: "failed" as const, error: message }));
+    if (next !== outboxRef.current) replaceOutbox(next);
+  }, [replaceOutbox]);
+
+  const cancelOutboxEntry = useCallback((entryId: string): boolean => {
+    const entry = outboxRef.current.find((candidate) => candidate.id === entryId);
+    if (!entry || !isOutboxEntryCancelable(entry)) return false;
+    const idempotencyKey = outboxEntryIdempotencyKey(entry);
+    if (entry.state !== "queued" && idempotencyKey) {
+      // 先把撤回意图加入持久 outbox；只有落盘成功后才移除原指令。
+      if (!sendRef.current({ type: "task.command.cancel", idempotencyKey })) return false;
+    }
+    replaceOutbox(removeAcknowledged(outboxRef.current, (candidate) => candidate.id === entryId));
+    return true;
+  }, [replaceOutbox]);
+
+  const retryOutboxEntry = useCallback((entryId: string): boolean => {
+    const entry = outboxRef.current.find((candidate) => candidate.id === entryId);
+    if (!entry) return false;
+    const sent = rawSendRef.current(entry.command);
+    replaceOutbox(patchOutboxEntries(outboxRef.current, (candidate) => candidate.id === entryId, (candidate) => {
+      const next = { ...candidate, state: (sent ? "sent" : "queued") as CommandOutboxEntry["state"] & string };
+      delete next.error;
+      return next;
+    }));
+    return sent;
+  }, [replaceOutbox]);
+
+  const removeOutboxEntry = useCallback((entryId: string): void => {
+    replaceOutbox(removeAcknowledged(outboxRef.current, (candidate) => candidate.id === entryId));
+  }, [replaceOutbox]);
+
+  const retryReconnectNow = useCallback(() => reconnectRef.current?.retryNow(), []);
 
   useEffect(() => {
     let disposed = false;
     let socket: WebSocket | null = null;
-    let reconnectTimer: number | null = null;
+    let credentialsValue: DeviceCredentials | null = null;
+    let nextMode: "local" | "cloud" = "local";
 
-    const replaceOutbox = (entries: CommandOutboxEntry[]) => {
-      outboxRef.current = entries;
-      saveCommandOutbox(entries);
-      setState((current) => ({ ...current, pendingOutboxCount: entries.length, pendingCommandEntries: entries }));
-    };
+    const controller = new ReconnectController(
+      {
+        connect: () => {
+          if (credentialsValue) connect(credentialsValue, nextMode);
+        },
+        isOnline: () => navigator.onLine,
+        setTimeout: (callback, delayMs) => window.setTimeout(callback, delayMs),
+        clearTimeout: (id) => window.clearTimeout(id),
+        random: Math.random,
+      },
+      () => Boolean(credentialsValue?.remoteRelayURL && credentialsValue?.remoteAccessToken),
+      (reconnect) => setState((current) => ({
+        ...current,
+        reconnectAttempt: reconnect.attempt,
+        nextRetryAt: reconnect.nextRetryAt,
+        reconnectPausedOffline: reconnect.pausedOffline,
+      })),
+    );
+    reconnectRef.current = controller;
 
     const acknowledge = (message: ServerMessage) => {
       const next = removeAcknowledged(outboxRef.current, (entry) => {
@@ -215,12 +310,22 @@ export function useBridge() {
             if (command.type === "task.command.retry") return message.command.id === command.commandId;
             return (command.type === "task.create" || command.type === "task.follow_up" || command.type === "session.message")
               && (message.command.idempotencyKey === command.idempotencyKey || message.command.idempotencyKey.endsWith(`:${command.idempotencyKey}`));
+          case "task.command.cancel.result":
+            return command.type === "task.command.cancel"
+              && ((message.commandId !== undefined && command.commandId === message.commandId)
+                || (message.idempotencyKey !== undefined && command.idempotencyKey === message.idempotencyKey));
           case "action.result":
-            return message.ok && command.type === "action.decide" && command.actionId === message.actionId;
+            return command.type === "action.decide" && command.actionId === message.actionId;
           case "session.message.result":
             return message.ok && command.type === "session.message" && command.sessionId === message.sessionId;
           case "feed.dismissed.updated":
-            return command.type === "feed.dismiss" && command.itemId === message.itemId;
+            return (command.type === "feed.dismiss" && command.itemId === message.itemId)
+              || (command.type === "feed.dismiss.set" && command.itemId === message.itemId && command.dismissed);
+          case "task.preference.updated":
+            return (command.type === "task.pin" && command.sessionId === message.preference.sessionId && command.pinned === Boolean(message.preference.pinnedAt))
+              || (command.type === "task.archive" && command.sessionId === message.preference.sessionId && command.archived === Boolean(message.preference.archivedAt));
+          case "session.snapshot":
+            return snapshotSatisfies(command, message.snapshot);
           case "project.updated":
             return command.type === "agent.profile.update"
               && command.projectId === message.project.id
@@ -257,12 +362,23 @@ export function useBridge() {
         return false;
       }
       outboxRef.current = queued.entries;
-      const sent = rawSendRef.current(queued.entry.command);
+      // 语义键去重命中且已发送过的条目不重复发送（服务端始终只执行一次）；
+      // 替换型命令（最新意图胜出）或失败条目会重新发送。
+      const shouldSend = queued.added || queued.entry.state !== "sent";
+      const sent = shouldSend && rawSendRef.current(queued.entry.command);
+      const stamped = patchOutboxEntries(queued.entries, (entry) => entry.id === queued.entry.id, (entry) => ({
+        ...entry,
+        state: (sent || !shouldSend ? "sent" : "queued") as CommandOutboxEntry["state"] & string,
+      }));
+      if (stamped !== queued.entries) {
+        outboxRef.current = stamped;
+        saveCommandOutbox(stamped);
+      }
       setState((current) => ({
         ...current,
-        pendingOutboxCount: queued.entries.length,
-        pendingCommandEntries: queued.entries,
-        notice: sent
+        pendingOutboxCount: outboxRef.current.length,
+        pendingCommandEntries: outboxRef.current,
+        notice: sent || !shouldSend
           ? (queued.added ? "指令已发送，等待 Bridge 确认。" : "这条指令已在队列中，不会重复发送。")
           : "指令已保存在本机，将在重连后自动发送。",
       }));
@@ -271,10 +387,17 @@ export function useBridge() {
 
     const applyMessage = (message: ServerMessage) => {
       acknowledge(message);
+      switch (message.type) {
+        case "session.message.result":
+          if (!message.ok) markOutboxFailed((entry) => entry.command.type === "session.message" && entry.command.sessionId === message.sessionId, message.message);
+          break;
+        default:
+          break;
+      }
       setState((current) => {
         switch (message.type) {
           case "session.snapshot":
-            return { ...current, snapshot: normalizeSnapshot(message.snapshot), error: null };
+            return { ...current, snapshot: normalizeSnapshot(message.snapshot), error: null, snapshotSavedAt: new Date().toISOString() };
           case "project.updated":
             return { ...current, snapshot: { ...current.snapshot, projects: upsertById(current.snapshot.projects, message.project) } };
           case "user.profile.updated":
@@ -378,6 +501,7 @@ export function useBridge() {
           case "capabilities.changed":
             return { ...current, snapshot: { ...current.snapshot, sessions: current.snapshot.sessions.map((session) => session.id === message.sessionId ? { ...session, capabilities: message.capabilities } : session) } };
           case "action.result":
+          case "task.command.cancel.result":
           case "session.message.result":
             return { ...current, notice: message.message };
           case "error":
@@ -429,8 +553,14 @@ export function useBridge() {
             const keys = deriveConnectionKeys(deviceKey, clientNonce, fromBase64Url(value.serverNonce));
             clientTx = keys.clientTx;
             serverTx = keys.serverTx;
+            controller.notifyConnected();
             setState((current) => ({ ...current, connected: true, connectionMode: mode, error: null }));
-            for (const entry of outboxRef.current) rawSendRef.current(entry.command);
+            // 重连重放：失败条目等用户处理，其余按原幂等键重发。
+            const replayed = patchOutboxEntries(outboxRef.current, (entry) => entry.state !== "failed", (entry) => ({ ...entry, state: "sent" as const }));
+            for (const entry of replayed) {
+              if (entry.state === "sent") rawSendRef.current(entry.command);
+            }
+            if (replayed !== outboxRef.current) replaceOutbox(replayed);
             return;
           }
           if (value.type !== "secure" || typeof value.counter !== "number" || typeof value.ciphertext !== "string" || !serverTx) return;
@@ -452,25 +582,37 @@ export function useBridge() {
           ...(event.code === 1008 ? { error: "设备身份已失效或被撤销，请重新配对。" } : {}),
         }));
         if (!disposed && event.code !== 1008) {
-          const nextMode = credentials.remoteRelayURL && credentials.remoteAccessToken
-            ? (mode === "local" ? "cloud" : "local")
-            : "local";
-          reconnectTimer = window.setTimeout(() => connect(credentials, nextMode), 1_500);
+          const hasRemote = Boolean(credentials.remoteRelayURL && credentials.remoteAccessToken);
+          nextMode = hasRemote ? (mode === "local" ? "cloud" : "local") : "local";
+          controller.notifyDisconnected();
         }
       };
     };
+
+    const onForeground = () => {
+      if (document.visibilityState === "visible") controller.notifyForeground();
+    };
+    const onOnline = () => controller.notifyOnline();
+    const onOffline = () => controller.notifyOffline();
+    document.addEventListener("visibilitychange", onForeground);
+    window.addEventListener("online", onOnline);
+    window.addEventListener("offline", onOffline);
 
     void readCachedSnapshot().then((cached) => {
       if (cached && !disposed) {
         setState((current) => current.snapshot.sequence > 0
           ? current
-          : { ...current, snapshot: normalizeSnapshot(cached) });
+          : { ...current, snapshot: normalizeSnapshot(cached.snapshot), snapshotSavedAt: cached.savedAt });
       }
       return loadCredentials();
     }).then(({ credentials, localAdmin }) => {
       if (disposed) return;
+      credentialsValue = credentials;
       setState((current) => ({ ...current, localAdmin, pairingRequired: !credentials }));
-      if (credentials) connect(credentials);
+      if (credentials) {
+        nextMode = "local";
+        connect(credentials, "local");
+      }
     }).catch((error: unknown) => {
       setState((current) => ({ ...current, pairingRequired: true, error: error instanceof Error ? error.message : String(error) }));
     });
@@ -478,20 +620,54 @@ export function useBridge() {
     return () => {
       disposed = true;
       rawSendRef.current = () => false;
-      if (reconnectTimer !== null) window.clearTimeout(reconnectTimer);
+      controller.dispose();
+      reconnectRef.current = null;
+      document.removeEventListener("visibilitychange", onForeground);
+      window.removeEventListener("online", onOnline);
+      window.removeEventListener("offline", onOffline);
       socket?.close();
     };
-  }, []);
+  }, [markOutboxFailed, replaceOutbox]);
 
+  // 快照落盘节流：1.5s trailing debounce，最多每 1.5s 全量序列化一次；卸载时 flush。
   useEffect(() => {
-    if (state.snapshot.sequence > 0) void saveCachedSnapshot(state.snapshot);
+    if (state.snapshot.sequence === 0) return;
+    const persist = snapshotPersistRef.current;
+    persist.latest = state.snapshot;
+    if (persist.timer !== null) return;
+    persist.timer = window.setTimeout(() => {
+      persist.timer = null;
+      const latest = persist.latest;
+      persist.latest = null;
+      if (latest) void saveCachedSnapshot(latest);
+    }, 1_500);
   }, [state.snapshot]);
+
+  useEffect(() => () => {
+    const persist = snapshotPersistRef.current;
+    if (persist.timer !== null) window.clearTimeout(persist.timer);
+    persist.timer = null;
+    if (persist.latest) void saveCachedSnapshot(persist.latest);
+    persist.latest = null;
+  }, []);
 
   const send = useCallback((command: ClientCommand) => sendRef.current(command), []);
   const dismissNotice = useCallback(() => setState((current) => ({ ...current, notice: null })), []);
+  const dismissError = useCallback(() => setState((current) => ({ ...current, error: null })), []);
   const forgetDevice = useCallback(async () => {
     await clearCredentials();
+    clearDeviceLocalData();
     window.location.reload();
   }, []);
-  return { ...state, send, dismissNotice, forgetDevice };
+  return {
+    ...state,
+    send,
+    dismissNotice,
+    dismissError,
+    forgetDevice,
+    cancelOutboxEntry,
+    retryOutboxEntry,
+    removeOutboxEntry,
+    retryReconnectNow,
+  };
 }

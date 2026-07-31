@@ -12,8 +12,13 @@ struct ZimloApp: App {
                 .preferredColorScheme(.dark)
                 .onAppear { model.start() }
                 .onChange(of: scenePhase) { _, phase in
-                    if phase == .active { model.start() }
-                    else if phase == .background { model.stop() }
+                    if phase == .active {
+                        model.start()
+                        // 回前台重检测通知权限（用户可能刚从系统设置回来）。
+                        model.refreshNotificationPermission()
+                    } else if phase == .background {
+                        model.stop()
+                    }
                 }
         }
     }

@@ -436,6 +436,24 @@ export const PushDeviceRegistrationSchema = z.object({
 });
 export type PushDeviceRegistration = z.infer<typeof PushDeviceRegistrationSchema>;
 
+// Versioned payload sealed into push routes (sealPushRoute). Version 1 keeps
+// the original sessionId/taskTitle fields and adds optional deep-link fields
+// so a notification can jump straight to a pending approval. For low-risk
+// approvals, `decision`/`denyDecision` carry the once-allow and deny decision
+// ids so the lock screen can offer both quick actions without a round trip;
+// the server still re-validates state, device permission and idempotency.
+export const PushRouteV1Schema = z.object({
+  version: z.literal(1),
+  sessionId: z.string(),
+  taskTitle: z.string().optional(),
+  actionId: z.string().optional(),
+  decision: z.string().optional(),
+  denyDecision: z.string().optional(),
+  expiresAt: z.string().optional(),
+  category: ApprovalCategorySchema.optional(),
+});
+export type PushRouteV1 = z.infer<typeof PushRouteV1Schema>;
+
 export const FeatureCapabilitiesSchema = z.object({
   taskReview: z.boolean(),
   projectTrustPolicy: z.boolean(),
@@ -518,11 +536,27 @@ export const ClientCommandSchema = z.discriminatedUnion("type", [
     commandId: z.string(),
     idempotencyKey: z.string(),
   }),
+  // 服务端仅允许取消 queued 状态的命令；dispatching/running/终态返回 command_not_cancelable。
+  z.object({
+    type: z.literal("task.command.cancel"),
+    commandId: z.string().optional(),
+    idempotencyKey: z.string().optional(),
+  }).superRefine((command, context) => {
+    if ((command.commandId === undefined) === (command.idempotencyKey === undefined)) {
+      context.addIssue({ code: "custom", message: "commandId 与 idempotencyKey 必须恰选其一" });
+    }
+  }),
   z.object({ type: z.literal("feed.seen"), postId: z.string() }),
   z.object({ type: z.literal("feed.dismiss"), itemId: z.string().min(1).max(240) }),
+  z.object({
+    type: z.literal("feed.dismiss.set"),
+    itemId: z.string().min(1).max(240),
+    dismissed: z.boolean(),
+    idempotencyKey: z.string(),
+  }),
   z.object({ type: z.literal("task.timeline.seen"), sessionId: z.string(), itemId: z.string().min(1).max(240) }),
-  z.object({ type: z.literal("task.pin"), sessionId: z.string(), pinned: z.boolean() }),
-  z.object({ type: z.literal("task.archive"), sessionId: z.string(), archived: z.boolean() }),
+  z.object({ type: z.literal("task.pin"), sessionId: z.string(), pinned: z.boolean(), idempotencyKey: z.string().optional() }),
+  z.object({ type: z.literal("task.archive"), sessionId: z.string(), archived: z.boolean(), idempotencyKey: z.string().optional() }),
   z.object({
     type: z.literal("review.respond"),
     reviewId: z.string(),
@@ -590,6 +624,7 @@ export type ServerMessage =
   | { type: "feed.posted"; post: FeedPost }
   | { type: "task.updated"; task: TaskRecord }
   | { type: "task.command.updated"; command: TaskCommand }
+  | { type: "task.command.cancel.result"; commandId?: string; idempotencyKey?: string; ok: boolean; message: string }
   | { type: "feed.seen.updated"; postId: string }
   | { type: "feed.dismissed.updated"; itemId: string }
   | { type: "task.timeline.seen.updated"; sessionId: string; itemId: string }
@@ -640,3 +675,5 @@ export const EMPTY_CAPABILITIES: SessionCapabilities = {
   resumable: true,
   diffAvailable: false,
 };
+
+export * from "./policy.js";

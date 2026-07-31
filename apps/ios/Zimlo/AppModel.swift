@@ -11,7 +11,7 @@ enum MainTab: String, CaseIterable {
     case settings
 }
 
-struct FeedEntry: Identifiable, Hashable {
+struct FeedEntry: Identifiable, Hashable, FeedOrderable {
     enum Content: Hashable {
         case post(FeedPost)
         case action(PendingAction)
@@ -28,19 +28,29 @@ struct FeedEntry: Identifiable, Hashable {
     let content: Content
 }
 
+struct NoticeAction {
+    let label: String
+    let perform: () -> Void
+}
+
 @MainActor
 final class AppModel: ObservableObject {
     let bridge = BridgeClient()
 
-    @Published var snapshot = SnapshotCache.load() ?? .empty
+    @Published var snapshot: Snapshot
+    @Published var snapshotSavedAt: Date?
     @Published var events: [String: [UnifiedEvent]] = [:]
     @Published var selectedTab: MainTab = .feed
     @Published var selectedSession: AgentSession?
     @Published var selectedProject: Project?
     @Published var showingNewTask = false
+    @Published var showingOutbox = false
     @Published var newTaskProjectId: String?
-    @Published var notice: String?
+    @Published private(set) var notice: String?
+    @Published private(set) var noticeAction: NoticeAction?
     @Published var notificationPermission = "正在检查"
+    // 冷启动点通知时本地还没有这条 session：保留可重试路由，直到成功打开。
+    @Published private(set) var pendingRouteSessionId: String?
 
     private var bridgeObserver: AnyCancellable?
     private var outbox: [OutboxEntry] = []
@@ -48,6 +58,10 @@ final class AppModel: ObservableObject {
     private let outboxKey = "zimlo.native.command-outbox.v1"
 
     init() {
+        let cached = SnapshotCache.loadEnvelope()
+        snapshot = cached?.snapshot ?? .empty
+        snapshotSavedAt = cached?.savedAt
+        pendingRouteSessionId = UserDefaults.standard.string(forKey: "zimlo.pending-push-route")
         outbox = (try? JSONDecoder().decode(
             [OutboxEntry].self,
             from: UserDefaults.standard.data(forKey: outboxKey) ?? Data()
@@ -70,14 +84,18 @@ final class AppModel: ObservableObject {
         }
         NotificationManager.shared.onRoute = { [weak self] sessionId in
             guard let self else { return }
-            if self.snapshot.sessions.contains(where: { $0.id == sessionId }) {
-                self.openTask(sessionId: sessionId)
-            } else {
-                UserDefaults.standard.set(sessionId, forKey: "zimlo.pending-push-route")
-                self.notice = "任务状态将在连接 Mac 后打开"
-            }
+            self.routeToTask(sessionId: sessionId)
         }
-        NotificationManager.shared.onError = { [weak self] message in self?.notice = message }
+        NotificationManager.shared.onError = { [weak self] message in self?.showNotice(message) }
+        NotificationManager.shared.onQuickDecide = { [weak self] actionId, sessionId, decisionId, key in
+            self?.quickDecide(actionId: actionId, sessionId: sessionId, decisionId: decisionId, idempotencyKey: key)
+        }
+        NotificationManager.shared.onQuickExpired = { [weak self] sessionId in
+            guard let self else { return }
+            self.showNotice("该审批已过期，请在任务中查看最新状态", action: NoticeAction(label: "查看任务") {
+                self.routeToTask(sessionId: sessionId)
+            })
+        }
         Task { [weak self] in
             let status = await NotificationManager.shared.authorizationStatus()
             self?.notificationPermission = Self.notificationPermissionLabel(status)
@@ -102,6 +120,18 @@ final class AppModel: ObservableObject {
     }
 
     var pendingOutboxCount: Int { outbox.count }
+    var outboxEntries: [OutboxEntry] { outbox }
+
+    func showNotice(_ text: String, action: NoticeAction? = nil) {
+        notice = text
+        noticeAction = action
+    }
+
+    func clearNotice(_ expected: String? = nil) {
+        guard expected == nil || notice == expected else { return }
+        notice = nil
+        noticeAction = nil
+    }
 
     var feedEntries: [FeedEntry] {
         let dismissed = Set(snapshot.dismissedFeedItemIds)
@@ -115,22 +145,36 @@ final class AppModel: ObservableObject {
             guard let sessionId = task.sessionId else { continue }
             if task.updatedAt > (taskBySession[sessionId]?.updatedAt ?? "") { taskBySession[sessionId] = task }
         }
+        // 每个任务（sessionId ?? taskId 分组）最新的 result/failure 时间，用于覆盖判定。
+        var latestOutcomeByTask: [String: String] = [:]
+        for post in snapshot.posts where FeedRules.outcomeKinds.contains(post.kind) {
+            let key = post.sessionId ?? post.taskId
+            if post.createdAt > (latestOutcomeByTask[key] ?? "") { latestOutcomeByTask[key] = post.createdAt }
+        }
 
-        var entries = mergedPosts(snapshot.posts).map { post -> FeedEntry in
+        var entries = FeedRules.mergeRoutinePosts(snapshot.posts).map { post -> FeedEntry in
             let task = taskById[post.taskId] ?? post.sessionId.flatMap { taskBySession[$0] }
             let review = reviewByPostId[post.id]
             let settledReview = review != nil && review?.state != "unreviewed"
             let linkedPending = post.pendingActionIds.contains(where: pendingActionIds.contains)
             let directReply = post.pendingActionIds.isEmpty
                 && (task == nil || ["waiting_input", "user_review"].contains(task?.state ?? ""))
-            let needsAction = review?.state == "unreviewed"
-                || (post.actionRequired && (linkedPending || directReply))
+            let needsAction = FeedRules.needsAction(
+                actionRequired: post.actionRequired,
+                hasLinkedPendingAction: linkedPending,
+                directReplyIsCurrent: directReply,
+                reviewState: review?.state
+            )
             let unread = !settledReview && !seen.contains(post.id)
-            let kindPriority = ["failure": 1, "result": 2, "decision": 3, "attention": 3, "progress": 4][post.kind] ?? 5
+            let covered = FeedRules.isCovered(
+                kind: post.kind,
+                createdAt: post.createdAt,
+                latestOutcomeCreatedAt: latestOutcomeByTask[post.sessionId ?? post.taskId]
+            )
             return FeedEntry(
                 id: "post:\(post.id)", createdAt: post.createdAt, needsAction: needsAction,
                 unread: unread, settledReview: settledReview,
-                priority: needsAction ? 0 : kindPriority + (unread ? 0 : 10),
+                priority: FeedRules.priority(kind: post.kind, needsAction: needsAction, covered: covered, unread: unread),
                 sessionId: post.sessionId, content: .post(post)
             )
         }
@@ -173,33 +217,7 @@ final class AppModel: ObservableObject {
                     sessionId: nil, content: .command(command)
                 )
             }
-        return entries
-            .filter { !dismissed.contains($0.id) }
-            .sorted {
-                if $0.priority != $1.priority { return $0.priority < $1.priority }
-                return $0.createdAt > $1.createdAt
-            }
-    }
-
-    private func mergedPosts(_ posts: [FeedPost]) -> [FeedPost] {
-        var merged: [FeedPost] = []
-        var latestIndex: [String: Int] = [:]
-        for post in posts.sorted(by: { $0.createdAt > $1.createdAt }) {
-            guard ["progress", "decision"].contains(post.kind) else {
-                merged.append(post)
-                continue
-            }
-            let key = "\(post.sessionId ?? post.taskId):\(post.kind)"
-            if let index = latestIndex[key],
-               merged[index].createdAt.zimloDate.timeIntervalSince(post.createdAt.zimloDate) <= 6 * 60 * 60 {
-                let facts = merged[index].highlights + post.highlights
-                merged[index].highlights = Array(NSOrderedSet(array: facts).compactMap { $0 as? String }.prefix(2))
-            } else {
-                latestIndex[key] = merged.count
-                merged.append(post)
-            }
-        }
-        return merged
+        return FeedRules.stableSorted(entries.filter { !dismissed.contains($0.id) })
     }
 
     func start() { bridge.start() }
@@ -208,7 +226,44 @@ final class AppModel: ObservableObject {
     func openTask(sessionId: String) {
         guard let session = snapshot.sessions.first(where: { $0.id == sessionId }) else { return }
         selectedSession = session
+        if pendingRouteSessionId == sessionId { clearPendingRoute() }
         _ = send(ClientCommand(type: "session.events.request", ["sessionId": .string(sessionId)]))
+    }
+
+    // 通知路由闭环：session 不在本地时保留路由并持久化，Feed 顶部占位条提供重试。
+    private func routeToTask(sessionId: String) {
+        if snapshot.sessions.contains(where: { $0.id == sessionId }) {
+            openTask(sessionId: sessionId)
+        } else {
+            pendingRouteSessionId = sessionId
+            UserDefaults.standard.set(sessionId, forKey: "zimlo.pending-push-route")
+        }
+    }
+
+    func retryPendingRoute() {
+        guard let sessionId = pendingRouteSessionId else { return }
+        if snapshot.sessions.contains(where: { $0.id == sessionId }) {
+            openTask(sessionId: sessionId)
+        } else if bridge.connected {
+            _ = bridge.send(ClientCommand(type: "snapshot.request", [
+                "afterSequence": .number(Double(snapshot.sequence)),
+            ]))
+            showNotice("正在向 Mac 请求最新任务列表")
+        } else {
+            showNotice("尚未连接 Mac，恢复连接后会自动继续")
+            bridge.retryNow()
+        }
+    }
+
+    func goToTasksForPendingRoute() {
+        selectedTab = .tasks
+        selectedSession = nil
+        selectedProject = nil
+    }
+
+    private func clearPendingRoute() {
+        pendingRouteSessionId = nil
+        UserDefaults.standard.removeObject(forKey: "zimlo.pending-push-route")
     }
 
     func openAgent(projectId: String) {
@@ -231,7 +286,26 @@ final class AppModel: ObservableObject {
 
     func dismiss(_ itemId: String) {
         if !snapshot.dismissedFeedItemIds.contains(itemId) { snapshot.dismissedFeedItemIds.append(itemId) }
-        _ = sendDurable(ClientCommand(type: "feed.dismiss", ["itemId": .string(itemId)]))
+        Haptics.destructiveLocalAction()
+        _ = sendDurable(ClientCommand(type: "feed.dismiss.set", [
+            "itemId": .string(itemId),
+            "dismissed": .bool(true),
+            "idempotencyKey": .string(UUID().uuidString),
+        ]))
+        showNotice("已移出 Feed", action: NoticeAction(label: "撤销", perform: { [weak self] in
+            self?.undismiss(itemId)
+        }))
+    }
+
+    // 撤销移除：乐观恢复本地状态；dismissed=false 没有增量回执，依赖快照调和，
+    // 所以这条指令发送成功后即视为完成（fire-and-forget），失败则留在 outbox 重放。
+    func undismiss(_ itemId: String) {
+        snapshot.dismissedFeedItemIds.removeAll { $0 == itemId }
+        _ = sendDurable(ClientCommand(type: "feed.dismiss.set", [
+            "itemId": .string(itemId),
+            "dismissed": .bool(false),
+            "idempotencyKey": .string(UUID().uuidString),
+        ]))
     }
 
     func createTask(provider: Provider, workspaceId: String, text: String) {
@@ -246,8 +320,12 @@ final class AppModel: ObservableObject {
         showingNewTask = false
     }
 
-    func followUp(sessionId: String, text: String) {
-        _ = sendDurable(ClientCommand(type: "task.follow_up", [
+    // 返回是否已成功持久化到 outbox：成功时调用方在同一交互周期清空输入与草稿，
+    // 本地 pending 展示由 localFollowUps / feedEntries 的 local: 条目立即给出；
+    // 失败时返回 false，调用方保留原文。
+    @discardableResult
+    func followUp(sessionId: String, text: String) -> Bool {
+        sendDurable(ClientCommand(type: "task.follow_up", [
             "sessionId": .string(sessionId),
             "text": .string(text),
             "idempotencyKey": .string(UUID().uuidString),
@@ -263,6 +341,20 @@ final class AppModel: ObservableObject {
         ]
         if let confirmation { values["confirmationPhrase"] = .string(confirmation) }
         _ = sendDurable(ClientCommand(type: "action.decide", values))
+    }
+
+    // 锁屏快捷审批：通知 action 只带 id，没有完整 PendingAction/Decision，直接构造
+    // decide 指令。确定性幂等键防连点与重复投递；服务端仍重校验 action 状态、设备
+    // 权限与幂等键，终态失败走 action.result 的既有失败标记（停止重试并展示原因），
+    // 成功确认由 apply 的既有逻辑播成功触觉。
+    func quickDecide(actionId: String, sessionId: String, decisionId: String, idempotencyKey: String) {
+        let persisted = sendDurable(ClientCommand(type: "action.decide", [
+            "actionId": .string(actionId),
+            "sessionId": .string(sessionId),
+            "decisionId": .string(decisionId),
+            "idempotencyKey": .string(idempotencyKey),
+        ]))
+        if persisted { Haptics.persisted() }
     }
 
     func respondReview(_ review: TaskReview, decision: String, note: String? = nil) {
@@ -303,7 +395,14 @@ final class AppModel: ObservableObject {
             var settings = snapshot.notificationSettings
             settings.enabled = allowed
             updateNotificationSettings(settings)
-            if !allowed { notice = "通知未开启，可稍后在系统设置中允许。" }
+            if !allowed { showNotice("通知未开启，可稍后在系统设置中允许。") }
+        }
+    }
+
+    func refreshNotificationPermission() {
+        Task {
+            let status = await NotificationManager.shared.authorizationStatus()
+            notificationPermission = Self.notificationPermissionLabel(status)
         }
     }
 
@@ -316,8 +415,9 @@ final class AppModel: ObservableObject {
         }
     }
 
-    func submitInput(action: PendingAction, answer: String) {
-        _ = sendDurable(ClientCommand(type: "action.decide", [
+    @discardableResult
+    func submitInput(action: PendingAction, answer: String) -> Bool {
+        sendDurable(ClientCommand(type: "action.decide", [
             "actionId": .string(action.actionId),
             "sessionId": .string(action.sessionId),
             "decisionId": .string("submit-input"),
@@ -349,18 +449,109 @@ final class AppModel: ObservableObject {
     }
 
     func setPinned(sessionId: String, pinned: Bool) {
-        _ = send(ClientCommand(type: "task.pin", ["sessionId": .string(sessionId), "pinned": .bool(pinned)]))
+        updatePreference(sessionId: sessionId) { $0.pinnedAt = pinned ? now() : nil }
+        _ = sendDurable(ClientCommand(type: "task.pin", [
+            "sessionId": .string(sessionId),
+            "pinned": .bool(pinned),
+            "idempotencyKey": .string(UUID().uuidString),
+        ]))
     }
 
-    func setArchived(sessionId: String, archived: Bool) {
-        _ = send(ClientCommand(type: "task.archive", ["sessionId": .string(sessionId), "archived": .bool(archived)]))
+    // 归档乐观更新 + 6 秒撤销；逆操作（取消归档）同样带幂等键走持久 outbox。
+    func setArchived(sessionId: String, archived: Bool, offerUndo: Bool = true) {
+        updatePreference(sessionId: sessionId) { $0.archivedAt = archived ? now() : nil }
+        _ = sendDurable(ClientCommand(type: "task.archive", [
+            "sessionId": .string(sessionId),
+            "archived": .bool(archived),
+            "idempotencyKey": .string(UUID().uuidString),
+        ]))
+        if archived {
+            Haptics.destructiveLocalAction()
+            if offerUndo {
+                showNotice("已归档，可在任务列表「已归档」筛选中找回", action: NoticeAction(label: "撤销", perform: { [weak self] in
+                    self?.setArchived(sessionId: sessionId, archived: false, offerUndo: false)
+                }))
+            }
+        }
     }
+
+    private func updatePreference(sessionId: String, mutate: (inout TaskPreference) -> Void) {
+        var preference = snapshot.taskPreferences.first { $0.sessionId == sessionId }
+            ?? TaskPreference(sessionId: sessionId, pinnedAt: nil, archivedAt: nil)
+        mutate(&preference)
+        upsert(&snapshot.taskPreferences, preference)
+    }
+
+    private func now() -> String { ISO8601DateFormatter.zimlo.string(from: Date()) }
 
     func retry(commandId: String) {
         _ = sendDurable(ClientCommand(type: "task.command.retry", [
             "commandId": .string(commandId),
             "idempotencyKey": .string(UUID().uuidString),
         ]))
+    }
+
+    // 本地尚未被 Mac 确认的回复，用于 Feed 卡片上立即给出 pending 展示。
+    func hasPendingLocalReply(sessionId: String) -> Bool {
+        outbox.contains { entry in
+            guard ["task.follow_up", "session.message"].contains(entry.command.type),
+                  case .string(let id) = entry.command.values["sessionId"], id == sessionId else { return false }
+            return !snapshot.commands.contains { $0.idempotencyKey == entry.command.idempotencyKey }
+        }
+    }
+
+    // 撤回意图先持久化，再移除原指令；即使原指令刚发送但快照尚未到达，
+    // 重连后也会先补发 cancel，而不是仅凭快照缺失误判为“本地排队”。
+    @discardableResult
+    func cancelOutboxEntry(_ entry: OutboxEntry) -> Bool {
+        guard CommandCancelRules.isOutboxEntryCancelable(entry, snapshot: snapshot) else { return false }
+        let key = entry.command.idempotencyKey ?? entry.id
+        let server = snapshot.commands.first(where: {
+            $0.idempotencyKey == key || $0.idempotencyKey.hasSuffix(":\(key)")
+        })
+        let targetKey = server?.idempotencyKey ?? key
+        guard sendDurable(ClientCommand(type: "task.command.cancel", [
+            "idempotencyKey": .string(targetKey),
+        ])) else { return false }
+        outbox.removeAll { $0.id == entry.id }
+        persistOutbox()
+        showNotice("撤回请求已保存，等待 Bridge 确认")
+        return true
+    }
+
+    // 服务端拒绝后的重试：清掉失败标记立即重发（仍走幂等键，不会重复执行）。
+    func retryOutboxEntry(_ entry: OutboxEntry) {
+        guard let index = outbox.firstIndex(where: { $0.id == entry.id }) else { return }
+        outbox[index].lastError = nil
+        persistOutbox()
+        _ = bridge.send(entry.command)
+        showNotice(bridge.connected ? "已重新发送，等待 Bridge 确认" : "尚未连接 Mac，将在重连后自动发送")
+    }
+
+    func removeOutboxEntry(_ entry: OutboxEntry) {
+        outbox.removeAll { $0.id == entry.id }
+        persistOutbox()
+    }
+
+    // 重新编辑：把内容放回对应草稿并移除出队条目，由用户在原输入处修改后重新发送。
+    @discardableResult
+    func reeditOutboxEntry(_ entry: OutboxEntry) -> Bool {
+        switch entry.command.type {
+        case "task.create":
+            guard case .string(let text) = entry.command.values["text"] else { return false }
+            UserDefaults.standard.set(text, forKey: "zimlo.newTaskDraft")
+            showingNewTask = true
+        case "task.follow_up", "session.message":
+            guard case .string(let sessionId) = entry.command.values["sessionId"],
+                  case .string(let text) = entry.command.values["text"] else { return false }
+            UserDefaults.standard.set(text, forKey: "zimlo.task-draft.\(sessionId)")
+            if snapshot.sessions.contains(where: { $0.id == sessionId }) { openTask(sessionId: sessionId) }
+        default:
+            return false
+        }
+        outbox.removeAll { $0.id == entry.id }
+        persistOutbox()
+        return true
     }
 
     func localFollowUps(session: AgentSession) -> [TaskCommand] {
@@ -378,80 +569,106 @@ final class AppModel: ObservableObject {
         }
     }
 
+    // 解除配对：断开 Mac，清除本机凭据、快照、outbox、设备级草稿与待处理通知路由；
+    // 界面偏好（最近 Runtime / Project 选择）保留。
     func forgetDevice() {
         bridge.forgetDevice()
         snapshot = .empty
         SnapshotCache.clear()
+        snapshotSavedAt = nil
         events = [:]
+        outbox = []
+        persistOutbox()
+        selectedSession = nil
+        selectedProject = nil
+        clearPendingRoute()
+        clearNotice()
+        let defaults = UserDefaults.standard
+        for key in defaults.dictionaryRepresentation().keys {
+            if key.hasPrefix("zimlo.task-draft.")
+                || key.hasPrefix("zimlo.feed-reply.")
+                || key.hasPrefix("zimlo.action-draft.")
+                || key == "zimlo.newTaskDraft" {
+                defaults.removeObject(forKey: key)
+            }
+        }
     }
 
     func send(_ command: ClientCommand) -> Bool {
         if bridge.send(command) { return true }
-        notice = "Bridge 尚未连接，请稍后重试"
+        showNotice("Bridge 尚未连接，请稍后重试")
         return false
     }
 
     @discardableResult
     private func sendDurable(_ command: ClientCommand) -> Bool {
-        let key = semanticKey(command)
+        let key = SemanticKey.make(command)
+        // 状态覆盖类指令：同一语义键只保留最新一条；feed.dismiss.set 同理（最新状态胜出）。
+        let replaceable = ["user.profile.update", "agent.profile.update", "trust.policy.update",
+                           "notification.settings.update", "notification.device.register", "feed.dismiss.set"]
         if let index = outbox.firstIndex(where: { $0.semanticKey == key }) {
-            let existing = outbox[index]
-            if ["user.profile.update", "agent.profile.update", "trust.policy.update", "notification.settings.update", "notification.device.register"].contains(command.type) {
+            if replaceable.contains(command.type) {
                 outbox[index].command = command
-                outbox[index].enqueuedAt = ISO8601DateFormatter.zimlo.string(from: Date())
-                persistOutbox()
-                _ = bridge.send(command)
-                notice = "设置已更新，等待 Bridge 确认"
+                outbox[index].enqueuedAt = now()
+                outbox[index].lastError = nil
+                guard persistOutbox() else { return false }
+                let sent = bridge.send(command)
+                removeIfFireAndForget(command, sent: sent)
+                if command.type != "feed.dismiss.set" { showNotice("设置已更新，等待 Bridge 确认") }
                 return true
             }
-            notice = "这条指令已在队列中，不会重复发送"
-            return bridge.send(existing.command) || true
+            showNotice("这条指令已在队列中，不会重复发送")
+            return bridge.send(outbox[index].command) || true
         }
-        let now = ISO8601DateFormatter.zimlo.string(from: Date())
         let entry = OutboxEntry(
-            id: command.idempotencyKey ?? UUID().uuidString,
+            id: command.type == "task.command.cancel" ? key : (command.idempotencyKey ?? UUID().uuidString),
             semanticKey: key,
             command: command,
-            enqueuedAt: now
+            enqueuedAt: now(),
+            lastError: nil
         )
         outbox.append(entry)
-        persistOutbox()
+        guard persistOutbox() else {
+            outbox.removeAll { $0.id == entry.id }
+            showNotice("无法保存到本机队列，请重试")
+            return false
+        }
         let sent = bridge.send(command)
-        notice = sent ? "指令已发送，等待 Bridge 确认" : "指令已保存在手机，将在重连后自动发送"
-        objectWillChange.send()
+        removeIfFireAndForget(command, sent: sent)
+        if Self.hapticSendTypes.contains(command.type) { Haptics.persisted() }
+        showNotice(sent ? "指令已发送，等待 Bridge 确认" : "指令已保存在手机，将在重连后自动发送")
         return true
     }
 
-    private func semanticKey(_ command: ClientCommand) -> String {
-        func string(_ key: String) -> String {
-            if case .string(let value) = command.values[key] { return value.trimmingCharacters(in: .whitespacesAndNewlines) }
-            return ""
-        }
-        switch command.type {
-        case "task.create": return "\(command.type):\(string("provider")):\(string("workspaceId")):\(string("text"))"
-        case "task.follow_up", "session.message": return "\(command.type):\(string("sessionId")):\(string("text"))"
-        case "feed.dismiss": return "\(command.type):\(string("itemId"))"
-        case "feed.seen": return "\(command.type):\(string("postId"))"
-        case "task.timeline.seen": return "\(command.type):\(string("sessionId")):\(string("itemId"))"
-        case "user.profile.update": return command.type
-        case "agent.profile.update": return "\(command.type):\(string("projectId"))"
-        case "review.respond": return "\(command.type):\(string("reviewId")):\(string("decision")):\(string("note"))"
-        case "trust.policy.update": return "\(command.type):\(string("projectId"))"
-        case "notification.settings.update", "notification.device.register", "notification.device.unregister": return command.type
-        case "task.command.retry": return "\(command.type):\(string("commandId"))"
-        default: return "\(command.type):\(command.idempotencyKey ?? UUID().uuidString)"
-        }
+    // 只有用户主动撰写的发送才播轻触；已读标记、设置同步等被动指令不打扰。
+    private static let hapticSendTypes: Set<String> = [
+        "task.create", "task.follow_up", "session.message", "action.decide", "review.respond",
+    ]
+
+    // feed.dismiss.set{dismissed:false} 无增量回执，发送成功即视为完成。
+    private func isFireAndForget(_ command: ClientCommand) -> Bool {
+        command.type == "feed.dismiss.set" && command.values["dismissed"] == .bool(false)
     }
 
-    private func persistOutbox() {
-        if let data = try? JSONEncoder().encode(outbox) {
-            UserDefaults.standard.set(data, forKey: outboxKey)
-        }
+    private func removeIfFireAndForget(_ command: ClientCommand, sent: Bool) {
+        guard sent, isFireAndForget(command), let key = command.idempotencyKey else { return }
+        outbox.removeAll { $0.command.idempotencyKey == key && isFireAndForget($0.command) }
+        persistOutbox()
+    }
+
+    @discardableResult
+    private func persistOutbox() -> Bool {
+        guard let data = try? JSONEncoder().encode(outbox) else { return false }
+        UserDefaults.standard.set(data, forKey: outboxKey)
+        return true
     }
 
     private func flushOutbox() {
         guard bridge.connected, !outbox.isEmpty else { return }
-        for entry in outbox { _ = bridge.send(entry.command) }
+        for entry in outbox {
+            let sent = bridge.send(entry.command)
+            removeIfFireAndForget(entry.command, sent: sent)
+        }
     }
 
     private func acknowledge(_ message: ServerEnvelope) {
@@ -459,15 +676,28 @@ final class AppModel: ObservableObject {
             switch message.type {
             case "task.command.updated":
                 guard let command = message.command else { return false }
+                if entry.command.type == "task.command.cancel" { return false }
                 if entry.command.type == "task.command.retry",
                    case .string(let commandId) = entry.command.values["commandId"] {
                     return command.id == commandId
                 }
                 return entry.command.idempotencyKey == command.idempotencyKey
                     || command.idempotencyKey.hasSuffix(":\(entry.command.idempotencyKey ?? "")")
+            case "task.command.cancel.result":
+                guard entry.command.type == "task.command.cancel" else { return false }
+                if case .string(let commandId) = entry.command.values["commandId"] {
+                    return commandId == message.commandId
+                }
+                if case .string(let key) = entry.command.values["idempotencyKey"] {
+                    return key == message.idempotencyKey
+                }
+                return false
             case "feed.dismissed.updated":
                 guard case .string(let itemId) = entry.command.values["itemId"] else { return false }
-                return entry.command.type == "feed.dismiss" && itemId == message.itemId
+                // dismissed=false 的撤销条目无回执（fire-and-forget），不能在这里误确认。
+                return ["feed.dismiss", "feed.dismiss.set"].contains(entry.command.type)
+                    && entry.command.values["dismissed"] != .bool(false)
+                    && itemId == message.itemId
             case "feed.seen.updated":
                 guard case .string(let postId) = entry.command.values["postId"] else { return false }
                 return entry.command.type == "feed.seen" && postId == message.postId
@@ -493,7 +723,7 @@ final class AppModel: ObservableObject {
             case "notification.device.updated":
                 return ["notification.device.register", "notification.device.unregister"].contains(entry.command.type)
             case "action.result":
-                guard message.ok == true, case .string(let actionId) = entry.command.values["actionId"] else { return false }
+                guard case .string(let actionId) = entry.command.values["actionId"] else { return false }
                 return entry.command.type == "action.decide" && actionId == message.actionId
             default: return false
             }
@@ -502,14 +732,21 @@ final class AppModel: ObservableObject {
     }
 
     private func apply(_ message: ServerEnvelope) {
+        // 审批的服务端确认在 acknowledge 之前判定：确认成功才播成功触觉（本地操作不播）。
+        var approvalConfirmed = false
+        if message.type == "action.result", message.ok == true, let actionId = message.actionId {
+            approvalConfirmed = outbox.contains {
+                $0.command.type == "action.decide" && $0.command.values["actionId"] == .string(actionId)
+            }
+        }
         acknowledge(message)
+        if approvalConfirmed { Haptics.serverConfirmed() }
         switch message.type {
         case "session.snapshot":
             if let snapshot = message.snapshot {
                 self.snapshot = snapshot
-                if let sessionId = UserDefaults.standard.string(forKey: "zimlo.pending-push-route"),
+                if let sessionId = pendingRouteSessionId,
                    snapshot.sessions.contains(where: { $0.id == sessionId }) {
-                    UserDefaults.standard.removeObject(forKey: "zimlo.pending-push-route")
                     openTask(sessionId: sessionId)
                 }
             }
@@ -530,6 +767,8 @@ final class AppModel: ObservableObject {
             if let task = message.task { upsert(&snapshot.tasks, task) }
         case "task.command.updated":
             if let command = message.command { upsert(&snapshot.commands, command) }
+        case "task.command.cancel.result":
+            showNotice(message.message ?? (message.ok == false ? "指令无法撤回" : "指令已撤回"))
         case "feed.seen.updated":
             if let postId = message.postId, !snapshot.seenPostIds.contains(postId) { snapshot.seenPostIds.append(postId) }
         case "feed.dismissed.updated":
@@ -557,14 +796,33 @@ final class AppModel: ObservableObject {
             if let sessionId = message.sessionId, let events = message.events { self.events[sessionId] = events }
         case "event.upsert":
             if let event = message.event { events[event.sessionId, default: []].append(event) }
-        case "action.result", "session.message.result":
-            notice = message.message
+        case "action.result":
+            showNotice(message.message ?? (message.ok == false ? "审批未被接受" : "审批已确认"))
+        case "session.message.result":
+            showNotice(message.message ?? "指令未被接受")
+            if message.ok == false, let sessionId = message.sessionId {
+                markOutboxFailed(message.message ?? "服务端拒绝") {
+                    ["task.follow_up", "session.message"].contains($0.command.type)
+                        && $0.command.values["sessionId"] == .string(sessionId)
+                }
+            }
         case "error":
-            notice = message.message ?? "Bridge 返回错误"
+            showNotice(message.message ?? "Bridge 返回错误")
         default:
             break
         }
         SnapshotCache.save(snapshot)
+        snapshotSavedAt = Date()
+    }
+
+    // 服务端拒绝：标失败（不静默恢复、不重复发送），outbox 详情里提供重试/重新编辑。
+    private func markOutboxFailed(_ error: String, matching: (OutboxEntry) -> Bool) {
+        var changed = false
+        for index in outbox.indices where matching(outbox[index]) {
+            outbox[index].lastError = error
+            changed = true
+        }
+        if changed { persistOutbox() }
     }
 
     private func upsert<T: Identifiable>(_ values: inout [T], _ value: T) where T.ID: Equatable {

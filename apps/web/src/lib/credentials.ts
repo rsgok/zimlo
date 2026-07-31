@@ -59,22 +59,39 @@ export async function clearCredentials(): Promise<void> {
   db.close();
 }
 
-export async function readCachedSnapshot(): Promise<Snapshot | null> {
+export interface CachedSnapshot {
+  snapshot: Snapshot;
+  /** 落盘时间（ISO）。旧裸格式没有该字段，读取时为 null。 */
+  savedAt: string | null;
+}
+
+// 兼容旧格式：v1 直接存裸 Snapshot；v2 存 { snapshot, savedAt }。
+export function parseCachedSnapshot(value: unknown): CachedSnapshot | null {
+  if (!value || typeof value !== "object") return null;
+  const record = value as Record<string, unknown>;
+  if (record.snapshot && typeof record.snapshot === "object") {
+    return { snapshot: record.snapshot as Snapshot, savedAt: typeof record.savedAt === "string" ? record.savedAt : null };
+  }
+  if (typeof record.sequence === "number") return { snapshot: value as Snapshot, savedAt: null };
+  return null;
+}
+
+export async function readCachedSnapshot(): Promise<CachedSnapshot | null> {
   const db = await database();
   return new Promise((resolve, reject) => {
     const transaction = db.transaction(STATE_STORE, "readonly");
     const request = transaction.objectStore(STATE_STORE).get(SNAPSHOT_RECORD);
-    request.onsuccess = () => resolve(request.result as Snapshot | null ?? null);
+    request.onsuccess = () => resolve(parseCachedSnapshot(request.result));
     request.onerror = () => reject(request.error);
     transaction.oncomplete = () => db.close();
   });
 }
 
-export async function saveCachedSnapshot(snapshot: Snapshot): Promise<void> {
+export async function saveCachedSnapshot(snapshot: Snapshot, savedAt = new Date().toISOString()): Promise<void> {
   const db = await database();
   await new Promise<void>((resolve, reject) => {
     const transaction = db.transaction(STATE_STORE, "readwrite");
-    transaction.objectStore(STATE_STORE).put(snapshot, SNAPSHOT_RECORD);
+    transaction.objectStore(STATE_STORE).put({ snapshot, savedAt } satisfies CachedSnapshot, SNAPSHOT_RECORD);
     transaction.oncomplete = () => resolve();
     transaction.onerror = () => reject(transaction.error);
   });

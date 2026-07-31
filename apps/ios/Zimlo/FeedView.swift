@@ -39,7 +39,7 @@ struct NativeFeedView: View {
             .scrollPosition(id: $visibleID)
             .background(ZColor.ink)
             .onAppear { updateCohort() }
-            .onChange(of: model.feedEntries.map { "\($0.id):\($0.settledReview)" }) { _, _ in updateCohort() }
+            .onChange(of: FeedCohortRules.signature(model.feedEntries)) { _, _ in updateCohort() }
             .onChange(of: visibleID) { _, id in
                 guard let id, let entry = model.feedEntries.first(where: { $0.id == id }),
                       case .post(let post) = entry.content, entry.unread else { return }
@@ -57,11 +57,7 @@ struct NativeFeedView: View {
     }
 
     private func updateCohort() {
-        let settledIds = Set(model.feedEntries.filter(\.settledReview).map(\.id))
-        currentOrder.removeAll(where: settledIds.contains)
-        for entry in model.feedEntries where entry.unread || entry.needsAction {
-            if !currentOrder.contains(entry.id) { currentOrder.append(entry.id) }
-        }
+        currentOrder = FeedCohortRules.reconcile(previous: currentOrder, entries: model.feedEntries)
     }
 }
 
@@ -80,7 +76,7 @@ private struct FeedPage: View {
                 Spacer()
                 Label("移出 Feed", systemImage: "arrow.right").foregroundStyle(ZColor.coral)
             }
-            .font(.system(size: 13, weight: .black))
+            .font(ZFont.subheadline.weight(.black))
             .padding(.horizontal, 28)
 
             Group {
@@ -93,6 +89,9 @@ private struct FeedPage: View {
                     CommandCard(model: model, command: command, position: position, total: total, historical: historical)
                 }
             }
+            // 历史卡降视觉权重：降饱和与透明度，与当前卡拉开层级。
+            .saturation(historical ? 0.5 : 1)
+            .opacity(historical ? 0.68 : 1)
             .padding(.horizontal, 10).padding(.vertical, 6)
             .offset(x: offset)
             .gesture(
@@ -136,26 +135,28 @@ private struct PostCard: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             HStack {
-                Text(historical ? "历史 · \(label)" : label).font(.system(size: 11, weight: .black))
+                Text(historical ? "历史 · \(label)" : label).font(ZFont.caption)
                 Spacer()
                 if !historical {
                     Text(String(format: "%02d / %02d", position, max(total, 1)))
-                        .font(.system(size: 11, weight: .bold, design: .monospaced))
+                        .font(ZFont.caption.monospaced())
                 }
             }
             .foregroundStyle(ZColor.muted).padding(.top, 22)
 
             Spacer(minLength: 28)
 
-            Text(relative(post.createdAt))
-                .font(.system(size: 12, weight: .semibold)).foregroundStyle(ZColor.muted)
+            TimelineView(.periodic(from: .now, by: 30)) { _ in
+                Text(relative(post.createdAt))
+                    .font(ZFont.footnote).foregroundStyle(ZColor.muted)
+            }
             Text(post.headline)
-                .font(.system(size: 36, weight: .black, design: .rounded))
-                .tracking(-1.25).lineSpacing(-3)
+                .font(ZFont.hero)
+                .lineSpacing(0)
                 .lineLimit(3).minimumScaleFactor(0.72)
                 .padding(.top, 12)
             Text(post.takeaway)
-                .font(.system(size: 17, weight: .medium))
+                .font(ZFont.body)
                 .foregroundStyle(ZColor.ink.opacity(0.7))
                 .lineLimit(4).lineSpacing(4)
                 .padding(.top, 18)
@@ -164,7 +165,7 @@ private struct PostCard: View {
                     ForEach(post.highlights.prefix(2), id: \.self) { fact in
                         HStack(alignment: .top, spacing: 10) {
                             Image(systemName: "checkmark").fontWeight(.black).foregroundStyle(ZColor.sage)
-                            Text(fact).font(.system(size: 15, weight: .semibold)).lineLimit(2)
+                            Text(fact).font(ZFont.callout.weight(.semibold)).lineLimit(2)
                         }
                     }
                 }.padding(.top, 18)
@@ -173,32 +174,43 @@ private struct PostCard: View {
             Spacer(minLength: 22)
 
             VStack(alignment: .leading, spacing: 5) {
-                Text("下一步").font(.system(size: 10, weight: .black)).foregroundStyle(ZColor.sage)
-                Text(nextAction).font(.system(size: 14, weight: .bold)).lineLimit(2)
+                Text("下一步").font(ZFont.caption2).foregroundStyle(ZColor.sage)
+                Text(nextAction).font(ZFont.subheadline.weight(.bold)).lineLimit(2)
             }
             .padding(14)
             .frame(maxWidth: .infinity, alignment: .leading)
             .background(ZColor.sage.opacity(0.09))
             .overlay(alignment: .leading) { Rectangle().fill(ZColor.sage).frame(width: 4) }
-            .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+            .clipShape(RoundedRectangle(cornerRadius: ZRadius.control, style: .continuous))
 
             if !pendingActions.isEmpty {
                 ForEach(pendingActions) { action in
                     VStack(alignment: .leading, spacing: 7) {
-                        Text(action.title).font(.system(size: 12, weight: .black))
+                        Text(action.title).font(ZFont.caption)
                         PendingActionControls(model: model, action: action, limit: 2)
                     }.padding(.top, 10)
                 }
             } else if needsAction, post.actions.contains("reply"), let session {
-                HStack(spacing: 8) {
-                    VoiceInput(text: $reply, placeholder: "说出或输入回复…", axis: .horizontal)
-                    Button("回复") {
-                        model.followUp(sessionId: session.id, text: reply.trimmingCharacters(in: .whitespacesAndNewlines))
+                VStack(alignment: .leading, spacing: 6) {
+                    HStack(spacing: 8) {
+                        VoiceInput(text: $reply, placeholder: "说出或输入回复…", axis: .horizontal)
+                        Button("回复") {
+                            let value = reply.trimmingCharacters(in: .whitespacesAndNewlines)
+                            // 发送即清空：先持久化 outbox，成功后同一交互周期清空输入与草稿。
+                            if model.followUp(sessionId: session.id, text: value) {
+                                reply = ""
+                                UserDefaults.standard.removeObject(forKey: "zimlo.feed-reply.\(post.id)")
+                            }
+                        }
+                        .font(ZFont.caption)
+                        .padding(.horizontal, 12).padding(.vertical, 11)
+                        .background(ZColor.acid).clipShape(RoundedRectangle(cornerRadius: 12))
+                        .disabled(reply.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || session.correlationUncertain)
                     }
-                    .font(.system(size: 12, weight: .black))
-                    .padding(.horizontal, 12).padding(.vertical, 11)
-                    .background(ZColor.acid).clipShape(RoundedRectangle(cornerRadius: 12))
-                    .disabled(reply.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || session.correlationUncertain)
+                    if model.hasPendingLocalReply(sessionId: session.id) {
+                        Text("回复已保存在手机，等待 Mac 确认")
+                            .font(ZFont.caption2).foregroundStyle(ZColor.sage)
+                    }
                 }.padding(.top, 10)
             }
 
@@ -216,12 +228,12 @@ private struct PostCard: View {
                 Spacer()
                 if needsAction {
                     Text("需要你处理")
-                        .font(.system(size: 10, weight: .black))
+                        .font(ZFont.caption2)
                         .padding(.horizontal, 9).padding(.vertical, 6)
                         .background(ZColor.coral).clipShape(Capsule())
                 }
             }
-            .font(.system(size: 12))
+            .font(ZFont.footnote)
             .foregroundStyle(ZColor.ink.opacity(0.72))
             .padding(.vertical, 16)
         }
@@ -233,7 +245,7 @@ private struct PostCard: View {
                 Rectangle().fill(needsAction ? ZColor.coral : Color.clear).frame(height: 9)
             }
         )
-        .clipShape(RoundedRectangle(cornerRadius: 30, style: .continuous))
+        .clipShape(RoundedRectangle(cornerRadius: ZRadius.card, style: .continuous))
         .onAppear {
             reply = UserDefaults.standard.string(forKey: "zimlo.feed-reply.\(post.id)") ?? ""
         }
@@ -261,23 +273,23 @@ private struct ActionCard: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 20) {
             HStack {
-                Text("需要你处理").font(.system(size: 11, weight: .black))
+                Text("需要你处理").font(ZFont.caption)
                 Spacer()
                 if !historical {
-                    Text(String(format: "%02d / %02d", position, max(total, 1))).font(.caption.monospaced().bold())
+                    Text(String(format: "%02d / %02d", position, max(total, 1))).font(ZFont.caption.monospaced())
                 }
             }
             .foregroundStyle(ZColor.muted)
             Spacer()
-            Text(action.title).font(.system(size: 34, weight: .black, design: .rounded)).lineLimit(3)
-            Text(action.detail).font(.system(size: 17, weight: .medium)).foregroundStyle(ZColor.ink.opacity(0.68)).lineLimit(5)
+            Text(action.title).font(ZFont.hero).lineSpacing(0).lineLimit(3).minimumScaleFactor(0.8)
+            Text(action.detail).font(ZFont.body).foregroundStyle(ZColor.ink.opacity(0.68)).lineLimit(5)
             Spacer()
             PendingActionControls(model: model, action: action, limit: 3)
         }
         .padding(24).foregroundStyle(ZColor.ink)
         .background(ZColor.paper)
         .overlay(alignment: .top) { Rectangle().fill(ZColor.coral).frame(height: 9) }
-        .clipShape(RoundedRectangle(cornerRadius: 30, style: .continuous))
+        .clipShape(RoundedRectangle(cornerRadius: ZRadius.card, style: .continuous))
     }
 }
 
@@ -291,16 +303,16 @@ private struct CommandCard: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 20) {
             HStack {
-                Text(command.state == "failed" ? "启动失败" : "启动中").font(.system(size: 11, weight: .black))
+                Text(command.state == "failed" ? "启动失败" : "启动中").font(ZFont.caption)
                 Spacer()
                 if !historical {
-                    Text(String(format: "%02d / %02d", position, max(total, 1))).font(.caption.monospaced().bold())
+                    Text(String(format: "%02d / %02d", position, max(total, 1))).font(ZFont.caption.monospaced())
                 }
             }.foregroundStyle(ZColor.muted)
             Spacer()
-            Text(command.text).font(.system(size: 31, weight: .black, design: .rounded)).lineLimit(4)
+            Text(command.text).font(ZFont.title).lineSpacing(0).lineLimit(4).minimumScaleFactor(0.8)
             Text(command.state == "failed" ? (command.error ?? "任务没有成功发送") : "已保存任务，正在等待 Mac 上的执行引擎接收。")
-                .font(.system(size: 16, weight: .medium)).foregroundStyle(ZColor.ink.opacity(0.68))
+                .font(ZFont.callout).foregroundStyle(ZColor.ink.opacity(0.68))
             Spacer()
             if command.state == "failed", !command.id.hasPrefix("local:") {
                 Button("原地重试") { model.retry(commandId: command.id) }
@@ -308,13 +320,13 @@ private struct CommandCard: View {
             }
             HStack(spacing: 7) {
                 ProviderBadge(provider: command.provider, iconOnly: true)
-                Text(command.cwd).font(.system(size: 12, weight: .semibold)).lineLimit(1)
+                Text(command.cwd).font(ZFont.footnote).lineLimit(1)
             }
         }
         .padding(24).foregroundStyle(ZColor.ink)
         .background(ZColor.paper)
         .overlay(alignment: .top) { Rectangle().fill(command.state == "failed" ? ZColor.coral : ZColor.acid).frame(height: 9) }
-        .clipShape(RoundedRectangle(cornerRadius: 30, style: .continuous))
+        .clipShape(RoundedRectangle(cornerRadius: ZRadius.card, style: .continuous))
     }
 }
 
@@ -327,22 +339,22 @@ private struct CaughtUpPage: View {
             Spacer()
             VStack(spacing: 13) {
                 Text("✓")
-                    .font(.system(size: 25, weight: .black))
+                    .font(ZFont.title.weight(.black))
                     .frame(width: 56, height: 56)
                     .foregroundStyle(ZColor.ink)
                     .background(ZColor.acid)
                     .clipShape(Circle())
-                Text("YOU'RE ALL CAUGHT UP").font(.system(size: 11, weight: .black))
+                Text("YOU'RE ALL CAUGHT UP").font(ZFont.caption)
             }
             Text(model.feedEntries.isEmpty ? "Feed 已经清空" : "当前更新已经看完")
-                .font(.system(size: 30, weight: .black, design: .rounded))
+                .font(ZFont.title).lineSpacing(0).minimumScaleFactor(0.8)
                 .padding(.top, 18)
             Button("＋ 新任务") { model.showingNewTask = true }.buttonStyle(ActionButtonStyle(primary: true))
                 .frame(maxWidth: 210)
                 .padding(.top, 24)
             if hasHistory {
                 Text("继续向下浏览历史 ↓")
-                    .font(.system(size: 12, weight: .bold))
+                    .font(ZFont.footnote)
                     .foregroundStyle(ZColor.muted)
                     .padding(.top, 14)
             }
@@ -350,7 +362,7 @@ private struct CaughtUpPage: View {
         }
         .padding(28).foregroundStyle(ZColor.ink)
         .background(ZColor.paper)
-        .clipShape(RoundedRectangle(cornerRadius: 30, style: .continuous))
+        .clipShape(RoundedRectangle(cornerRadius: ZRadius.card, style: .continuous))
         .padding(.horizontal, 10).padding(.vertical, 6)
     }
 }
@@ -359,12 +371,12 @@ struct ActionButtonStyle: ButtonStyle {
     let primary: Bool
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
-            .font(.system(size: 15, weight: .black))
+            .font(ZFont.callout.weight(.black))
             .frame(maxWidth: .infinity).padding(.vertical, 13)
             .foregroundStyle(primary ? ZColor.ink : ZColor.coral)
             .background(primary ? ZColor.acid : Color.clear)
-            .overlay(RoundedRectangle(cornerRadius: 14).stroke(primary ? Color.clear : ZColor.coral))
-            .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+            .overlay(RoundedRectangle(cornerRadius: ZRadius.control).stroke(primary ? Color.clear : ZColor.coral))
+            .clipShape(RoundedRectangle(cornerRadius: ZRadius.control, style: .continuous))
             .opacity(configuration.isPressed ? 0.7 : 1)
     }
 }
@@ -374,7 +386,6 @@ struct DecisionButton: View {
     let action: PendingAction
     let decision: Decision
     @State private var showingConfirmation = false
-    @State private var phrase = ""
 
     var body: some View {
         Button(decision.label) {
@@ -382,16 +393,19 @@ struct DecisionButton: View {
             else { model.decide(action: action, decision: decision) }
         }
         .buttonStyle(ActionButtonStyle(primary: decision.scope != "deny"))
-        .alert("确认高风险操作", isPresented: $showingConfirmation) {
-            TextField(decision.confirmationPhrase ?? "输入确认短语", text: $phrase)
-            Button("取消", role: .cancel) { phrase = "" }
-            Button("确认") {
-                model.decide(action: action, decision: decision, confirmation: phrase)
-                phrase = ""
-            }
-            .disabled(phrase != decision.confirmationPhrase)
-        } message: {
-            Text("请输入：\(decision.confirmationPhrase ?? "Mac 上显示的确认短语")")
+        .sheet(isPresented: $showingConfirmation) {
+            HighRiskApprovalSheet(
+                action: action,
+                decision: decision,
+                onSubmit: {
+                    showingConfirmation = false
+                    model.decide(action: action, decision: decision, confirmation: decision.confirmationPhrase)
+                },
+                onCancel: { showingConfirmation = false }
+            )
+            .presentationDetents([.medium, .large])
+            .presentationDragIndicator(.visible)
+            .presentationBackground(ZColor.paper)
         }
     }
 }
@@ -415,9 +429,14 @@ struct PendingActionControls: View {
                 HStack(spacing: 8) {
                     VoiceInput(text: $answer, placeholder: "说出或输入回答…", axis: .horizontal)
                     Button("提交") {
-                        model.submitInput(action: action, answer: answer.trimmingCharacters(in: .whitespacesAndNewlines))
+                        let value = answer.trimmingCharacters(in: .whitespacesAndNewlines)
+                        // 发送即清空：持久化成功才清，失败保留原文。
+                        if model.submitInput(action: action, answer: value) {
+                            answer = ""
+                            UserDefaults.standard.removeObject(forKey: "zimlo.action-draft.\(action.actionId)")
+                        }
                     }
-                    .font(.system(size: 12, weight: .black))
+                    .font(ZFont.caption)
                     .padding(.horizontal, 12).padding(.vertical, 11)
                     .background(ZColor.acid).foregroundStyle(ZColor.ink)
                     .clipShape(RoundedRectangle(cornerRadius: 12))
@@ -438,9 +457,13 @@ struct PendingActionControls: View {
 }
 
 func relative(_ value: String) -> String {
-    let seconds = Int(Date().timeIntervalSince(value.zimloDate))
+    relative(value.zimloDate)
+}
+
+func relative(_ date: Date) -> String {
+    let seconds = Int(Date().timeIntervalSince(date))
     if seconds < 60 { return "刚刚" }
     if seconds < 3_600 { return "\(seconds / 60) 分钟前" }
     if seconds < 86_400 { return "\(seconds / 3_600) 小时前" }
-    return value.zimloDate.formatted(.dateTime.month(.abbreviated).day())
+    return date.formatted(.dateTime.month(.abbreviated).day())
 }

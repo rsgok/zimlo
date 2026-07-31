@@ -43,6 +43,9 @@ interface PushBody {
   collapseId?: string;
   alert?: { title?: string; body?: string };
   route?: { ephemeralPublicKey?: string; nonce?: string; ciphertext?: string };
+  // Plaintext UNNotificationCategory identifier (generic, no task content);
+  // forwarded to `aps.category` so the lock screen can render quick actions.
+  category?: string;
 }
 
 interface PairingRegistrationBody {
@@ -290,6 +293,7 @@ async function sendPush(request: Request, env: Env): Promise<Response> {
         sound: "default",
         "mutable-content": 1,
         "thread-id": body.collapseId.split(":")[0] || "zimlo",
+        ...(body.category ? { category: body.category.slice(0, 64) } : {}),
       },
       route: body.route,
       kind: body.kind,

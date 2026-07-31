@@ -27,6 +27,9 @@ interface PushInput {
   collapseId: string;
   alert: { title: string; body: string };
   route: PushRouteEnvelope;
+  // Plaintext UNNotificationCategory identifier (no task content). The APNs
+  // payload needs it in cleartext for lock-screen action buttons to render.
+  category?: string;
 }
 
 export interface CloudPairingRequest {
@@ -43,7 +46,7 @@ export interface CloudPairingResponse {
 }
 
 const IDENTITY_METADATA_KEY = "cloud_installation_identity_v1";
-const DEFAULT_CLOUD_URL = "https://zimlo-cloud.zimlo.workers.dev";
+export const DEFAULT_CLOUD_URL = "https://zimlo-cloud.zimlo.workers.dev";
 
 function sha256URL(value: string): string {
   return createHash("sha256").update(value).digest("base64url");

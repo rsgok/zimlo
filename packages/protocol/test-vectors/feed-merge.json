@@ -1,0 +1,188 @@
+{
+  "version": 1,
+  "cases": [
+    {
+      "name": "empty input stays empty",
+      "input": { "posts": [] },
+      "expected": { "merged": [] }
+    },
+    {
+      "name": "single routine post passes through",
+      "input": {
+        "posts": [
+          { "id": "p1", "kind": "progress", "taskId": "t1", "sessionId": null, "createdAt": "2026-07-20T10:00:00.000Z", "highlights": ["a"] }
+        ]
+      },
+      "expected": {
+        "merged": [
+          { "id": "p1", "kind": "progress", "taskId": "t1", "sessionId": null, "createdAt": "2026-07-20T10:00:00.000Z", "highlights": ["a"] }
+        ]
+      }
+    },
+    {
+      "name": "non-routine kinds never merge within the window",
+      "input": {
+        "posts": [
+          { "id": "a1", "kind": "attention", "taskId": "t1", "sessionId": null, "createdAt": "2026-07-20T08:00:00.000Z", "highlights": [] },
+          { "id": "a2", "kind": "attention", "taskId": "t1", "sessionId": null, "createdAt": "2026-07-20T11:00:00.000Z", "highlights": [] },
+          { "id": "r1", "kind": "result", "taskId": "t1", "sessionId": null, "createdAt": "2026-07-20T09:00:00.000Z", "highlights": [] }
+        ]
+      },
+      "expected": {
+        "merged": [
+          { "id": "a2", "kind": "attention", "taskId": "t1", "sessionId": null, "createdAt": "2026-07-20T11:00:00.000Z", "highlights": [] },
+          { "id": "r1", "kind": "result", "taskId": "t1", "sessionId": null, "createdAt": "2026-07-20T09:00:00.000Z", "highlights": [] },
+          { "id": "a1", "kind": "attention", "taskId": "t1", "sessionId": null, "createdAt": "2026-07-20T08:00:00.000Z", "highlights": [] }
+        ]
+      }
+    },
+    {
+      "name": "same task progress posts merge within the window",
+      "input": {
+        "posts": [
+          { "id": "p2", "kind": "progress", "taskId": "t1", "sessionId": null, "createdAt": "2026-07-20T08:00:00.000Z", "highlights": ["b", "c"] },
+          { "id": "p1", "kind": "progress", "taskId": "t1", "sessionId": null, "createdAt": "2026-07-20T10:00:00.000Z", "highlights": ["a"] }
+        ]
+      },
+      "expected": {
+        "merged": [
+          { "id": "p1", "kind": "progress", "taskId": "t1", "sessionId": null, "createdAt": "2026-07-20T10:00:00.000Z", "highlights": ["a", "b"] }
+        ]
+      }
+    },
+    {
+      "name": "duplicate highlights dedupe keeping first occurrence",
+      "input": {
+        "posts": [
+          { "id": "p1", "kind": "progress", "taskId": "t1", "sessionId": null, "createdAt": "2026-07-20T10:00:00.000Z", "highlights": ["a", "b"] },
+          { "id": "p2", "kind": "progress", "taskId": "t1", "sessionId": null, "createdAt": "2026-07-20T08:00:00.000Z", "highlights": ["b", "c"] }
+        ]
+      },
+      "expected": {
+        "merged": [
+          { "id": "p1", "kind": "progress", "taskId": "t1", "sessionId": null, "createdAt": "2026-07-20T10:00:00.000Z", "highlights": ["a", "b"] }
+        ]
+      }
+    },
+    {
+      "name": "window boundary is inclusive at exactly six hours",
+      "input": {
+        "posts": [
+          { "id": "p1", "kind": "decision", "taskId": "t1", "sessionId": null, "createdAt": "2026-07-20T12:00:00.000Z", "highlights": ["x"] },
+          { "id": "p2", "kind": "decision", "taskId": "t1", "sessionId": null, "createdAt": "2026-07-20T06:00:00.000Z", "highlights": ["y"] }
+        ]
+      },
+      "expected": {
+        "merged": [
+          { "id": "p1", "kind": "decision", "taskId": "t1", "sessionId": null, "createdAt": "2026-07-20T12:00:00.000Z", "highlights": ["x", "y"] }
+        ]
+      }
+    },
+    {
+      "name": "one millisecond past the window does not merge",
+      "input": {
+        "posts": [
+          { "id": "p1", "kind": "progress", "taskId": "t1", "sessionId": null, "createdAt": "2026-07-20T12:00:00.000Z", "highlights": ["x"] },
+          { "id": "p2", "kind": "progress", "taskId": "t1", "sessionId": null, "createdAt": "2026-07-20T05:59:59.999Z", "highlights": ["y"] }
+        ]
+      },
+      "expected": {
+        "merged": [
+          { "id": "p1", "kind": "progress", "taskId": "t1", "sessionId": null, "createdAt": "2026-07-20T12:00:00.000Z", "highlights": ["x"] },
+          { "id": "p2", "kind": "progress", "taskId": "t1", "sessionId": null, "createdAt": "2026-07-20T05:59:59.999Z", "highlights": ["y"] }
+        ]
+      }
+    },
+    {
+      "name": "different kinds on the same task do not merge",
+      "input": {
+        "posts": [
+          { "id": "p1", "kind": "progress", "taskId": "t1", "sessionId": null, "createdAt": "2026-07-20T10:00:00.000Z", "highlights": [] },
+          { "id": "d1", "kind": "decision", "taskId": "t1", "sessionId": null, "createdAt": "2026-07-20T09:00:00.000Z", "highlights": [] }
+        ]
+      },
+      "expected": {
+        "merged": [
+          { "id": "p1", "kind": "progress", "taskId": "t1", "sessionId": null, "createdAt": "2026-07-20T10:00:00.000Z", "highlights": [] },
+          { "id": "d1", "kind": "decision", "taskId": "t1", "sessionId": null, "createdAt": "2026-07-20T09:00:00.000Z", "highlights": [] }
+        ]
+      }
+    },
+    {
+      "name": "different tasks do not merge",
+      "input": {
+        "posts": [
+          { "id": "p1", "kind": "progress", "taskId": "t1", "sessionId": null, "createdAt": "2026-07-20T10:00:00.000Z", "highlights": [] },
+          { "id": "p2", "kind": "progress", "taskId": "t2", "sessionId": null, "createdAt": "2026-07-20T09:30:00.000Z", "highlights": [] }
+        ]
+      },
+      "expected": {
+        "merged": [
+          { "id": "p1", "kind": "progress", "taskId": "t1", "sessionId": null, "createdAt": "2026-07-20T10:00:00.000Z", "highlights": [] },
+          { "id": "p2", "kind": "progress", "taskId": "t2", "sessionId": null, "createdAt": "2026-07-20T09:30:00.000Z", "highlights": [] }
+        ]
+      }
+    },
+    {
+      "name": "session id groups posts across tasks",
+      "input": {
+        "posts": [
+          { "id": "p1", "kind": "progress", "taskId": "t1", "sessionId": "s1", "createdAt": "2026-07-20T10:00:00.000Z", "highlights": ["a"] },
+          { "id": "p2", "kind": "progress", "taskId": "t2", "sessionId": "s1", "createdAt": "2026-07-20T09:00:00.000Z", "highlights": ["b"] }
+        ]
+      },
+      "expected": {
+        "merged": [
+          { "id": "p1", "kind": "progress", "taskId": "t1", "sessionId": "s1", "createdAt": "2026-07-20T10:00:00.000Z", "highlights": ["a", "b"] }
+        ]
+      }
+    },
+    {
+      "name": "present session id wins over shared task id",
+      "input": {
+        "posts": [
+          { "id": "p1", "kind": "progress", "taskId": "t1", "sessionId": null, "createdAt": "2026-07-20T10:00:00.000Z", "highlights": [] },
+          { "id": "p2", "kind": "progress", "taskId": "t1", "sessionId": "s9", "createdAt": "2026-07-20T09:00:00.000Z", "highlights": [] }
+        ]
+      },
+      "expected": {
+        "merged": [
+          { "id": "p1", "kind": "progress", "taskId": "t1", "sessionId": null, "createdAt": "2026-07-20T10:00:00.000Z", "highlights": [] },
+          { "id": "p2", "kind": "progress", "taskId": "t1", "sessionId": "s9", "createdAt": "2026-07-20T09:00:00.000Z", "highlights": [] }
+        ]
+      }
+    },
+    {
+      "name": "merge window compares against the newest post only",
+      "input": {
+        "posts": [
+          { "id": "p3", "kind": "progress", "taskId": "t1", "sessionId": null, "createdAt": "2026-07-20T02:30:00.000Z", "highlights": ["c"] },
+          { "id": "p1", "kind": "progress", "taskId": "t1", "sessionId": null, "createdAt": "2026-07-20T12:00:00.000Z", "highlights": ["a"] },
+          { "id": "p2", "kind": "progress", "taskId": "t1", "sessionId": null, "createdAt": "2026-07-20T07:00:00.000Z", "highlights": ["b"] }
+        ]
+      },
+      "expected": {
+        "merged": [
+          { "id": "p1", "kind": "progress", "taskId": "t1", "sessionId": null, "createdAt": "2026-07-20T12:00:00.000Z", "highlights": ["a", "b"] },
+          { "id": "p3", "kind": "progress", "taskId": "t1", "sessionId": null, "createdAt": "2026-07-20T02:30:00.000Z", "highlights": ["c"] }
+        ]
+      }
+    },
+    {
+      "name": "merged post keeps its newest position",
+      "input": {
+        "posts": [
+          { "id": "r1", "kind": "result", "taskId": "t9", "sessionId": null, "createdAt": "2026-07-20T11:00:00.000Z", "highlights": [] },
+          { "id": "p2", "kind": "progress", "taskId": "t1", "sessionId": null, "createdAt": "2026-07-20T10:00:00.000Z", "highlights": ["b"] },
+          { "id": "p1", "kind": "progress", "taskId": "t1", "sessionId": null, "createdAt": "2026-07-20T12:00:00.000Z", "highlights": ["a"] }
+        ]
+      },
+      "expected": {
+        "merged": [
+          { "id": "p1", "kind": "progress", "taskId": "t1", "sessionId": null, "createdAt": "2026-07-20T12:00:00.000Z", "highlights": ["a", "b"] },
+          { "id": "r1", "kind": "result", "taskId": "t9", "sessionId": null, "createdAt": "2026-07-20T11:00:00.000Z", "highlights": [] }
+        ]
+      }
+    }
+  ]
+}

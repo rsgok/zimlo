@@ -26,7 +26,7 @@ struct TasksDirectoryView: View {
     @State private var search = ""
     @State private var filter = "全部"
     @State private var showingSearch = false
-    private let filters = ["全部", "待我处理", "进行中", "可继续"]
+    private let filters = ["全部", "待我处理", "进行中", "可继续", "已归档"]
 
     var body: some View {
         VStack(spacing: 0) {
@@ -48,67 +48,95 @@ struct TasksDirectoryView: View {
             }
             .padding(.horizontal, 14).padding(.vertical, 10)
 
-            ScrollView {
-                LazyVStack(alignment: .leading, spacing: 18) {
-                    ForEach(taskSections) { section in
-                        VStack(alignment: .leading, spacing: 0) {
-                            HStack {
-                                Text(section.id).font(.system(size: 14, weight: .black))
-                                Spacer()
-                                Text("\(section.sessions.count) · \(section.hint)").font(.system(size: 9, weight: .bold)).foregroundStyle(ZColor.muted)
-                            }.padding(14)
-                            ForEach(section.sessions) { session in
-                                let state = effectiveState(session)
-                                HStack(spacing: 8) {
-                                    Button { model.openTask(sessionId: session.id) } label: {
-                                        HStack(spacing: 12) {
-                                            ProviderBadge(provider: session.provider, iconOnly: true)
-                                            VStack(alignment: .leading, spacing: 4) {
-                                                Text(taskTitle(session)).font(.system(size: 14, weight: .bold)).lineLimit(2)
-                                                HStack(spacing: 6) {
-                                                    Text(projectName(session))
-                                                        .font(.system(size: 10, weight: .medium)).foregroundStyle(ZColor.muted).lineLimit(1)
-                                                    Text("· \(relative(session.lastActivityAt))")
-                                                        .font(.system(size: 10, weight: .medium)).foregroundStyle(ZColor.muted)
-                                                }
-                                                if let nextStep = nextStep(state) {
-                                                    Text(nextStep).font(.system(size: 9, weight: .bold))
-                                                        .foregroundStyle(statePriority(state) == 0 ? ZColor.coral : ZColor.sage)
-                                                        .lineLimit(1)
-                                                }
-                                            }
-                                            Spacer(minLength: 8)
-                                            VStack(alignment: .trailing, spacing: 6) {
-                                                Text(stateLabel(state)).font(.system(size: 9, weight: .black))
-                                                    .foregroundStyle(statusColor(state))
-                                                    .padding(.horizontal, 7).padding(.vertical, 5)
-                                                    .background(statusColor(state).opacity(0.11))
-                                                    .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
-                                            }
-                                        }
-                                        .foregroundStyle(ZColor.ink).padding(.leading, 14).padding(.vertical, 12)
-                                    }
-                                    Menu {
-                                        let preference = model.snapshot.taskPreferences.first { $0.sessionId == session.id }
-                                        Button(preference?.pinnedAt == nil ? "置顶任务" : "取消置顶") {
-                                            model.setPinned(sessionId: session.id, pinned: preference?.pinnedAt == nil)
-                                        }
-                                        Button("归档任务") { model.setArchived(sessionId: session.id, archived: true) }
-                                    } label: {
-                                        Image(systemName: "ellipsis").font(.caption.bold()).foregroundStyle(ZColor.muted)
-                                            .frame(width: 38, height: 38)
+            List {
+                ForEach(taskSections) { section in
+                    Section {
+                        ForEach(section.sessions) { session in
+                            taskRow(session)
+                                .swipeActions(edge: .leading, allowsFullSwipe: false) {
+                                    let pinned = model.snapshot.taskPreferences.first { $0.sessionId == session.id }?.pinnedAt != nil
+                                    Button { model.setPinned(sessionId: session.id, pinned: !pinned) } label: {
+                                        Label(pinned ? "取消置顶" : "置顶", systemImage: pinned ? "pin.slash" : "pin")
+                                    }.tint(ZColor.sage)
+                                }
+                                .swipeActions(edge: .trailing, allowsFullSwipe: false) {
+                                    if filter == "已归档" {
+                                        Button { model.setArchived(sessionId: session.id, archived: false, offerUndo: false) } label: {
+                                            Label("取消归档", systemImage: "tray.and.arrow.up")
+                                        }.tint(ZColor.sage)
+                                    } else {
+                                        Button { model.setArchived(sessionId: session.id, archived: true) } label: {
+                                            Label("归档", systemImage: "archivebox")
+                                        }.tint(ZColor.coral)
                                     }
                                 }
-                                .overlay(alignment: .top) { Rectangle().fill(ZColor.line).frame(height: 1) }
-                            }
                         }
+                    } header: {
+                        HStack {
+                            Text(section.id).font(ZFont.subheadline.weight(.black))
+                            Spacer()
+                            Text("\(section.sessions.count) · \(section.hint)").font(ZFont.caption2).foregroundStyle(ZColor.muted)
+                        }
+                        .textCase(nil)
+                        .padding(.vertical, 6)
                     }
-                }.padding(12)
-            }.scrollIndicators(.hidden)
+                }
+            }
+            .listStyle(.plain)
+            .scrollContentBackground(.hidden)
+            .listRowSeparator(.hidden)
+            .listRowBackground(Color.clear)
+            .listRowInsets(EdgeInsets(top: 0, leading: 14, bottom: 0, trailing: 14))
+            .scrollIndicators(.hidden)
         }
         .foregroundStyle(ZColor.ink).background(ZColor.paper)
-        .clipShape(RoundedRectangle(cornerRadius: 28, style: .continuous))
+        .clipShape(RoundedRectangle(cornerRadius: ZRadius.sheet, style: .continuous))
         .padding(.horizontal, 8).padding(.bottom, 5)
+    }
+
+    private func taskRow(_ session: AgentSession) -> some View {
+        let state = effectiveState(session)
+        return Button { model.openTask(sessionId: session.id) } label: {
+            HStack(spacing: 12) {
+                ProviderBadge(provider: session.provider, iconOnly: true)
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(taskTitle(session)).font(ZFont.subheadline.weight(.bold)).lineLimit(2)
+                    HStack(spacing: 6) {
+                        Text(projectName(session))
+                            .font(ZFont.caption2).foregroundStyle(ZColor.muted).lineLimit(1)
+                        TimelineView(.periodic(from: .now, by: 30)) { _ in
+                            Text("· \(relative(session.lastActivityAt))")
+                                .font(ZFont.caption2).foregroundStyle(ZColor.muted)
+                        }
+                    }
+                    if let nextStep = nextStep(state) {
+                        Text(nextStep).font(ZFont.caption2)
+                            .foregroundStyle(statePriority(state) == 0 ? ZColor.coral : ZColor.sage)
+                            .lineLimit(1)
+                    }
+                }
+                Spacer(minLength: 8)
+                Text(stateLabel(state)).font(ZFont.caption2)
+                    .foregroundStyle(statusColor(state))
+                    .padding(.horizontal, 7).padding(.vertical, 5)
+                    .background(statusColor(state).opacity(0.11))
+                    .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
+            }
+            .foregroundStyle(ZColor.ink).padding(.vertical, 12)
+            .overlay(alignment: .top) { Rectangle().fill(ZColor.line).frame(height: 1) }
+        }
+    }
+
+    private var archivedSessions: [AgentSession] {
+        let archived = Set(model.snapshot.taskPreferences.compactMap { $0.archivedAt == nil ? nil : $0.sessionId })
+        return collapsedDirectorySessions(model.snapshot.sessions)
+            .filter { archived.contains($0.id) }
+            .filter {
+                search.isEmpty
+                    || taskTitle($0).localizedCaseInsensitiveContains(search)
+                    || projectName($0).localizedCaseInsensitiveContains(search)
+            }
+            .sorted { $0.lastActivityAt > $1.lastActivityAt }
     }
 
     private var managedSessions: [AgentSession] {
@@ -146,6 +174,10 @@ struct TasksDirectoryView: View {
     }
 
     private var taskSections: [TaskDirectorySection] {
+        if filter == "已归档" {
+            // 归档找回入口：归档后不再从列表消失得无影无踪。
+            return archivedSessions.isEmpty ? [] : [TaskDirectorySection(id: "已归档", hint: "右滑可取消归档", sessions: archivedSessions)]
+        }
         let definitions = [
             ("待你处理", "回复、审阅或恢复", 0),
             ("正在工作", "Agent 正在推进", 1),
@@ -254,13 +286,13 @@ struct AgentsDirectoryView: View {
                                     }
                                     VStack(alignment: .leading, spacing: 6) {
                                         HStack {
-                                            Text(project.agentProfile.displayName).font(.system(size: 16, weight: .black)).lineLimit(1)
+                                            Text(project.agentProfile.displayName).font(ZFont.headline).lineLimit(1)
                                             Spacer()
                                             Text(activeCount(project) > 0 ? "\(activeCount(project)) 个进行中" : project.sessionCount > 0 ? "随时可用" : "尚未启用")
-                                                .font(.system(size: 8, weight: .black)).foregroundStyle(activeCount(project) > 0 ? ZColor.sage : ZColor.muted)
+                                                .font(ZFont.caption2).foregroundStyle(activeCount(project) > 0 ? ZColor.sage : ZColor.muted)
                                         }
                                         if let bio = agentBio(project) {
-                                            Text(bio).font(.system(size: 11, weight: .medium))
+                                            Text(bio).font(ZFont.footnote)
                                                 .foregroundStyle(ZColor.ink.opacity(0.72)).lineLimit(2)
                                         }
                                         HStack(spacing: 5) {
@@ -268,21 +300,21 @@ struct AgentsDirectoryView: View {
                                             Text("· \(project.sessionCount) 个任务")
                                             Text("· \(relative(project.lastUsedAt))")
                                         }
-                                        .font(.system(size: 9, weight: .bold)).foregroundStyle(ZColor.muted).lineLimit(1)
+                                        .font(ZFont.caption2).foregroundStyle(ZColor.muted).lineLimit(1)
                                         if let provider = project.agentProfile.defaultProvider {
                                             HStack(spacing: 5) {
                                                 ProviderBadge(provider: provider, iconOnly: true)
                                                 Text("默认 Runtime")
-                                            }.font(.system(size: 8, weight: .bold)).foregroundStyle(ZColor.muted)
+                                            }.font(ZFont.caption2).foregroundStyle(ZColor.muted)
                                         } else if !project.providers.isEmpty {
                                             HStack(spacing: 5) {
                                                 ForEach(project.providers, id: \.rawValue) { provider in
                                                     ProviderBadge(provider: provider, iconOnly: true)
                                                 }
                                                 Text("可用 Runtime")
-                                            }.font(.system(size: 8, weight: .bold)).foregroundStyle(ZColor.muted)
+                                            }.font(ZFont.caption2).foregroundStyle(ZColor.muted)
                                         } else {
-                                            Text("Runtime 自动选择").font(.system(size: 8, weight: .bold)).foregroundStyle(ZColor.muted)
+                                            Text("Runtime 自动选择").font(ZFont.caption2).foregroundStyle(ZColor.muted)
                                         }
                                     }
                                 }
@@ -294,21 +326,21 @@ struct AgentsDirectoryView: View {
                                 model.showingNewTask = true
                             } label: {
                                 VStack(spacing: 5) {
-                                    Image(systemName: "plus").font(.system(size: 15, weight: .black))
-                                    Text("新任务").font(.system(size: 8, weight: .black))
+                                    Image(systemName: "plus").font(ZFont.callout.weight(.black))
+                                    Text("新任务").font(ZFont.caption2)
                                 }
                                 .foregroundStyle(ZColor.sage).frame(width: 62).frame(maxHeight: .infinity)
                                 .background(ZColor.acid.opacity(0.14))
                             }
                         }
                         .background(Color.white.opacity(0.5))
-                        .clipShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
+                        .clipShape(RoundedRectangle(cornerRadius: ZRadius.inner, style: .continuous))
                     }
                 }.padding(12)
             }.scrollIndicators(.hidden)
         }
         .background(ZColor.paper)
-        .clipShape(RoundedRectangle(cornerRadius: 28, style: .continuous))
+        .clipShape(RoundedRectangle(cornerRadius: ZRadius.sheet, style: .continuous))
         .padding(.horizontal, 8).padding(.bottom, 5)
     }
 
@@ -372,10 +404,10 @@ struct AgentDetailView: View {
                     HStack(alignment: .top, spacing: 14) {
                         AgentAvatar(value: project.agentProfile.avatar, size: 70)
                         VStack(alignment: .leading, spacing: 5) {
-                            Text(project.agentProfile.displayName).font(.system(size: 25, weight: .black))
-                            Text(project.name).font(.system(size: 11, weight: .semibold)).foregroundStyle(ZColor.muted)
+                            Text(project.agentProfile.displayName).font(ZFont.title)
+                            Text(project.name).font(ZFont.footnote.weight(.semibold)).foregroundStyle(ZColor.muted)
                             Text(visibleBio ?? "还没有设置专长与工作方式。编辑资料后，更容易理解这个 Agent 适合做什么。")
-                                .font(.system(size: 13, weight: .medium))
+                                .font(ZFont.subheadline)
                                 .foregroundStyle(visibleBio == nil ? ZColor.muted : ZColor.ink).lineLimit(3)
                         }
                     }.padding(18)
@@ -398,9 +430,9 @@ struct AgentDetailView: View {
                     if model.snapshot.features.projectTrustPolicy { trustSection }
                     Rectangle().fill(ZColor.line).frame(height: 1)
                     HStack {
-                        Text("重要动态").font(.system(size: 20, weight: .black))
+                        Text("重要动态").font(ZFont.title3)
                         Spacer()
-                        Text("跨任务汇总 · 最新在上").font(.system(size: 9, weight: .bold)).foregroundStyle(ZColor.muted)
+                        Text("跨任务汇总 · 最新在上").font(ZFont.caption2).foregroundStyle(ZColor.muted)
                     }.padding(18)
                     ForEach(visiblePosts) { post in
                         Button {
@@ -410,11 +442,11 @@ struct AgentDetailView: View {
                                 AgentAvatar(value: project.agentProfile.avatar, size: 28)
                                 VStack(alignment: .leading, spacing: 5) {
                                     HStack {
-                                        Text(project.agentProfile.displayName).font(.system(size: 13, weight: .black))
-                                        Text("· \(relative(post.createdAt))").font(.system(size: 10)).foregroundStyle(ZColor.muted)
+                                        Text(project.agentProfile.displayName).font(ZFont.subheadline.weight(.black))
+                                        Text("· \(relative(post.createdAt))").font(ZFont.caption2).foregroundStyle(ZColor.muted)
                                     }
-                                    Text(post.headline).font(.system(size: 16, weight: .black))
-                                    Text(post.takeaway).font(.system(size: 13, weight: .medium)).lineLimit(4)
+                                    Text(post.headline).font(ZFont.headline)
+                                    Text(post.takeaway).font(ZFont.subheadline).lineLimit(4)
                                 }
                                 Spacer()
                             }
@@ -424,14 +456,14 @@ struct AgentDetailView: View {
                     }
                     if !showAllActivity && posts.count > visiblePosts.count {
                         Button("查看其余 \(posts.count - visiblePosts.count) 条历史动态") { showAllActivity = true }
-                            .font(.system(size: 10, weight: .bold)).foregroundStyle(ZColor.sage)
+                            .font(ZFont.caption2).foregroundStyle(ZColor.sage)
                             .frame(maxWidth: .infinity).padding(.vertical, 16)
                     }
                     if posts.isEmpty {
                         VStack(spacing: 7) {
-                            Text("还没有 Agent 动态").font(.system(size: 15, weight: .black))
+                            Text("还没有 Agent 动态").font(ZFont.callout.weight(.black))
                             Text("布置第一个任务后，重要进展会汇总在这里。")
-                                .font(.system(size: 11, weight: .medium)).foregroundStyle(ZColor.muted)
+                                .font(ZFont.footnote).foregroundStyle(ZColor.muted)
                         }
                         .frame(maxWidth: .infinity).padding(.vertical, 38)
                     }
@@ -439,7 +471,7 @@ struct AgentDetailView: View {
             }.scrollIndicators(.hidden)
         }
         .foregroundStyle(ZColor.ink).background(ZColor.paper)
-        .clipShape(RoundedRectangle(cornerRadius: 28, style: .continuous))
+        .clipShape(RoundedRectangle(cornerRadius: ZRadius.sheet, style: .continuous))
         .padding(.horizontal, 8).padding(.bottom, 5)
         .sheet(isPresented: $editing) {
             AgentEditorView(model: model, project: project)
@@ -450,8 +482,8 @@ struct AgentDetailView: View {
 
     private func metric(_ value: String, _ label: String) -> some View {
         VStack(alignment: .leading, spacing: 2) {
-            Text(value).font(.system(size: 14, weight: .black))
-            Text(label).font(.system(size: 9, weight: .medium)).foregroundStyle(ZColor.muted)
+            Text(value).font(ZFont.subheadline.weight(.black))
+            Text(label).font(ZFont.caption2).foregroundStyle(ZColor.muted)
         }.frame(maxWidth: .infinity, alignment: .leading)
     }
 
@@ -459,19 +491,19 @@ struct AgentDetailView: View {
         VStack(alignment: .leading, spacing: 10) {
             HStack(alignment: .firstTextBaseline) {
                 VStack(alignment: .leading, spacing: 2) {
-                    Text("WORKSPACE").font(.system(size: 8, weight: .black)).foregroundStyle(ZColor.muted)
-                    Text("工作目录").font(.system(size: 16, weight: .black))
+                    Text("WORKSPACE").font(ZFont.caption2).foregroundStyle(ZColor.muted)
+                    Text("工作目录").font(ZFont.headline)
                 }
                 Spacer()
-                Text("新任务默认使用主目录").font(.system(size: 8, weight: .bold)).foregroundStyle(ZColor.muted)
+                Text("新任务默认使用主目录").font(ZFont.caption2).foregroundStyle(ZColor.muted)
             }
             ForEach(Array(workspacePaths.enumerated()), id: \.element) { index, path in
                 HStack(alignment: .center, spacing: 10) {
                     VStack(alignment: .leading, spacing: 5) {
                         Text(index == 0 ? "主目录" : "其他已识别目录")
-                            .font(.system(size: 8, weight: .black)).foregroundStyle(ZColor.muted)
+                            .font(ZFont.caption2).foregroundStyle(ZColor.muted)
                         Text(path)
-                            .font(.system(size: 10, weight: .medium, design: .monospaced))
+                            .font(.caption.monospaced())
                             .foregroundStyle(ZColor.ink)
                             .fixedSize(horizontal: false, vertical: true)
                             .textSelection(.enabled)
@@ -482,7 +514,7 @@ struct AgentDetailView: View {
                         copiedWorkspacePath = path
                     } label: {
                         Text(copiedWorkspacePath == path ? "已复制" : "复制")
-                            .font(.system(size: 8, weight: .black))
+                            .font(ZFont.caption2)
                             .padding(.horizontal, 9).padding(.vertical, 7)
                             .background(ZColor.acid.opacity(0.16))
                             .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
@@ -491,13 +523,13 @@ struct AgentDetailView: View {
                 }
                 .padding(11)
                 .background(Color.white.opacity(0.72))
-                .clipShape(RoundedRectangle(cornerRadius: 11, style: .continuous))
+                .clipShape(RoundedRectangle(cornerRadius: ZRadius.small, style: .continuous))
             }
         }
         .padding(14)
         .background(Color.white.opacity(0.4))
-        .overlay(RoundedRectangle(cornerRadius: 15, style: .continuous).stroke(ZColor.line))
-        .clipShape(RoundedRectangle(cornerRadius: 15, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: ZRadius.inner, style: .continuous).stroke(ZColor.line))
+        .clipShape(RoundedRectangle(cornerRadius: ZRadius.inner, style: .continuous))
         .padding(.horizontal, 18).padding(.bottom, 14)
     }
 
@@ -510,20 +542,20 @@ struct AgentDetailView: View {
                 set: { model.updateTrustPolicy(projectId: project.id, preset: $0 ? "safe_automation" : "ask") }
             )) {
                 VStack(alignment: .leading, spacing: 3) {
-                    Text("自动化权限").font(.system(size: 14, weight: .black))
+                    Text("自动化权限").font(ZFont.subheadline.weight(.black))
                     Text(enabled ? "项目内读取、搜索、测试和构建可自动继续" : "所有授权动作都会询问")
-                        .font(.system(size: 10, weight: .medium)).foregroundStyle(ZColor.muted)
+                        .font(ZFont.caption2).foregroundStyle(ZColor.muted)
                 }
             }
             let audit = model.snapshot.trustAudit.filter { $0.projectId == project.id }.prefix(3)
             ForEach(Array(audit)) { entry in
                 Text("\(entry.decision == "auto_allowed" ? "自动允许" : "已询问") · \(entry.category) · \(entry.actionSummary)")
-                    .font(.system(size: 9, weight: .medium)).foregroundStyle(ZColor.muted).lineLimit(2)
+                    .font(ZFont.caption2).foregroundStyle(ZColor.muted).lineLimit(2)
             }
         }
         .padding(14)
         .background(ZColor.acid.opacity(0.08))
-        .clipShape(RoundedRectangle(cornerRadius: 15, style: .continuous))
+        .clipShape(RoundedRectangle(cornerRadius: ZRadius.inner, style: .continuous))
         .padding(.horizontal, 18).padding(.bottom, 14)
     }
 }
@@ -603,6 +635,7 @@ private struct AgentEditorView: View {
 struct SettingsView: View {
     @ObservedObject var model: AppModel
     @State private var showingAvatars = false
+    @State private var showingForgetConfirmation = false
 
     var body: some View {
         ScrollView {
@@ -610,8 +643,8 @@ struct SettingsView: View {
                 HStack(spacing: 14) {
                     UserAvatar(id: model.snapshot.userProfile.avatarId, size: 66)
                     VStack(alignment: .leading, spacing: 4) {
-                        Text("你的 Zimlo").font(.system(size: 22, weight: .black))
-                        Text("头像只可从 24 个预置形象中选择").font(.system(size: 11, weight: .medium)).foregroundStyle(ZColor.muted)
+                        Text("你的 Zimlo").font(ZFont.title3)
+                        Text("头像只可从 24 个预置形象中选择").font(ZFont.footnote).foregroundStyle(ZColor.muted)
                     }
                 }
                 Button("选择头像") { showingAvatars.toggle() }.buttonStyle(ActionButtonStyle(primary: true))
@@ -628,6 +661,23 @@ struct SettingsView: View {
                 }
                 if model.snapshot.features.pushNotifications { section("主动通知") {
                     row("系统权限", model.notificationPermission)
+                    if model.notificationPermission == "系统已拒绝" {
+                        // 权限被拒：持久引导 + 直达系统设置，而不是一行静态文字。
+                        VStack(alignment: .leading, spacing: 8) {
+                            Text("通知已被系统拒绝。开启后才会收到审批、失败与待审结果提醒。")
+                                .font(ZFont.footnote).foregroundStyle(ZColor.muted)
+                            Button("打开系统设置") {
+                                guard let url = URL(string: UIApplication.openSettingsURLString) else { return }
+                                UIApplication.shared.open(url)
+                            }
+                            .font(ZFont.caption)
+                            .padding(.horizontal, 12).padding(.vertical, 8)
+                            .background(ZColor.acid).foregroundStyle(ZColor.ink)
+                            .clipShape(RoundedRectangle(cornerRadius: ZRadius.small, style: .continuous))
+                        }
+                        .padding(.vertical, 8)
+                        .overlay(alignment: .bottom) { Rectangle().fill(ZColor.line).frame(height: 1) }
+                    }
                     Toggle("允许 Zimlo 通知", isOn: Binding(
                         get: { model.snapshot.notificationSettings.enabled },
                         set: { enabled in
@@ -646,7 +696,17 @@ struct SettingsView: View {
                 }}
                 section("这台手机") {
                     row("连接状态", model.bridge.connected ? "已连接 Mac" : "等待连接 Mac")
-                    row("待同步操作", model.pendingOutboxCount == 0 ? "全部已确认" : "\(model.pendingOutboxCount) 条")
+                    Button { model.showingOutbox = true } label: {
+                        HStack {
+                            Text("待同步操作").fontWeight(.semibold)
+                            Spacer()
+                            Text(model.pendingOutboxCount == 0 ? "全部已确认" : "\(model.pendingOutboxCount) 条")
+                                .foregroundStyle(ZColor.muted)
+                            Image(systemName: "chevron.right").font(ZFont.caption2).foregroundStyle(ZColor.muted)
+                        }
+                        .font(ZFont.subheadline).foregroundStyle(ZColor.ink).padding(.vertical, 11)
+                        .overlay(alignment: .bottom) { Rectangle().fill(ZColor.line).frame(height: 1) }
+                    }
                     row("审批权限", model.snapshot.lanApprovalsEnabled ? "已由 Mac 授权" : "仅查看与回复")
                 }
                 DisclosureGroup("高级诊断") {
@@ -658,31 +718,37 @@ struct SettingsView: View {
                             Spacer()
                             Text("GUI 与 CLI 分开识别").foregroundStyle(ZColor.muted)
                         }
-                        .font(.system(size: 13)).padding(.vertical, 11)
+                        .font(ZFont.subheadline).padding(.vertical, 11)
                         .overlay(alignment: .bottom) { Rectangle().fill(ZColor.line).frame(height: 1) }
                         row("加密连接", "Secure WS · v2")
                     }
                 }
-                Button("解除当前设备配对", role: .destructive) { model.forgetDevice() }
-                    .font(.system(size: 13, weight: .bold))
+                Button("解除当前设备配对", role: .destructive) { showingForgetConfirmation = true }
+                    .font(ZFont.subheadline.weight(.bold))
                     .frame(maxWidth: .infinity).padding(.vertical, 13)
-                    .overlay(RoundedRectangle(cornerRadius: 14).stroke(ZColor.coral))
+                    .overlay(RoundedRectangle(cornerRadius: ZRadius.control).stroke(ZColor.coral))
+                    .confirmationDialog("解除当前设备配对？", isPresented: $showingForgetConfirmation, titleVisibility: .visible) {
+                        Button("解除配对并清除本机数据", role: .destructive) { model.forgetDevice() }
+                        Button("取消", role: .cancel) {}
+                    } message: {
+                        Text("将断开与 Mac 的连接，并清除本机凭据、离线快照、待同步操作、设备级草稿与待处理通知路由。界面偏好（最近选择）会保留。")
+                    }
             }.padding(18)
         }
         .foregroundStyle(ZColor.ink).background(ZColor.paper)
-        .clipShape(RoundedRectangle(cornerRadius: 28, style: .continuous))
+        .clipShape(RoundedRectangle(cornerRadius: ZRadius.sheet, style: .continuous))
         .padding(.horizontal, 8).padding(.bottom, 5)
     }
 
     private func section<Content: View>(_ title: String, @ViewBuilder content: () -> Content) -> some View {
         VStack(alignment: .leading, spacing: 0) {
-            Text(title.uppercased()).font(.system(size: 10, weight: .black)).foregroundStyle(ZColor.muted).padding(.bottom, 8)
+            Text(title.uppercased()).font(ZFont.caption2).foregroundStyle(ZColor.muted).padding(.bottom, 8)
             content()
         }
     }
     private func row(_ label: String, _ value: String) -> some View {
         HStack { Text(label).fontWeight(.semibold); Spacer(); Text(value).foregroundStyle(ZColor.muted) }
-            .font(.system(size: 13)).padding(.vertical, 11)
+            .font(ZFont.subheadline).padding(.vertical, 11)
             .overlay(alignment: .bottom) { Rectangle().fill(ZColor.line).frame(height: 1) }
     }
 
@@ -695,7 +761,7 @@ struct SettingsView: View {
                 model.updateNotificationSettings(settings)
             }
         ))
-        .font(.system(size: 13, weight: .semibold))
+        .font(ZFont.subheadline.weight(.semibold))
         .padding(.vertical, 8)
     }
 }

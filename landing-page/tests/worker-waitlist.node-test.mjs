@@ -97,13 +97,13 @@ function post(payload) {
   });
 }
 
-test("worker: signup lifecycle end-to-end (201 → duplicate 200, same copy)", async () => {
+test("worker: signup lifecycle returns an indistinguishable 200 for new and duplicate", async () => {
   const worker = await loadWorker();
   const db = createFakeD1();
   const env = waitlistEnv(db);
 
   const created = await worker.fetch(post(validPayload()), env, ctx);
-  assert.equal(created.status, 201);
+  assert.equal(created.status, 200);
   const createdBody = await created.json();
 
   const dupe = await worker.fetch(post(validPayload({ email: " beta@example.COM" })), env, ctx);
@@ -130,7 +130,7 @@ test("worker: rejects bad input with 400 and stores nothing", async () => {
   assert.equal(db.rows.length, 0);
 });
 
-test("worker: honeypot and too-fast submits get a silent 200 and store nothing", async () => {
+test("worker: honeypot is ignored while a fast real signup is stored", async () => {
   const worker = await loadWorker();
   const db = createFakeD1();
   const env = waitlistEnv(db);
@@ -141,8 +141,8 @@ test("worker: honeypot and too-fast submits get a silent 200 and store nothing",
   const fast = await worker.fetch(post(validPayload({ startedAt: Date.now() })), env, ctx);
   assert.equal(fast.status, 200);
 
-  assert.equal(db.rows.length, 0);
-  assert.ok(!db.executed.some((sql) => sql.startsWith("INSERT")));
+  assert.equal(db.rows.length, 1);
+  assert.equal(db.rows[0].email, "beta@example.com");
 });
 
 test("worker: non-POST methods on /api/waitlist get 405", async () => {
@@ -165,11 +165,11 @@ test("worker: gate requires every signal (flag, verified contact, D1)", async ()
   assert.equal(db.rows.length, 0);
 });
 
-test("scheduled: idles without config and without D1", async () => {
+test("scheduled: purges inactive stragglers without Beta config and idles without D1", async () => {
   const worker = await loadWorker();
   const db = createFakeD1();
   await worker.scheduled({ cron: "0 0 * * *", scheduledTime: Date.now() }, waitlistEnv(db), ctx);
-  assert.deepEqual(db.executed, [], "no queries while WAITLIST_BETA_ENDED_AT is unset");
+  assert.ok(db.executed.includes("DELETE FROM waitlist_signups WHERE status != 'active'"));
   await worker.scheduled({ cron: "0 0 * * *", scheduledTime: Date.now() }, {}, ctx);
 });
 

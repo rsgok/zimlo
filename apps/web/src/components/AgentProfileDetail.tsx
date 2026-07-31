@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 import { USER_AVATAR_IDS } from "@zimlo/protocol";
 import type { ClientCommand, FeedPost, Project, ProjectTrustPolicy, Session, TaskCommand, TrustAuditEntry, UserAvatarId } from "@zimlo/protocol";
 import { AppTopBar } from "./AppTopBar";
@@ -7,6 +7,8 @@ import { agentAvatarStyle, agentBio } from "./AgentsView";
 import { ProviderBadge } from "./ProviderBadge";
 import { collapseProcessSessions } from "./TasksView";
 import { AgentAvatar, UserAvatar } from "./UserAvatar";
+import { relativeTime, useNow } from "../lib/nowTicker";
+import { useModalFocus } from "./useModalFocus";
 
 interface AgentProfileDetailProps {
   project: Project;
@@ -21,15 +23,6 @@ interface AgentProfileDetailProps {
   onOpenTask: (sessionId: string) => void;
   onNewTask: (projectId: string) => void;
   onClose: () => void;
-}
-
-function relativeTime(value: string): string {
-  const seconds = Math.max(0, Math.round((Date.now() - new Date(value).getTime()) / 1000));
-  if (seconds < 60) return "刚刚";
-  if (seconds < 3600) return `${Math.floor(seconds / 60)} 分钟前`;
-  if (seconds < 86_400) return `${Math.floor(seconds / 3600)} 小时前`;
-  if (seconds < 604_800) return `${Math.floor(seconds / 86_400)} 天前`;
-  return new Intl.DateTimeFormat("zh-CN", { month: "short", day: "numeric" }).format(new Date(value));
 }
 
 async function copyPath(value: string): Promise<boolean> {
@@ -60,6 +53,9 @@ export function AgentProfileDetail({ project, sessions, posts, commands, trustPo
   const [defaultProvider, setDefaultProvider] = useState<"codex" | "claude" | "">(project.agentProfile.defaultProvider ?? "");
   const [showAllActivity, setShowAllActivity] = useState(false);
   const [copiedWorkspacePath, setCopiedWorkspacePath] = useState<string | null>(null);
+  const now = useNow();
+  const panelRef = useRef<HTMLElement | null>(null);
+  useModalFocus(panelRef);
   const sessionIds = useMemo(() => new Set(sessions.map((session) => session.id)), [sessions]);
   const sessionById = useMemo(() => new Map(sessions.map((session) => [session.id, session])), [sessions]);
   const running = collapseProcessSessions(sessions).sessions.filter((session) => session.status === "running").length;
@@ -73,7 +69,7 @@ export function AgentProfileDetail({ project, sessions, posts, commands, trustPo
 
   return (
     <div className="detail-backdrop" role="presentation">
-      <section className="detail-panel agent-profile-detail" role="dialog" aria-modal="true" aria-label={project.agentProfile.displayName}>
+      <section className="detail-panel agent-profile-detail" role="dialog" aria-modal="true" aria-label={project.agentProfile.displayName} ref={panelRef}>
         <AppTopBar detail title={project.agentProfile.displayName} onBack={onClose} action={<button className="app-top-bar-action" onClick={() => onNewTask(project.id)}>＋ 新任务</button>} />
         <section className="agent-profile-header">
           <AgentAvatar avatar={project.agentProfile.avatar} className={`agent-avatar agent-profile-avatar ${agentAvatarStyle(project.id)}`} alt="" />
@@ -87,7 +83,7 @@ export function AgentProfileDetail({ project, sessions, posts, commands, trustPo
             <span>项目 · {project.name}</span>
             <span>{project.sessionCount} 个历史任务</span>
             <span>{running > 0 ? `${running} 个正在工作` : "当前空闲"}</span>
-            <span>最近 · {relativeTime(project.lastUsedAt)}</span>
+            <span>最近 · {relativeTime(project.lastUsedAt, now)}</span>
             <span className="agent-provider-meta">默认 · {project.agentProfile.defaultProvider ? <ProviderBadge provider={project.agentProfile.defaultProvider} labelMode="icon" /> : "自动选择"}</span>
           </div>
           {editing && (
@@ -168,7 +164,7 @@ export function AgentProfileDetail({ project, sessions, posts, commands, trustPo
               return <article className="agent-timeline-item is-user" key={`command:${item.id}`}>
                 <UserAvatar avatarId={userAvatarId} className="agent-timeline-avatar" alt="" />
                 <div className="agent-timeline-content">
-                  <div className="agent-timeline-meta"><strong>你</strong><time>{relativeTime(item.at)}</time></div>
+                  <div className="agent-timeline-meta"><strong>你</strong><time>{relativeTime(item.at, now)}</time></div>
                   <FormattedText text={item.command.text} />
                   <div className="agent-timeline-footer"><span>{item.command.state === "running" ? "执行中" : item.command.state === "queued" ? "已排队" : item.command.state === "failed" ? "发送失败" : "已发送"}</span>{session && <button onClick={() => onOpenTask(session.id)}>查看任务 →</button>}</div>
                 </div>
@@ -178,7 +174,7 @@ export function AgentProfileDetail({ project, sessions, posts, commands, trustPo
             return <article className={`agent-timeline-item timeline-${item.post.kind}`} key={`post:${item.id}`}>
               <AgentAvatar avatar={project.agentProfile.avatar} className={`agent-timeline-avatar ${agentAvatarStyle(project.id)}`} alt="" />
               <div className="agent-timeline-content">
-                <div className="agent-timeline-meta"><strong>{project.agentProfile.displayName}</strong><time>{relativeTime(item.at)}</time></div>
+                <div className="agent-timeline-meta"><strong>{project.agentProfile.displayName}</strong><time>{relativeTime(item.at, now)}</time></div>
                 <h3>{item.post.headline}</h3><FormattedText text={item.post.takeaway} />
                 <div className="agent-timeline-footer"><span>{session ? <>由 <ProviderBadge provider={session.provider} surface={session.surface} /> 执行</> : "重要动态"}</span>{session && <button onClick={() => onOpenTask(session.id)}>查看任务 →</button>}</div>
               </div>

@@ -1,5 +1,6 @@
 import CryptoKit
 import Foundation
+import Network
 import UIKit
 
 @MainActor
@@ -11,6 +12,8 @@ final class BridgeClient: ObservableObject {
 
     var onMessage: ((ServerEnvelope) -> Void)?
     var onSecureConnection: (() -> Void)?
+    // 可注入随机源，测试退避序列时固定。
+    var backoffRandom: () -> Double = { Double.random(in: 0..<1) }
 
     private var socket: URLSessionWebSocketTask?
     private var reconnectTask: Task<Void, Never>?
@@ -23,9 +26,14 @@ final class BridgeClient: ObservableObject {
     private var intentionallyStopped = false
     private var usingRemoteRelay = false
     private var retryRemoteNext = false
+    private var reconnectAttempt = 0
+    private var networkMonitor: NWPathMonitor?
+    private var networkAvailable = true
 
     func start() {
         intentionallyStopped = false
+        reconnectAttempt = 0
+        startNetworkMonitor()
         guard socket == nil, !connected, startupTask == nil else { return }
         guard let credentials = KeychainStore.load() else {
             pairingRequired = true
@@ -48,6 +56,40 @@ final class BridgeClient: ObservableObject {
                 }
             }
         }
+    }
+
+    // 手动重试：清掉等待中的退避，立即按初始序列重连（离线/重连胶囊可点触发）。
+    func retryNow() {
+        guard !connected, credentials != nil else { return }
+        intentionallyStopped = false
+        reconnectAttempt = 0
+        reconnectTask?.cancel()
+        startupTask?.cancel()
+        startupTask = nil
+        socket?.cancel(with: .goingAway, reason: nil)
+        socket = nil
+        start()
+    }
+
+    private func startNetworkMonitor() {
+        guard networkMonitor == nil else { return }
+        let monitor = NWPathMonitor()
+        networkMonitor = monitor
+        monitor.pathUpdateHandler = { [weak self] path in
+            Task { @MainActor in
+                guard let self else { return }
+                let available = path.status == .satisfied
+                let wasDown = !self.networkAvailable
+                self.networkAvailable = available
+                if !available {
+                    // 系统离线：暂停重连循环，避免空耗与抖动计时。
+                    self.reconnectTask?.cancel()
+                } else if wasDown, !self.connected, !self.intentionallyStopped, self.credentials != nil {
+                    self.retryNow()
+                }
+            }
+        }
+        monitor.start(queue: .main)
     }
 
     func stop() {
@@ -175,6 +217,7 @@ final class BridgeClient: ObservableObject {
             connected = true
             connectionMode = usingRemoteRelay ? "cloud" : "local"
             error = nil
+            reconnectAttempt = 0
             onSecureConnection?()
             await receiveLoop()
         } catch {
@@ -234,8 +277,12 @@ final class BridgeClient: ObservableObject {
 
     private func scheduleReconnect() {
         reconnectTask?.cancel()
+        // 系统离线时暂停；网络恢复由 NWPathMonitor 立即触发重连。
+        guard networkAvailable else { return }
+        let delayMs = ReconnectBackoff.delayMs(attempt: Double(reconnectAttempt), random: backoffRandom)
+        reconnectAttempt += 1
         reconnectTask = Task { [weak self] in
-            try? await Task.sleep(for: .seconds(1.5))
+            try? await Task.sleep(for: .milliseconds(delayMs))
             guard !Task.isCancelled else { return }
             guard let self else { return }
             let canUseRemote = self.credentials?.remoteRelayURL != nil

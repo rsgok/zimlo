@@ -1,5 +1,5 @@
 import { redactText, uuidV7 } from "@zimlo/adapters";
-import type { Provider, TaskCommand } from "@zimlo/protocol";
+import { isCommandCancelable, type Provider, type TaskCommand } from "@zimlo/protocol";
 import { ResumeService } from "./resume-service.js";
 import { RuntimeHub } from "./runtime.js";
 
@@ -109,6 +109,26 @@ export class TaskCommandService {
     });
     this.dispatchQueued();
     return next;
+  }
+
+  // task.command.cancel：按 commandId 或设备作用域的 idempotencyKey 定位；
+  // 仅 queued 可取消（protocol 的 isCommandCancelable），已取消的重复取消
+  // 幂等返回当前状态，不报错也不二次执行。
+  cancel(input: { deviceId: string; commandId?: string; idempotencyKey?: string }):
+    | { ok: true; command: TaskCommand }
+    | { ok: false; code: "task_command_not_found" | "command_not_cancelable"; command: TaskCommand | null } {
+    const command = input.commandId
+      ? this.runtime.store.getTaskCommand(input.commandId)
+      : this.runtime.store.getTaskCommandByIdempotencyKey(`${input.deviceId}:${input.idempotencyKey ?? ""}`);
+    if (!command) return { ok: false, code: "task_command_not_found", command: null };
+    if (command.state === "canceled") return { ok: true, command };
+    if (!isCommandCancelable(command.state)) return { ok: false, code: "command_not_cancelable", command };
+    const updated = this.runtime.updateTaskCommand({
+      ...command,
+      state: "canceled",
+      updatedAt: new Date().toISOString(),
+    });
+    return { ok: true, command: updated };
   }
 
   private dispatchQueued(): void {

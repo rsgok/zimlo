@@ -177,17 +177,80 @@ export async function hookConfigChanges(
     .map(({ provider: _provider, ...change }) => change);
 }
 
-export async function applyHookChanges(changes: HookConfigChange[]): Promise<void> {
+export interface AppliedHookChange {
+  path: string;
+  changed: boolean;
+  backupPath: string | null;
+}
+
+export async function applyHookChanges(changes: HookConfigChange[]): Promise<AppliedHookChange[]> {
+  const applied: AppliedHookChange[] = [];
   for (const change of changes) {
+    const changed = JSON.stringify(change.before) !== JSON.stringify(change.after);
+    if (!changed) {
+      applied.push({ path: change.path, changed, backupPath: null });
+      continue;
+    }
     await mkdir(dirname(change.path), { recursive: true, mode: 0o700 });
+    let backupPath: string | null = null;
     if (existsSync(change.path)) {
-      const backup = `${change.path}.zimlo-backup-${new Date().toISOString().replaceAll(":", "-")}`;
-      await writeFile(backup, `${JSON.stringify(change.before, null, 2)}\n`, { mode: 0o600 });
+      backupPath = `${change.path}.zimlo-backup-${new Date().toISOString().replaceAll(":", "-")}`;
+      await writeFile(backupPath, `${JSON.stringify(change.before, null, 2)}\n`, { mode: 0o600 });
     }
     const temporary = `${change.path}.zimlo-${process.pid}.tmp`;
     await writeFile(temporary, `${JSON.stringify(change.after, null, 2)}\n`, { mode: 0o600 });
     await rename(temporary, change.path);
+    applied.push({ path: change.path, changed, backupPath });
   }
+  return applied;
+}
+
+function hookCommandsByEvent(config: JsonObject): Map<string, string[]> {
+  const result = new Map<string, string[]>();
+  const hooks = config.hooks;
+  if (!hooks || typeof hooks !== "object" || Array.isArray(hooks)) return result;
+  for (const [event, rawGroups] of Object.entries(hooks as JsonObject)) {
+    if (!Array.isArray(rawGroups)) continue;
+    const commands = rawGroups.flatMap((rawGroup) => {
+      if (!rawGroup || typeof rawGroup !== "object") return [];
+      const handlers = (rawGroup as JsonObject).hooks;
+      if (!Array.isArray(handlers)) return [];
+      return handlers
+        .map((handler) => (handler && typeof handler === "object" ? (handler as JsonObject).command : null))
+        .filter((command): command is string => typeof command === "string");
+    });
+    result.set(event, commands);
+  }
+  return result;
+}
+
+// `zimlo hooks diff` 的默认输出：每个文件按事件汇总新增/移除/保留的 hook
+// 条目，不 dump 完整 JSON（--json 才输出 formatHookChanges 的完整结构）。
+export function formatHookChangesSummary(changes: HookConfigChange[]): string {
+  return changes.map((change) => {
+    if (JSON.stringify(change.before) === JSON.stringify(change.after)) {
+      return `${change.path}（已是最新，无变化）`;
+    }
+    const before = hookCommandsByEvent(change.before);
+    const after = hookCommandsByEvent(change.after);
+    const lines = [change.path];
+    let added = 0;
+    let removed = 0;
+    let kept = 0;
+    for (const event of new Set([...before.keys(), ...after.keys()])) {
+      const beforeCommands = new Set(before.get(event) ?? []);
+      const afterCommands = new Set(after.get(event) ?? []);
+      const addedCommands = [...afterCommands].filter((command) => !beforeCommands.has(command));
+      const removedCommands = [...beforeCommands].filter((command) => !afterCommands.has(command));
+      kept += [...afterCommands].filter((command) => beforeCommands.has(command)).length;
+      added += addedCommands.length;
+      removed += removedCommands.length;
+      if (addedCommands.length > 0) lines.push(`  + ${event}：新增 ${addedCommands.length} 条 hook`);
+      if (removedCommands.length > 0) lines.push(`  - ${event}：移除 ${removedCommands.length} 条 hook`);
+    }
+    lines.push(`  合计：新增 ${added} 条，移除 ${removed} 条，保留 ${kept} 条。`);
+    return lines.join("\n");
+  }).join("\n\n");
 }
 
 export function formatHookChanges(changes: HookConfigChange[]): string {

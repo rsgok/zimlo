@@ -1,0 +1,130 @@
+{
+  "version": 1,
+  "cases": [
+    {
+      "name": "task.create trims free text",
+      "input": { "type": "task.create", "provider": "codex", "workspaceId": "ws-1", "text": "  修复登录回归  ", "idempotencyKey": "k-1" },
+      "expected": { "key": "task.create:codex:ws-1:修复登录回归" }
+    },
+    {
+      "name": "task.create key ignores the idempotency key",
+      "input": { "type": "task.create", "provider": "codex", "workspaceId": "ws-1", "text": "修复登录回归", "idempotencyKey": "k-2" },
+      "expected": { "key": "task.create:codex:ws-1:修复登录回归" }
+    },
+    {
+      "name": "task.follow_up",
+      "input": { "type": "task.follow_up", "sessionId": "s-1", "text": "继续", "idempotencyKey": "k-1" },
+      "expected": { "key": "task.follow_up:s-1:继续" }
+    },
+    {
+      "name": "session.message",
+      "input": { "type": "session.message", "sessionId": "s-1", "text": " 你好 ", "idempotencyKey": "k-1" },
+      "expected": { "key": "session.message:s-1:你好" }
+    },
+    {
+      "name": "task.command.retry",
+      "input": { "type": "task.command.retry", "commandId": "cmd-9", "idempotencyKey": "k-1" },
+      "expected": { "key": "task.command.retry:cmd-9" }
+    },
+    {
+      "name": "task.command.cancel by command id",
+      "input": { "type": "task.command.cancel", "commandId": "cmd-9" },
+      "expected": { "key": "task.command.cancel:cmd-9" }
+    },
+    {
+      "name": "task.command.cancel by idempotency key",
+      "input": { "type": "task.command.cancel", "idempotencyKey": "k-9" },
+      "expected": { "key": "task.command.cancel:k-9" }
+    },
+    {
+      "name": "action.decide sorts the input record",
+      "input": { "type": "action.decide", "actionId": "a-1", "sessionId": "s-1", "decisionId": "d-allow", "idempotencyKey": "k-1", "input": { "z": "2", "a": "1" } },
+      "expected": { "key": "action.decide:a-1:d-allow::[[\"a\",\"1\"],[\"z\",\"2\"]]" }
+    },
+    {
+      "name": "action.decide key ignores input field order",
+      "input": { "type": "action.decide", "actionId": "a-1", "sessionId": "s-1", "decisionId": "d-allow", "idempotencyKey": "k-2", "input": { "a": "1", "z": "2" } },
+      "expected": { "key": "action.decide:a-1:d-allow::[[\"a\",\"1\"],[\"z\",\"2\"]]" }
+    },
+    {
+      "name": "action.decide includes the confirmation phrase and defaults missing input to an empty list",
+      "input": { "type": "action.decide", "actionId": "a-1", "sessionId": "s-1", "decisionId": "d-1", "confirmationPhrase": "DELETE", "idempotencyKey": "k-3" },
+      "expected": { "key": "action.decide:a-1:d-1:DELETE:[]" }
+    },
+    {
+      "name": "feed.dismiss",
+      "input": { "type": "feed.dismiss", "itemId": "post:p-1" },
+      "expected": { "key": "feed.dismiss:post:p-1" }
+    },
+    {
+      "name": "feed.dismiss.set ignores the dismiss flag and idempotency key",
+      "input": { "type": "feed.dismiss.set", "itemId": "post:p-1", "dismissed": true, "idempotencyKey": "k-1" },
+      "expected": { "key": "feed.dismiss.set:post:p-1" }
+    },
+    {
+      "name": "feed.seen",
+      "input": { "type": "feed.seen", "postId": "p-1" },
+      "expected": { "key": "feed.seen:p-1" }
+    },
+    {
+      "name": "task.timeline.seen",
+      "input": { "type": "task.timeline.seen", "sessionId": "s-1", "itemId": "item-7" },
+      "expected": { "key": "task.timeline.seen:s-1:item-7" }
+    },
+    {
+      "name": "user.profile.update",
+      "input": { "type": "user.profile.update", "avatarId": "user-01" },
+      "expected": { "key": "user.profile.update" }
+    },
+    {
+      "name": "agent.profile.update",
+      "input": { "type": "agent.profile.update", "projectId": "proj-1", "displayName": "新名字" },
+      "expected": { "key": "agent.profile.update:proj-1" }
+    },
+    {
+      "name": "trust.policy.update",
+      "input": { "type": "trust.policy.update", "projectId": "proj-1", "preset": "safe_automation", "idempotencyKey": "k-1" },
+      "expected": { "key": "trust.policy.update:proj-1" }
+    },
+    {
+      "name": "notification.settings.update",
+      "input": { "type": "notification.settings.update", "settings": { "enabled": true, "approvals": true, "failures": false, "reviews": true, "showTaskTitle": false }, "idempotencyKey": "k-1" },
+      "expected": { "key": "notification.settings.update" }
+    },
+    {
+      "name": "notification.device.register",
+      "input": { "type": "notification.device.register", "publicKey": "pk", "endpoint": "https://push.example/d1", "idempotencyKey": "k-1" },
+      "expected": { "key": "notification.device.register" }
+    },
+    {
+      "name": "notification.device.unregister",
+      "input": { "type": "notification.device.unregister", "idempotencyKey": "k-1" },
+      "expected": { "key": "notification.device.unregister" }
+    },
+    {
+      "name": "review.respond trims the note",
+      "input": { "type": "review.respond", "reviewId": "r-1", "decision": "accept", "note": "  没问题  ", "idempotencyKey": "k-1" },
+      "expected": { "key": "review.respond:r-1:accept:没问题" }
+    },
+    {
+      "name": "review.respond without a note",
+      "input": { "type": "review.respond", "reviewId": "r-1", "decision": "request_changes", "idempotencyKey": "k-2" },
+      "expected": { "key": "review.respond:r-1:request_changes:" }
+    },
+    {
+      "name": "unknown command falls back to recursively sorted json",
+      "input": { "type": "future.command", "b": 2, "a": 1 },
+      "expected": { "key": "future.command:{\"a\":1,\"b\":2}" }
+    },
+    {
+      "name": "fallback ignores field order",
+      "input": { "type": "future.command", "a": 1, "b": 2 },
+      "expected": { "key": "future.command:{\"a\":1,\"b\":2}" }
+    },
+    {
+      "name": "fallback sorts nested objects but keeps array order",
+      "input": { "type": "future.command", "outer": { "y": [2, 1], "x": { "b": 1, "a": 2 } } },
+      "expected": { "key": "future.command:{\"outer\":{\"x\":{\"a\":2,\"b\":1},\"y\":[2,1]}}" }
+    }
+  ]
+}

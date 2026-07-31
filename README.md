@@ -12,16 +12,20 @@ Zimlo 是 Codex 与 Claude Code 的隐私优先移动状态层。它自动发现
 - 用户原始指令只保留在 Task 详情；Feed 只接收 Agent 主动编辑的结构化阅读卡和真实待处理操作，平台不 scrape 输出，也不二次生成摘要。
 - `signal.transition` 单独维护机器任务状态；Feed 不是状态 source of truth。
 - 普通轮次可以静默结束；Stop hook 只幂等记录 `implicit_skip`，不会打断或把内部协议提示发进对话。关键状态仍会校验匹配的帖子种类。
-- 主 Feed 使用全屏纵向 scroll-snap，一屏一张卡；待处理、失败、结果、判断和进展按内容价值排序，六小时内同任务的常规更新自动合并，稳定停留一秒后按设备记录已读。
-- 左滑 Feed 卡进入所属 Task Detail，右滑将卡片从本设备的当前与历史 Feed 中移除；卡片上的 Agent 身份进入跨任务 Agent Profile。
+- 主 Feed 使用全屏纵向 scroll-snap，一屏一张卡，序列在页面会话内固定：首次载入按待操作优先与时间次序建序；阅读中已有卡不因已读、审批完成或快照刷新换位，新卡与重新可操作的卡追加到 caught-up 之前，已处理卡在当前会话原位显示完成状态；未看到末尾时浮出“有 N 条新更新”浮条。六小时内同任务的常规更新自动合并，稳定停留一秒后按设备记录已读。合并与优先级策略由 `packages/protocol` 的共享策略函数定义，Web 与 iOS 逐行对齐。
+- 左滑 Feed 卡进入所属 Task Detail，右滑将卡片从本设备的当前与历史 Feed 中移除；卡片上的 Agent 身份进入跨任务 Agent Profile。Feed 移除与任务归档都是乐观更新并提供 6 秒撤销（`feed.dismiss.set` 携带幂等键，旧 `feed.dismiss` 保留兼容）。
 - 底部导航为 `Feed · Tasks · ＋ · Agents`；设备、安全和 Runtime 接入位于右上角 Settings。
 - 底部 `+` 可从 Mac 已发现的可信项目中创建 Codex/Claude Code 任务；运行中 follow-up 会先持久化，再等待精确 session 空闲后执行。
 - 新任务默认最近 Project Agent/Runtime，支持项目搜索和草稿恢复；发送后立即出现启动中占位卡。Task Detail 的 follow-up 同样保存草稿、显示队列状态并阻止同文重复提交。
+- Web 与 iOS 发送体验一致：先持久化本机 outbox，同周期清空输入与草稿并立即展示本地 pending；服务端拒绝标失败并保留原文，可在 outbox 详情（类型、目标、预览、时间与状态）中重试或重新编辑；本地或服务端仍 queued 的 create/follow-up 可撤回（`task.command.cancel`）。
 - Task Detail 固定展示 Task Input、状态、最新结论和下一步；Timeline 按设备保存阅读位置。
 - 新结果会形成带版本的 Review Bundle，将结论、真实改动文件、测试证据和相关链接放在 Timeline 前；用户可接受结果或通过可靠 outbox 要求修改。
 - 每个 Project 可单独开启“安全自动化”：只自动允许项目边界内可确认的读取、搜索、测试和构建；写入、联网、安装、发布、删除与未知动作继续询问并保留审计。
-- iOS 可在完成配对后按需开启三类隐私通知：等待批准/回复、任务失败、新结果待审阅。默认锁屏不显示任务标题，通知只携带设备端可解密的任务路由。
-- 原生 iOS 与 PWA 都会优先本地直连，失败后自动切到 Cloudflare；顶栏明确显示“本地 / 云端 / 重连”。Cloudflare 不保存任务正文，Mac 离线时手机显示保存在设备本地的最近快照，操作进入可靠 outbox。
+- 高风险审批双确认：iOS 用底部 Sheet 完整展示风险、作用域、目标命令与确认短语，「填入确认短语」后再次明确提交（不使用 Face ID）；Web 保持同一双确认语义（自动聚焦、Enter 提交、44px 点击目标）。
+- 撤销设备与解除配对都有确认对话框；解除配对清理本机凭据、快照、outbox、设备草稿与待路由通知，保留界面偏好。
+- iOS 可在完成配对后按需开启三类隐私通知：等待批准/回复、任务失败、新结果待审阅。默认锁屏不显示任务标题，通知只携带设备端可解密的任务路由。低风险审批（无确认短语的批准一次/拒绝）支持锁屏快捷操作：APNs category 只是明文通用标识，决策 id 只放在加密路由内；高风险与需输入的审批仍只能进 App 处理。通知权限被拒时设置页给出去系统设置的引导。
+- 原生 iOS 与 PWA 都会优先本地直连，失败后自动切到 Cloudflare；顶栏明确显示“本地 / 云端 / 重连”。双端统一按 1/2/4/8/16/30 秒 ±20% 抖动退避重连，认证成功或回到前台时重置，系统离线时暂停，顶栏与离线胶囊都可手动立即重试。Cloudflare 不保存任务正文，Mac 离线时手机显示保存在设备本地的最近快照（带 savedAt，界面显示“数据更新于 X 分钟前”），操作进入可靠 outbox。
+- Web 使用语义化字体 token 与字号阶梯（正文不小于 13px）；iOS 用语义字体与圆角体系并支持 Dynamic Type。
 - 只有真实测试命令与真实退出码才能生成 `tests_passed` / `tests_failed`。
 - 闲置 Codex session 通过 app-server 的 `thread/read`、`thread/resume` 和 `turn/start` 安全继续；闲置 Claude session 使用 stream-json runner。
 - 活跃外部终端 session 禁止 TTY 注入；精确 hook 审批仍可按原请求闭环。
@@ -36,7 +40,7 @@ Zimlo 是 Codex 与 Claude Code 的隐私优先移动状态层。它自动发现
 正式版本的使用方式是：
 
 1. 在 Mac 下载并打开 **Zimlo.app**，按首次启动引导完成 Agent 接入；
-2. Zimlo 常驻菜单栏并自动管理本机后台服务，不需要打开终端；
+2. Zimlo 常驻菜单栏并自动管理本机后台服务，不需要打开终端；服务异常时菜单栏提供重试、查看日志与打开服务目录。崩溃按 1–30 秒退避自动重启、两分钟五次失败熔断；端口占用（尽力显示进程名/PID）、配置损坏或运行时缺失属于终止型故障，不自动重启；
 3. 在 iPhone 安装 Zimlo，扫描 Mac 显示的二维码；
 4. 配对通过 Cloudflare 的两分钟临时房间完成，手机和 Mac 不需要连接同一个 Wi‑Fi；
 5. 手机离开局域网后仍可继续查看、批准、回复和审阅。Mac 必须保持开机并运行 Zimlo。
@@ -48,7 +52,7 @@ pnpm macos:build
 open apps/macos/.build/Zimlo.app
 ```
 
-该开发包已经是 Universal App，包含 Intel / Apple Silicon Node Runtime 和 Sparkle。正式发布命令会完成 Developer ID 签名、公证、DMG、Sparkle appcast 与 Cloudflare R2 上传；第一次公开发布仍需提供 Apple Developer 凭据、Sparkle 密钥并在 Cloudflare 账号中启用 R2。普通用户最终不会接触 `pnpm`、Node.js 或 `zimlo start`。
+该开发包已经是 Universal App，包含 Intel / Apple Silicon Node Runtime 和 Sparkle（自动检查并下载更新，由用户手动安装）。正式发布命令会完成 Developer ID 签名、公证、DMG、Sparkle appcast 与 Cloudflare R2 上传；第一次公开发布仍需提供 Apple Developer 凭据、Sparkle 密钥并在 Cloudflare 账号中启用 R2。普通用户最终不会接触 `pnpm`、Node.js 或 `zimlo start`。
 
 ## 开发者：从源码运行
 
@@ -149,6 +153,9 @@ CLI 命令：
 
 ```text
 zimlo start [--lan] [--port 4747]
+zimlo status [--json]
+zimlo stop
+zimlo logs [--follow] [--desktop|--cli]
 zimlo doctor
 zimlo codex-plugin install|status|uninstall
 zimlo hooks diff|install|status|uninstall
@@ -156,6 +163,8 @@ zimlo mcp --provider codex|claude
 zimlo devices list|revoke <device-id>
 zimlo open
 ```
+
+`zimlo status` 报告服务描述文件、PID 归属、端口、/healthz 协议版本、socket、启动诊断与日志路径；`zimlo stop` 校验描述文件归属后发送 SIGTERM，并写入手动停止标记（macOS 不会自动拉起，`zimlo start` 重新启动时清除）；`zimlo open` 读取真实地址并先健康检查再打开。`zimlo doctor` 覆盖 Bridge、端口、协议版本、Agent 集成与启动诊断，每个失败项给出可复制的修复命令，阻塞项失败时以非零退出。
 
 被动发现无需 hooks，但被动 session 只会出现在 Tasks，不会自动产生 Feed。主动发帖协议需要 Agent 获得 Zimlo MCP 工具和编辑规则。
 
@@ -187,7 +196,7 @@ codex mcp add zimlo -- zimlo mcp --provider codex
 claude mcp add --scope user zimlo -- zimlo mcp --provider claude
 ```
 
-安装器采用备份、临时文件与 rename 原子合并，卸载只移除 Zimlo 自己的 handler。只有 Codex CLI 使用 `/hooks` 检查并信任用户级 hook；Codex GUI 使用上面的 Plugins 页面。Claude Code 可用 `/mcp` 检查工具是否已连接。
+`zimlo hooks diff` 默认输出事件级摘要（新增/移除/保留的 hook 条数，`--json` 查看全量配置）；`zimlo hooks install` 只给已安装的 Agent 写配置，并打印每个文件的改动与备份路径。安装器采用备份、临时文件与 rename 原子合并，卸载只移除 Zimlo 自己的 handler。只有 Codex CLI 使用 `/hooks` 检查并信任用户级 hook；Codex GUI 使用上面的 Plugins 页面。Claude Code 可用 `/mcp` 检查工具是否已连接。
 
 也可以在 Mac 本机的 **Settings → Runtime 接入方式** 中查看 Codex/Claude 的 GUI、CLI 状态，并显式点击“配置 / 修复 CLI 接入”。Zimlo 启动时不会静默修改用户配置；Claude Code 的 GUI 与 CLI 共用用户级 Hooks/MCP，hook 会根据终端与父进程链记录实际 surface。Zimlo 自己创建的 Codex app-server 与 Claude runner 任务标记为 `Zimlo 托管`。
 
@@ -201,6 +210,10 @@ Feed V2 的 `feed.post` 使用结构化字段：`headline`、`takeaway`、最多
 ~/.zimlo/zimlo.db
 ~/.zimlo/config.json
 ~/.zimlo/run/bridge.sock
+~/.zimlo/run/service.lock/               # 实例锁（owner.json：pid/token/entrypoint/startedAt）
+~/.zimlo/run/service.json                # 运行中 Bridge 的服务描述符
+~/.zimlo/run/startup-diagnostics.json    # 最近一次启动诊断
+~/.zimlo/run/manual-stop                 # zimlo stop 写入；仅 macOS 自动管理尊重
 ~/.zimlo/logs/
 ```
 

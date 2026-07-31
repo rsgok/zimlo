@@ -1,7 +1,9 @@
-import { useMemo, useState } from "react";
+import { memo, useEffect, useMemo, useRef, useState } from "react";
 import type { ClientCommand, FeedPost, Project, Session, TaskPreference, TaskRecord } from "@zimlo/protocol";
 import { ProviderBadge } from "./ProviderBadge";
+import { relativeTime, useNow } from "../lib/nowTicker";
 import { runtimeLabel, sessionLocation } from "./sessionPresentation";
+import { useOutsideClickClose } from "./useModalFocus";
 
 interface TasksViewProps {
   projects: Project[];
@@ -11,6 +13,7 @@ interface TasksViewProps {
   preferences: TaskPreference[];
   send: (command: ClientCommand) => void;
   onOpen: (sessionId: string) => void;
+  onRequestUndo?: ((label: string, undo: () => void) => void) | undefined;
 }
 
 type TaskFilter = "all" | "attention" | "active" | "ready";
@@ -98,15 +101,6 @@ export function taskTitle(session: Session, task: TaskRecord | undefined, post?:
   return session.title;
 }
 
-function relativeTaskTime(value: string): string {
-  const seconds = Math.max(0, Math.round((Date.now() - new Date(value).getTime()) / 1000));
-  if (seconds < 60) return "刚刚";
-  if (seconds < 3600) return `${Math.floor(seconds / 60)} 分钟前`;
-  if (seconds < 86_400) return `${Math.floor(seconds / 3600)} 小时前`;
-  if (seconds < 604_800) return `${Math.floor(seconds / 86_400)} 天前`;
-  return new Intl.DateTimeFormat("zh-CN", { month: "short", day: "numeric" }).format(new Date(value));
-}
-
 function statePriority(state: string): number {
   if (["waiting", "waiting_input", "user_review", "failed"].includes(state)) return 0;
   if (["running", "reviewing"].includes(state)) return 1;
@@ -147,16 +141,111 @@ function taskNextStep(session: Session, state: string): string | null {
   return null;
 }
 
-export function TasksView({ projects, sessions, tasks, posts = EMPTY_POSTS, preferences, send, onOpen }: TasksViewProps) {
+interface TaskRowProps {
+  session: Session;
+  task: TaskRecord | undefined;
+  preference: TaskPreference | undefined;
+  post: FeedPost | undefined;
+  processCount: number;
+  now: number;
+  onOpen: (sessionId: string) => void;
+  onTogglePin: (sessionId: string) => void;
+  onToggleArchive: (sessionId: string) => void;
+}
+
+const TaskRow = memo(function TaskRow({ session, task, preference, post, processCount, now, onOpen, onTogglePin, onToggleArchive }: TaskRowProps) {
+  const state = effectiveState(session, task);
+  const location = sessionLocation(session);
+  const tone = statePriority(state) === 0 ? "attention" : statePriority(state) === 1 ? "active" : session.status;
+  const nextStep = taskNextStep(session, state);
+  return (
+    <article className={`task-row task-row-${statePriority(state) === 0 ? "attention" : statePriority(state) === 1 ? "active" : "settled"}`}>
+      <button className="task-row-main" onClick={() => onOpen(session.id)}>
+        <span className="task-provider-mark">
+          <ProviderBadge provider={session.provider} surface={session.surface} labelMode="icon" />
+        </span>
+        <span className="task-copy">
+          <strong>{processCount > 1 ? `${runtimeLabel(session.provider)} 在 ${location.label} 运行 ${processCount} 个任务` : taskTitle(session, task, post)}</strong>
+          <small>{location.kind === "project" ? "项目" : "目录"} · {location.label}<span aria-hidden="true"> · </span>{processCount > 1 ? `${processCount} 个活跃进程已归组` : relativeTime(session.lastActivityAt, now)}</small>
+          {nextStep && <span className="task-next-step">{nextStep}</span>}
+        </span>
+        <span className="task-side">
+          <span className={`task-state-pill task-state-${tone}`}>{stateLabel(session, state)}</span>
+        </span>
+      </button>
+      <details className="task-row-menu">
+        <summary aria-label="管理任务">•••</summary>
+        <div>
+          <button
+            className={preference?.pinnedAt ? "active" : ""}
+            onClick={() => onTogglePin(session.id)}
+          >{preference?.pinnedAt ? "取消置顶" : "置顶任务"}</button>
+          <button
+            onClick={() => onToggleArchive(session.id)}
+          >{preference?.archivedAt ? "恢复任务" : "归档任务"}</button>
+        </div>
+      </details>
+    </article>
+  );
+});
+
+export function TasksView({ projects, sessions, tasks, posts = EMPTY_POSTS, preferences, send, onOpen, onRequestUndo }: TasksViewProps) {
+  const now = useNow();
   const [query, setQuery] = useState("");
   const [filter, setFilter] = useState<TaskFilter>("all");
   const [projectId, setProjectId] = useState<string>("all");
   const [showAll, setShowAll] = useState(false);
   const [showArchived, setShowArchived] = useState(false);
+  const searchRef = useRef<HTMLDetailsElement>(null);
+  useOutsideClickClose(searchRef);
   const taskBySession = useMemo(() => latestTasksBySession(tasks), [tasks]);
   const postBySession = useMemo(() => latestPostsBySession(posts), [posts]);
   const preferenceBySession = useMemo(() => new Map(preferences.map((preference) => [preference.sessionId, preference])), [preferences]);
   const projectById = useMemo(() => new Map(projects.map((project) => [project.id, project])), [projects]);
+
+  // 归档乐观更新 + 快照调和：override 意图被快照吸收后自动丢弃
+  const [archiveOverrides, setArchiveOverrides] = useState<ReadonlyMap<string, boolean>>(() => new Map());
+  useEffect(() => {
+    setArchiveOverrides((current) => {
+      if (current.size === 0) return current;
+      let changed = false;
+      const next = new Map(current);
+      for (const [sessionId, intent] of current) {
+        if (Boolean(preferenceBySession.get(sessionId)?.archivedAt) === intent) {
+          next.delete(sessionId);
+          changed = true;
+        }
+      }
+      return changed ? next : current;
+    });
+  }, [preferenceBySession]);
+  const effectivePreferenceBySession = useMemo(() => {
+    if (archiveOverrides.size === 0) return preferenceBySession;
+    const merged = new Map(preferenceBySession);
+    for (const [sessionId, archived] of archiveOverrides) {
+      const preference = merged.get(sessionId);
+      merged.set(sessionId, {
+        sessionId,
+        pinnedAt: preference?.pinnedAt ?? null,
+        archivedAt: archived ? (preference?.archivedAt ?? "local") : null,
+      });
+    }
+    return merged;
+  }, [preferenceBySession, archiveOverrides]);
+
+  const togglePin = (sessionId: string) => {
+    send({ type: "task.pin", sessionId, pinned: !effectivePreferenceBySession.get(sessionId)?.pinnedAt, idempotencyKey: crypto.randomUUID() });
+  };
+  const toggleArchive = (sessionId: string) => {
+    const archived = !effectivePreferenceBySession.get(sessionId)?.archivedAt;
+    setArchiveOverrides((current) => new Map(current).set(sessionId, archived));
+    send({ type: "task.archive", sessionId, archived, idempotencyKey: crypto.randomUUID() });
+    onRequestUndo?.(archived ? "已归档这个任务" : "已恢复这个任务", () => {
+      setArchiveOverrides((current) => new Map(current).set(sessionId, !archived));
+      send({ type: "task.archive", sessionId, archived: !archived, idempotencyKey: crypto.randomUUID() });
+    });
+  };
+
   const stableProjects = useMemo(
     () => [...projects].sort((left, right) => right.lastUsedAt.localeCompare(left.lastUsedAt) || left.name.localeCompare(right.name, "zh-CN", { sensitivity: "base" })),
     [projects],
@@ -164,7 +253,7 @@ export function TasksView({ projects, sessions, tasks, posts = EMPTY_POSTS, pref
   const collapsed = useMemo(() => collapseProcessSessions(sessions), [sessions]);
   const managedSessions = collapsed.sessions;
   const currentSessions = managedSessions.filter((session) => {
-    const preference = preferenceBySession.get(session.id);
+    const preference = effectivePreferenceBySession.get(session.id);
     return !preference?.archivedAt && belongsInRecentTasks(session, taskBySession.get(session.id), preference);
   });
   const visibleSessionIds = useMemo(() => new Set(currentSessions.map((session) => session.id)), [currentSessions]);
@@ -188,7 +277,7 @@ export function TasksView({ projects, sessions, tasks, posts = EMPTY_POSTS, pref
     .filter((session) => {
       const task = taskBySession.get(session.id);
       const state = effectiveState(session, task);
-      const preference = preferenceBySession.get(session.id);
+      const preference = effectivePreferenceBySession.get(session.id);
       if (showArchived !== Boolean(preference?.archivedAt)) return false;
       if (!showArchived && !visibleSessionIds.has(session.id)) return false;
       if (projectId !== "all" && session.projectId !== projectId) return false;
@@ -201,7 +290,7 @@ export function TasksView({ projects, sessions, tasks, posts = EMPTY_POSTS, pref
         .some((value) => value?.toLocaleLowerCase().includes(normalizedQuery));
     })
     .sort((left, right) => {
-      const pinned = Number(Boolean(preferenceBySession.get(right.id)?.pinnedAt)) - Number(Boolean(preferenceBySession.get(left.id)?.pinnedAt));
+      const pinned = Number(Boolean(effectivePreferenceBySession.get(right.id)?.pinnedAt)) - Number(Boolean(effectivePreferenceBySession.get(left.id)?.pinnedAt));
       if (pinned) return pinned;
       const priority = statePriority(effectiveState(left, taskBySession.get(left.id))) - statePriority(effectiveState(right, taskBySession.get(right.id)));
       return priority || right.lastActivityAt.localeCompare(left.lastActivityAt) || left.id.localeCompare(right.id);
@@ -214,10 +303,10 @@ export function TasksView({ projects, sessions, tasks, posts = EMPTY_POSTS, pref
       ...filtered.filter((session) => statePriority(effectiveState(session, taskBySession.get(session.id))) >= 2).slice(0, 6),
     ];
   const groups = [
-    { id: "pinned", label: "已置顶", hint: "重要任务", sessions: visible.filter((session) => preferenceBySession.get(session.id)?.pinnedAt) },
-    { id: "attention", label: "待你处理", hint: "回复、审阅或恢复", sessions: visible.filter((session) => !preferenceBySession.get(session.id)?.pinnedAt && statePriority(effectiveState(session, taskBySession.get(session.id))) === 0) },
-    { id: "active", label: "正在工作", hint: "Agent 正在推进", sessions: visible.filter((session) => !preferenceBySession.get(session.id)?.pinnedAt && statePriority(effectiveState(session, taskBySession.get(session.id))) === 1) },
-    { id: "recent", label: showArchived ? "已归档" : "可继续与最近完成", hint: showArchived ? "不影响当前注意力" : "随时回看或继续", sessions: visible.filter((session) => !preferenceBySession.get(session.id)?.pinnedAt && statePriority(effectiveState(session, taskBySession.get(session.id))) >= 2) },
+    { id: "pinned", label: "已置顶", hint: "重要任务", sessions: visible.filter((session) => effectivePreferenceBySession.get(session.id)?.pinnedAt) },
+    { id: "attention", label: "待你处理", hint: "回复、审阅或恢复", sessions: visible.filter((session) => !effectivePreferenceBySession.get(session.id)?.pinnedAt && statePriority(effectiveState(session, taskBySession.get(session.id))) === 0) },
+    { id: "active", label: "正在工作", hint: "Agent 正在推进", sessions: visible.filter((session) => !effectivePreferenceBySession.get(session.id)?.pinnedAt && statePriority(effectiveState(session, taskBySession.get(session.id))) === 1) },
+    { id: "recent", label: showArchived ? "已归档" : "可继续与最近完成", hint: showArchived ? "不影响当前注意力" : "随时回看或继续", sessions: visible.filter((session) => !effectivePreferenceBySession.get(session.id)?.pinnedAt && statePriority(effectiveState(session, taskBySession.get(session.id))) >= 2) },
   ].filter((group) => group.sessions.length > 0);
 
   return (
@@ -233,7 +322,7 @@ export function TasksView({ projects, sessions, tasks, posts = EMPTY_POSTS, pref
             );
           })}
           <button className={showArchived ? "active" : ""} onClick={() => { setShowArchived((value) => !value); setFilter("all"); setShowAll(true); }}>{showArchived ? "返回任务" : "已归档"}</button>
-          <details className="directory-search">
+          <details className="directory-search" ref={searchRef}>
             <summary aria-label="搜索和项目筛选">⌕</summary>
             <div className="directory-search-panel">
               <label className="task-search">
@@ -262,43 +351,20 @@ export function TasksView({ projects, sessions, tasks, posts = EMPTY_POSTS, pref
             <strong>{group.sessions.length}</strong>
           </header>
           <div className="task-list">
-            {group.sessions.map((session) => {
-              const task = taskBySession.get(session.id);
-              const state = effectiveState(session, task);
-              const location = sessionLocation(session);
-              const processCount = collapsed.counts.get(session.id) ?? 1;
-              const tone = statePriority(state) === 0 ? "attention" : statePriority(state) === 1 ? "active" : session.status;
-              const nextStep = taskNextStep(session, state);
-              return (
-                <article className={`task-row task-row-${statePriority(state) === 0 ? "attention" : statePriority(state) === 1 ? "active" : "settled"}`} key={session.id}>
-                  <button className="task-row-main" onClick={() => onOpen(session.id)}>
-                    <span className="task-provider-mark">
-                      <ProviderBadge provider={session.provider} surface={session.surface} labelMode="icon" />
-                    </span>
-                    <span className="task-copy">
-                      <strong>{processCount > 1 ? `${runtimeLabel(session.provider)} 在 ${location.label} 运行 ${processCount} 个任务` : taskTitle(session, task, postBySession.get(session.id))}</strong>
-                      <small>{location.kind === "project" ? "项目" : "目录"} · {location.label}<span aria-hidden="true"> · </span>{processCount > 1 ? `${processCount} 个活跃进程已归组` : relativeTaskTime(session.lastActivityAt)}</small>
-                      {nextStep && <span className="task-next-step">{nextStep}</span>}
-                    </span>
-                    <span className="task-side">
-                      <span className={`task-state-pill task-state-${tone}`}>{stateLabel(session, state)}</span>
-                    </span>
-                  </button>
-                  <details className="task-row-menu">
-                    <summary aria-label="管理任务">•••</summary>
-                    <div>
-                      <button
-                        className={preferenceBySession.get(session.id)?.pinnedAt ? "active" : ""}
-                        onClick={() => send({ type: "task.pin", sessionId: session.id, pinned: !preferenceBySession.get(session.id)?.pinnedAt })}
-                      >{preferenceBySession.get(session.id)?.pinnedAt ? "取消置顶" : "置顶任务"}</button>
-                      <button
-                        onClick={() => send({ type: "task.archive", sessionId: session.id, archived: !preferenceBySession.get(session.id)?.archivedAt })}
-                      >{preferenceBySession.get(session.id)?.archivedAt ? "恢复任务" : "归档任务"}</button>
-                    </div>
-                  </details>
-                </article>
-              );
-            })}
+            {group.sessions.map((session) => (
+              <TaskRow
+                key={session.id}
+                session={session}
+                task={taskBySession.get(session.id)}
+                preference={effectivePreferenceBySession.get(session.id)}
+                post={postBySession.get(session.id)}
+                processCount={collapsed.counts.get(session.id) ?? 1}
+                now={now}
+                onOpen={onOpen}
+                onTogglePin={togglePin}
+                onToggleArchive={toggleArchive}
+              />
+            ))}
           </div>
         </section>
       ))}

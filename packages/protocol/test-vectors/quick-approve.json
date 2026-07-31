@@ -1,0 +1,60 @@
+{
+  "version": 1,
+  "cases": [
+    {
+      "name": "low risk allow-once with a deny decision",
+      "input": { "kind": "approval", "decisions": [{ "scope": "once", "risk": "low" }, { "scope": "deny", "risk": "low" }] },
+      "expected": { "quickApprovable": true }
+    },
+    {
+      "name": "medium risk allow-once is not quick approvable",
+      "input": { "kind": "approval", "decisions": [{ "scope": "once", "risk": "medium" }, { "scope": "deny", "risk": "low" }] },
+      "expected": { "quickApprovable": false }
+    },
+    {
+      "name": "high risk allow-once is not quick approvable",
+      "input": { "kind": "approval", "decisions": [{ "scope": "once", "risk": "high" }, { "scope": "deny", "risk": "low" }] },
+      "expected": { "quickApprovable": false }
+    },
+    {
+      "name": "confirmation phrase on the allow decision blocks",
+      "input": { "kind": "approval", "decisions": [{ "scope": "once", "risk": "low", "confirmationPhrase": "DELETE" }, { "scope": "deny", "risk": "low" }] },
+      "expected": { "quickApprovable": false }
+    },
+    {
+      "name": "confirmation phrase on the deny decision blocks",
+      "input": { "kind": "approval", "decisions": [{ "scope": "once", "risk": "low" }, { "scope": "deny", "risk": "low", "confirmationPhrase": "确认" }] },
+      "expected": { "quickApprovable": false }
+    },
+    {
+      "name": "missing deny decision",
+      "input": { "kind": "approval", "decisions": [{ "scope": "once", "risk": "low" }] },
+      "expected": { "quickApprovable": false }
+    },
+    {
+      "name": "session scope allow does not count as allow-once",
+      "input": { "kind": "approval", "decisions": [{ "scope": "session", "risk": "low" }, { "scope": "deny", "risk": "low" }] },
+      "expected": { "quickApprovable": false }
+    },
+    {
+      "name": "persistent scope allow does not count as allow-once",
+      "input": { "kind": "approval", "decisions": [{ "scope": "persistent", "risk": "low" }, { "scope": "deny", "risk": "low" }] },
+      "expected": { "quickApprovable": false }
+    },
+    {
+      "name": "input kind is never quick approvable",
+      "input": { "kind": "input", "decisions": [{ "scope": "once", "risk": "low" }, { "scope": "deny", "risk": "low" }] },
+      "expected": { "quickApprovable": false }
+    },
+    {
+      "name": "no decisions",
+      "input": { "kind": "approval", "decisions": [] },
+      "expected": { "quickApprovable": false }
+    },
+    {
+      "name": "extra high ceremony decisions do not block",
+      "input": { "kind": "approval", "decisions": [{ "scope": "once", "risk": "low" }, { "scope": "deny", "risk": "low" }, { "scope": "session", "risk": "high", "confirmationPhrase": "YES" }] },
+      "expected": { "quickApprovable": true }
+    }
+  ]
+}

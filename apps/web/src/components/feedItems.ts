@@ -1,4 +1,7 @@
 import type { FeedPost, PendingAction, TaskCommand, TaskRecord, TaskReview } from "@zimlo/protocol";
+import { compareFeedItems, isPostCovered, mergeRoutinePosts, postNeedsAction, postPriority } from "@zimlo/protocol";
+
+export { mergeRoutinePosts };
 
 export type FeedItem =
   | { type: "post"; id: string; createdAt: string; needsAction: boolean; unread: boolean; priority: number; settledReview?: boolean; post: FeedPost }
@@ -7,30 +10,6 @@ export type FeedItem =
 
 export function feedItemId(item: Pick<FeedItem, "type" | "id">): string {
   return `${item.type}:${item.id}`;
-}
-
-const POST_VALUE: Record<FeedPost["kind"], number> = { failure: 1, result: 2, decision: 3, attention: 3, progress: 4 };
-
-export function mergeRoutinePosts(posts: FeedPost[]): FeedPost[] {
-  const merged: FeedPost[] = [];
-  const latestByKey = new Map<string, number>();
-  for (const post of [...posts].sort((left, right) => right.createdAt.localeCompare(left.createdAt))) {
-    if (!(["progress", "decision"] as FeedPost["kind"][]).includes(post.kind)) {
-      merged.push(post);
-      continue;
-    }
-    const key = `${post.sessionId ?? post.taskId}:${post.kind}`;
-    const existingIndex = latestByKey.get(key);
-    const existing = existingIndex === undefined ? undefined : merged[existingIndex];
-    const withinWindow = existing && new Date(existing.createdAt).getTime() - new Date(post.createdAt).getTime() <= 6 * 60 * 60 * 1_000;
-    if (!existing || !withinWindow) {
-      latestByKey.set(key, merged.length);
-      merged.push(post);
-      continue;
-    }
-    merged[existingIndex!] = { ...existing, highlights: [...existing.highlights, ...post.highlights].filter((value, index, all) => all.indexOf(value) === index).slice(0, 2) };
-  }
-  return merged;
 }
 
 export function buildFeedItems(
@@ -70,9 +49,17 @@ export function buildFeedItems(
       const hasLinkedPendingAction = post.pendingActionIds.some((id) => pendingActionIds.has(id));
       const directReplyIsCurrent = post.pendingActionIds.length === 0
         && (!task || ["waiting_input", "user_review"].includes(task.state));
-      const needsAction = review?.state === "unreviewed" || (post.actionRequired && (hasLinkedPendingAction || directReplyIsCurrent));
-      const covered = ["progress", "decision", "attention"].includes(post.kind)
-        && (latestOutcomeByTask.get(post.sessionId ?? post.taskId) ?? "") > post.createdAt;
+      const needsAction = postNeedsAction({
+        actionRequired: post.actionRequired,
+        hasLinkedPendingAction,
+        directReplyIsCurrent,
+        reviewState: review?.state ?? null,
+      });
+      const covered = isPostCovered({
+        kind: post.kind,
+        createdAt: post.createdAt,
+        latestOutcomeCreatedAt: latestOutcomeByTask.get(post.sessionId ?? post.taskId) ?? null,
+      });
       return {
       type: "post",
       id: post.id,
@@ -80,7 +67,7 @@ export function buildFeedItems(
       needsAction,
       unread,
       ...(settledReview ? { settledReview: true } : {}),
-      priority: needsAction ? 0 : POST_VALUE[post.kind] + (covered ? 6 : 0) + (unread ? 0 : 10),
+      priority: postPriority({ kind: post.kind, needsAction, covered, unread }),
       post,
       };
     }),
@@ -91,6 +78,5 @@ export function buildFeedItems(
       .filter((command) => command.kind === "create" && ["queued", "dispatching", "running", "failed"].includes(command.state) && command.sessionId === null)
       .map((command): FeedItem => ({ type: "command", id: command.id, createdAt: command.createdAt, needsAction: command.state === "failed", unread: true, priority: command.state === "failed" ? 0 : 5, command })),
   ].filter((item) => !dismissed.has(feedItemId(item)))
-    .sort((left, right) => left.priority - right.priority
-    || right.createdAt.localeCompare(left.createdAt));
+    .sort(compareFeedItems);
 }

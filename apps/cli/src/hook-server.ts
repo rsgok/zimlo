@@ -14,6 +14,7 @@ import { ActionBroker, type DecisionResolution } from "./action-broker.js";
 import { AgentToolService, type AgentToolRequest, type AgentToolResult } from "./agent-tools.js";
 import { RuntimeHub } from "./runtime.js";
 import { approvalContextForCommand, approvalContextForFile } from "./trust-policy.js";
+import { ZIMLO_PROTOCOL_VERSION, ZIMLO_VERSION } from "./version.js";
 
 interface HookRequest {
   type?: "hook";
@@ -233,7 +234,7 @@ export class HookServer {
       const request = JSON.parse(line) as HookRequest | AgentToolRequest | BridgeInfoRequest;
       if (request.type === "bridge_info") {
         responseStarted = true;
-        socket.end(`${JSON.stringify({ type: "bridge_info", version: "0.2.0", protocolVersion: 2 })}\n`);
+        socket.end(`${JSON.stringify({ type: "bridge_info", version: ZIMLO_VERSION, protocolVersion: ZIMLO_PROTOCOL_VERSION })}\n`);
         return;
       }
       if (request.type === "agent_tool") {

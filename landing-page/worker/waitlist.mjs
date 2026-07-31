@@ -9,10 +9,10 @@
  * - Only a normalized email, a coarse `source` tag, and the consent version
  *   are stored. Never store IPs, user agents, or timestamps beyond what the
  *   schema defaults to.
- * - New and duplicate signups return the SAME message (201 vs 200) so the
+ * - New and duplicate signups return the SAME message and status so the
  *   endpoint cannot be used to probe whether an address is registered.
- * - Honeypot hits and impossibly fast submissions are silently accepted
- *   (same success copy) but never touch the database.
+ * - Honeypot hits are silently accepted (same success copy) but never touch
+ *   the database. Client-controlled dwell time is never used to drop signups.
  */
 
 export const WAITLIST_CONSENT_VERSION = "2026-07-28";
@@ -20,7 +20,6 @@ export const WAITLIST_SUCCESS_MESSAGE =
   "You're on the list. We'll email you once when the Mac Beta opens.";
 
 export const MAX_BODY_BYTES = 4096;
-export const MIN_SUBMIT_INTERVAL_MS = 3000;
 export const RETENTION_DAYS_AFTER_BETA_END = 90;
 
 const ALLOWED_SOURCES = new Set(["hero", "beta", "privacy"]);
@@ -61,12 +60,11 @@ export function isValidEmail(email) {
 /**
  * Validates a parsed JSON body.
  * @param {unknown} value parsed JSON
- * @param {number} now current time in ms
  * @returns {{ kind: "signup", signup: { email: string, source: string } }
  *   | { kind: "ignore" }   // bot heuristics: accept silently, store nothing
  *   | { kind: "invalid", error: string }}
  */
-export function parseWaitlistPayload(value, now) {
+export function parseWaitlistPayload(value) {
   if (!value || typeof value !== "object" || Array.isArray(value)) {
     return { kind: "invalid", error: "Invalid request body." };
   }
@@ -77,14 +75,11 @@ export function parseWaitlistPayload(value, now) {
     return { kind: "ignore" };
   }
 
-  // Minimum dwell time between form render and submit. Missing/invalid
-  // timestamps mean the form was bypassed entirely.
+  // Keep the field as a structural signal, but never reject a real signup for
+  // submitting quickly: startedAt is client-controlled and autofill can be instant.
   const startedAt = typeof payload.startedAt === "number" ? payload.startedAt : NaN;
   if (!Number.isFinite(startedAt)) {
     return { kind: "invalid", error: "Invalid submission. Reload the page and try again." };
-  }
-  if (now - startedAt < MIN_SUBMIT_INTERVAL_MS) {
-    return { kind: "ignore" };
   }
 
   const email = normalizeEmail(payload.email);
@@ -185,7 +180,7 @@ export async function handleWaitlistPost(request, store, now = Date.now()) {
   }
 
   if (await store.findByEmail(result.signup.email)) {
-    // Duplicate: identical copy to a fresh signup, different status code.
+    // Duplicate: identical copy and status to a fresh signup.
     return json({ ok: true, message: WAITLIST_SUCCESS_MESSAGE }, 200);
   }
   try {
@@ -197,7 +192,7 @@ export async function handleWaitlistPost(request, store, now = Date.now()) {
     }
     throw error;
   }
-  return json({ ok: true, message: WAITLIST_SUCCESS_MESSAGE }, 201);
+  return json({ ok: true, message: WAITLIST_SUCCESS_MESSAGE }, 200);
 }
 
 /**

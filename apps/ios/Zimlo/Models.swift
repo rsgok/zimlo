@@ -447,6 +447,8 @@ struct ServerEnvelope: Codable {
     var post: FeedPost?
     var task: TaskRecord?
     var command: TaskCommand?
+    var commandId: String?
+    var idempotencyKey: String?
     var postId: String?
     var itemId: String?
     var preference: TaskPreference?
@@ -500,6 +502,8 @@ struct OutboxEntry: Codable, Hashable, Identifiable {
     var semanticKey: String
     var command: ClientCommand
     var enqueuedAt: String
+    // 服务端拒绝时记录原因；nil 表示仍在排队/等待确认。
+    var lastError: String?
 }
 
 extension ISO8601DateFormatter {

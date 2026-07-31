@@ -4,9 +4,10 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import { promisify } from "node:util";
 import type { IntegrationStatus } from "@zimlo/protocol";
-import { resolveAgentCommand } from "./agent-command.js";
+import { detectInstalledProviders, resolveAgentCommand } from "./agent-command.js";
 import { inspectCodexPlugin } from "./codex-plugin.js";
 import { applyHookChanges, hookConfigChanges } from "./hook-config.js";
+import { integrationProbeCache, invalidateIntegrationProbes } from "./probe-cache.js";
 
 const execFileAsync = promisify(execFile);
 
@@ -47,13 +48,20 @@ async function mcpConfigured(
   // manufacture thousands of false sessions. User-scoped Claude MCP servers
   // are persisted in ~/.claude.json, so inspect that file directly.
   if (provider === "claude") return claudeMcpConfigured(entrypoint);
-  try {
-    const result = await execFileAsync(command, ["mcp", "get", "zimlo"], { timeout: 5_000, maxBuffer: 512 * 1024 });
-    const output = `${result.stdout}\n${result.stderr}`;
-    return output.includes(entrypoint) && output.includes(process.execPath);
-  } catch {
-    return false;
-  }
+  // `codex mcp get zimlo` spawns the Codex CLI; a 10s single-flight cache keeps
+  // the wizard's once-per-second status polling from fork-bombing the Mac.
+  const output = await integrationProbeCache.get(
+    `codex-mcp:${command}:${entrypoint}:${process.execPath}`,
+    async () => {
+      try {
+        const result = await execFileAsync(command, ["mcp", "get", "zimlo"], { timeout: 5_000, maxBuffer: 512 * 1024 });
+        return `${result.stdout}\n${result.stderr}`;
+      } catch {
+        return "";
+      }
+    },
+  );
+  return output.includes(entrypoint) && output.includes(process.execPath);
 }
 
 function cliStatus(
@@ -114,15 +122,10 @@ export async function inspectIntegrationStatuses(entrypoint: string): Promise<In
 }
 
 export async function installCliIntegrations(entrypoint: string): Promise<void> {
-  const [codexCommand, claudeCommand] = await Promise.all([
-    resolveAgentCommand("codex"),
-    resolveAgentCommand("claude"),
-  ]);
-  const providers = [
-    ...(codexCommand ? ["codex" as const] : []),
-    ...(claudeCommand ? ["claude" as const] : []),
-  ];
+  const providers = await detectInstalledProviders();
   if (providers.length === 0) throw new Error("尚未发现 Codex 或 Claude Code。");
+  const codexCommand = providers.includes("codex") ? await resolveAgentCommand("codex") : null;
+  const claudeCommand = providers.includes("claude") ? await resolveAgentCommand("claude") : null;
 
   const [codexReady, claudeReady] = await Promise.all([
     mcpConfigured("codex", codexCommand, entrypoint),
@@ -137,4 +140,6 @@ export async function installCliIntegrations(entrypoint: string): Promise<void> 
     await execFileAsync(claudeCommand, ["mcp", "remove", "zimlo", "-s", "user"], { timeout: 10_000 }).catch(() => undefined);
     await execFileAsync(claudeCommand, ["mcp", "add", "--scope", "user", "zimlo", "--", process.execPath, entrypoint, "mcp", "--provider", "claude"], { timeout: 10_000 });
   }
+  // Mutations done: the next status read must not see pre-install probe data.
+  invalidateIntegrationProbes();
 }

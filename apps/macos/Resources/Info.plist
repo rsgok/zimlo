@@ -37,7 +37,5 @@
 	<string>__SPARKLE_PUBLIC_KEY__</string>
 	<key>SUEnableAutomaticChecks</key>
 	<true/>
-	<key>SUAutomaticallyUpdate</key>
-	<true/>
 </dict>
 </plist>

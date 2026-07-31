@@ -1140,6 +1140,16 @@ export class ZimloStore {
     `).run(deviceId, itemId, new Date().toISOString()).changes > 0;
   }
 
+  setFeedItemDismissed(deviceId: string, itemId: string, dismissed: boolean): void {
+    if (dismissed) {
+      this.database.prepare(`
+        INSERT OR IGNORE INTO feed_dismissed(device_id, item_id, dismissed_at) VALUES (?, ?, ?)
+      `).run(deviceId, itemId, new Date().toISOString());
+    } else {
+      this.database.prepare("DELETE FROM feed_dismissed WHERE device_id = ? AND item_id = ?").run(deviceId, itemId);
+    }
+  }
+
   listDismissedFeedItemIds(deviceId: string): string[] {
     if (!deviceId) return [];
     return (this.database.prepare("SELECT item_id FROM feed_dismissed WHERE device_id = ?").all(deviceId) as Array<{ item_id: string }>)
@@ -1176,7 +1186,7 @@ export class ZimloStore {
     return this.getTaskPreference(sessionId);
   }
 
-  private getTaskPreference(sessionId: string): TaskPreference {
+  getTaskPreference(sessionId: string): TaskPreference {
     const row = this.database.prepare("SELECT session_id, pinned_at, archived_at FROM task_preferences WHERE session_id = ?").get(sessionId) as { session_id: string; pinned_at: string | null; archived_at: string | null } | undefined;
     return { sessionId, pinnedAt: row?.pinned_at ?? null, archivedAt: row?.archived_at ?? null };
   }

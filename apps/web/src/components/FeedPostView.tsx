@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { memo, useEffect, useState } from "react";
 import type { ClientCommand, FeedPost, PendingAction, Project, Session, TaskReview } from "@zimlo/protocol";
 import { ActionPanel } from "./ActionPanel";
 import { FormattedText } from "./FormattedText";
@@ -7,6 +7,7 @@ import { sessionLocation } from "./sessionPresentation";
 import { ProviderBadge } from "./ProviderBadge";
 import { AgentAvatar } from "./UserAvatar";
 import { AppIcon } from "./AppIcon";
+import { relativeTime, useNow } from "../lib/nowTicker";
 
 interface FeedPostViewProps {
   post: FeedPost;
@@ -29,15 +30,12 @@ const LABELS: Record<FeedPost["kind"], string> = {
   failure: "失败 / 风险",
 };
 
-function relativeTime(value: string): string {
-  const seconds = Math.round((Date.now() - new Date(value).getTime()) / 1000);
-  if (seconds < 60) return "刚刚";
-  if (seconds < 3600) return `${Math.floor(seconds / 60)} 分钟前`;
-  if (seconds < 86_400) return `${Math.floor(seconds / 3600)} 小时前`;
-  return new Intl.DateTimeFormat("zh-CN", { month: "short", day: "numeric" }).format(new Date(value));
+function sameActionsByIdentity(left: PendingAction[], right: PendingAction[]): boolean {
+  return left.length === right.length && left.every((action, index) => action === right[index]);
 }
 
-export function FeedPostView({ post, session, project, actions, review, send, onOpenProject, needsAction, position, total }: FeedPostViewProps) {
+export const FeedPostView = memo(function FeedPostView({ post, session, project, actions, review, send, onOpenProject, needsAction, position, total }: FeedPostViewProps) {
+  const now = useNow();
   const location = session ? sessionLocation(session) : null;
   const pendingActions = actions.filter((action) => action.state === "pending");
   const draftKey = `zimlo:feed-reply:${post.id}`;
@@ -61,6 +59,17 @@ export function FeedPostView({ post, session, project, actions, review, send, on
       setSubmitted(false);
     }
   }, [draftKey, needsAction]);
+
+  // 发送即清空：outbox 持久化成功后同一交互周期清空输入框与草稿，
+  // 本地 pending 消息由 outbox 派生的 queued 指令立即展示。
+  const submitReply = () => {
+    if (!session || !canReply || !reply.trim() || submitted) return;
+    const accepted = send({ type: "task.follow_up", sessionId: session.id, text: reply.trim(), idempotencyKey: crypto.randomUUID() });
+    if (!accepted) return;
+    setReply("");
+    setSubmitted(true);
+  };
+
   return (
     <article className={`feed-post post-${post.kind} template-${post.template} ${needsAction ? "is-attention" : ""}`}>
       <div className="post-topline">
@@ -72,7 +81,7 @@ export function FeedPostView({ post, session, project, actions, review, send, on
       </div>
 
       <div className="post-copy">
-        <p className="post-time">{relativeTime(post.createdAt)}</p>
+        <p className="post-time">{relativeTime(post.createdAt, now)}</p>
         <h2>{post.headline}</h2>
         <div className="post-takeaway"><FormattedText text={post.takeaway} compact /></div>
         {post.highlights.length > 0 && (
@@ -95,17 +104,13 @@ export function FeedPostView({ post, session, project, actions, review, send, on
         {pendingActions.map((action) => <ActionPanel key={action.actionId} action={action} send={send} compact />)}
         {directReply && (
           <div className="feed-reply-row">
-            <VoiceInput compact value={reply} onChange={setReply} rows={1} ariaLabel="直接回复 Agent" placeholder="说出或输入回复…" disabled={!canReply || submitted} />
+            <VoiceInput compact value={reply} onChange={setReply} onSubmit={submitReply} rows={1} ariaLabel="直接回复 Agent" placeholder="说出或输入回复…" disabled={!canReply || submitted} />
             <button
               className="action-submit"
               aria-label={submitted ? "回复已保存，等待同步" : canReply ? "发送回复" : "请进入任务回复"}
               title={submitted ? "回复已保存，等待同步" : canReply ? "发送回复" : "请进入任务回复"}
               disabled={!canReply || !reply.trim() || submitted}
-              onClick={() => {
-                const accepted = send({ type: "task.follow_up", sessionId: session!.id, text: reply.trim(), idempotencyKey: crypto.randomUUID() });
-                if (!accepted) return;
-                setSubmitted(true);
-              }}
+              onClick={submitReply}
             ><AppIcon name={submitted ? "check" : "send"} /></button>
           </div>
         )}
@@ -128,4 +133,15 @@ export function FeedPostView({ post, session, project, actions, review, send, on
       </div>
     </article>
   );
-}
+}, (previous, next) =>
+  previous.post === next.post
+  && previous.session === next.session
+  && previous.project === next.project
+  && previous.review === next.review
+  && previous.needsAction === next.needsAction
+  && previous.position === next.position
+  && previous.total === next.total
+  && previous.send === next.send
+  && previous.onOpenProject === next.onOpenProject
+  && sameActionsByIdentity(previous.actions, next.actions),
+);

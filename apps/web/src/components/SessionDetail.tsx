@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import type { ClientCommand, FeedPost, PendingAction, Project, Session, TaskCommand, TaskRecord, TaskReview, UnifiedEvent, UserAvatarId } from "@zimlo/protocol";
 import { AppTopBar } from "./AppTopBar";
 import { ActionPanel } from "./ActionPanel";
@@ -8,6 +8,7 @@ import { agentAvatarStyle } from "./AgentsView";
 import { ProviderBadge, ProviderIcon } from "./ProviderBadge";
 import { conciseTaskInput, sessionLocation } from "./sessionPresentation";
 import { AgentAvatar, UserAvatar } from "./UserAvatar";
+import { useModalFocus } from "./useModalFocus";
 
 interface SessionDetailProps {
   session: Session;
@@ -22,6 +23,8 @@ interface SessionDetailProps {
   userAvatarId: UserAvatarId;
   send: (command: ClientCommand) => boolean;
   onClose: () => void;
+  /** 重试本机 outbox 中尚未被服务端接管的指令（id 形如 local:*） */
+  onRetryLocal?: ((commandId: string) => void) | undefined;
 }
 
 const POST_LABELS: Record<FeedPost["kind"], string> = {
@@ -250,7 +253,9 @@ function TimelineEventDetails({ events }: { events: UnifiedEvent[] }) {
   );
 }
 
-export function SessionDetail({ session, project, events, actions, posts, commands, task, reviews = [], timelineCursor, userAvatarId, send, onClose }: SessionDetailProps) {
+export function SessionDetail({ session, project, events, actions, posts, commands, task, reviews = [], timelineCursor, userAvatarId, send, onClose, onRetryLocal }: SessionDetailProps) {
+  const panelRef = useRef<HTMLElement>(null);
+  useModalFocus(panelRef);
   const draftKey = `zimlo:task-draft:${session.id}`;
   const [message, setMessage] = useState(() => typeof localStorage === "undefined" ? "" : localStorage.getItem(draftKey) ?? "");
   const [reviewNote, setReviewNote] = useState("");
@@ -294,6 +299,24 @@ export function SessionDetail({ session, project, events, actions, posts, comman
   const cursorIndex = timelineCursor ? timeline.findIndex((item) => item.aliases.includes(timelineCursor)) : -1;
   const unreadCount = timeline.length === 0 || timelineCursor === timelineIds[0] ? 0 : cursorIndex >= 0 ? cursorIndex : timeline.length;
 
+  // “已定位”：打开时滚动到最早一条未读（时间线上新→旧排列，最早未读即游标前一条；
+  // 游标缺失时全部未读，定位到最旧一条）。
+  const timelineItemRefs = useRef(new Map<string, HTMLElement>());
+  const positionedUnreadRef = useRef(false);
+  const firstUnreadIndex = unreadCount > 0 ? (cursorIndex > 0 ? cursorIndex - 1 : timeline.length - 1) : -1;
+  useEffect(() => {
+    if (positionedUnreadRef.current || timeline.length === 0) return;
+    positionedUnreadRef.current = true;
+    if (firstUnreadIndex < 0) return;
+    const target = timeline[firstUnreadIndex];
+    if (!target) return;
+    timelineItemRefs.current.get(`${target.type}:${target.id}`)?.scrollIntoView({ block: "center" });
+  }, [firstUnreadIndex, timeline]);
+  const setTimelineItemRef = (key: string) => (node: HTMLElement | null) => {
+    if (node) timelineItemRefs.current.set(key, node);
+    else timelineItemRefs.current.delete(key);
+  };
+
   useEffect(() => {
     const latest = timelineIds[0];
     if (!latest || latest === timelineCursor) return;
@@ -307,10 +330,6 @@ export function SessionDetail({ session, project, events, actions, posts, comman
   }, [draftKey, message]);
 
   useEffect(() => {
-    if (message && commands.some((command) => command.state === "completed" && command.text.trim() === message.trim())) setMessage("");
-  }, [commands, message]);
-
-  useEffect(() => {
     const closeOnEscape = (event: KeyboardEvent) => {
       if (event.key === "Escape") onClose();
     };
@@ -318,9 +337,19 @@ export function SessionDetail({ session, project, events, actions, posts, comman
     return () => window.removeEventListener("keydown", closeOnEscape);
   }, [onClose]);
 
+  // 发送即清空：outbox 持久化成功后同一交互周期清空输入框与草稿；
+  // 本地 pending 消息由 outbox 派生的 queued 指令立即出现在 Timeline。
+  const submitMessage = () => {
+    const text = message.trim();
+    if (!canContinue || !text || duplicateActive) return;
+    const accepted = send({ type: "task.follow_up", sessionId: session.id, text, idempotencyKey: crypto.randomUUID() });
+    if (!accepted) return;
+    setMessage("");
+  };
+
   return (
     <div className="detail-backdrop" role="presentation">
-      <section className="detail-panel" role="dialog" aria-modal="true" aria-label={session.title}>
+      <section className="detail-panel" role="dialog" aria-modal="true" aria-label={session.title} ref={panelRef}>
         <AppTopBar detail title={session.title} onBack={onClose} action={<span className={`task-status task-status-${currentState}`}>{STATUS_LABELS[currentState] ?? currentState}</span>} />
 
         <section className="task-profile-header">
@@ -399,7 +428,7 @@ export function SessionDetail({ session, project, events, actions, posts, comman
             if (item.type === "post") {
               const detailCount = item.details.length + item.post.highlights.length + (item.post.proof ? 1 : 0) + (item.post.actionPrompt ? 1 : 0);
               return (
-              <article className={`task-timeline-item timeline-${item.post.kind}`} data-timeline-level="primary" key={`post:${item.id}`}>
+              <article className={`task-timeline-item timeline-${item.post.kind}`} data-timeline-level="primary" key={`post:${item.id}`} ref={setTimelineItemRef(`post:${item.id}`)}>
                 {project
                   ? <AgentAvatar avatar={project.agentProfile.avatar} className={`timeline-avatar ${agentAvatarStyle(project.id)}`} alt="" />
                   : <span className={`timeline-avatar timeline-avatar-agent provider-avatar provider-${session.provider}`} aria-label={session.provider === "codex" ? "Codex" : "Claude Code"}><ProviderIcon provider={session.provider} /></span>}
@@ -420,13 +449,16 @@ export function SessionDetail({ session, project, events, actions, posts, comman
               );
             }
             if (item.type === "command") return (
-              <article className={`task-timeline-item timeline-command timeline-command-${item.command.state}`} data-timeline-level="primary" key={`command:${item.id}`}>
+              <article className={`task-timeline-item timeline-command timeline-command-${item.command.state}`} data-timeline-level="primary" key={`command:${item.id}`} ref={setTimelineItemRef(`command:${item.id}`)}>
                 <UserAvatar avatarId={userAvatarId} className="timeline-avatar timeline-avatar-user" alt="" />
                 <div className="timeline-content">
                   <div className="timeline-meta"><strong>你</strong><span>{item.command.kind === "create" ? "创建任务" : "追加指令"}</span><time>· {readableDate(item.at)}</time></div>
                   <div className="timeline-command-text"><FormattedText text={conciseInstruction(item.command.text)} /></div><span className="timeline-state-pill">{COMMAND_LABELS[item.command.state]}</span>
                   {item.command.error && <div className="timeline-command-error"><FormattedText text={item.command.error} compact /></div>}
-                  {item.command.state === "failed" && <button className="timeline-retry" onClick={() => send({ type: "task.command.retry", commandId: item.command.id, idempotencyKey: crypto.randomUUID() })}>重试</button>}
+                  {item.command.state === "failed" && <button className="timeline-retry" onClick={() => {
+                    if (item.command.id.startsWith("local:")) onRetryLocal?.(item.command.id);
+                    else send({ type: "task.command.retry", commandId: item.command.id, idempotencyKey: crypto.randomUUID() });
+                  }}>重试</button>}
                   {item.details.length > 0 && <details className="timeline-thread"><summary>查看 {item.details.length} 项执行细节</summary><div className="timeline-thread-panel"><TimelineEventDetails events={item.details} /></div></details>}
                 </div>
               </article>
@@ -434,7 +466,7 @@ export function SessionDetail({ session, project, events, actions, posts, comman
             const summary = item.instruction ? conciseInstruction(instructionText(item.instruction)) : readablePayload(item.event.payload);
             const failedEvent = item.details.find((event) => ["tests_failed", "failed", "blocked"].includes(event.kind));
             return (
-              <article className={`task-timeline-item timeline-${failedEvent || ["tests_failed", "failed", "blocked"].includes(item.event.kind) ? "failure" : "progress"}`} data-timeline-level="primary" key={`turn:${item.id}`}>
+              <article className={`task-timeline-item timeline-${failedEvent || ["tests_failed", "failed", "blocked"].includes(item.event.kind) ? "failure" : "progress"}`} data-timeline-level="primary" key={`turn:${item.id}`} ref={setTimelineItemRef(`turn:${item.id}`)}>
                 {item.instruction
                   ? <UserAvatar avatarId={userAvatarId} className="timeline-avatar timeline-avatar-user" alt="" />
                   : project
@@ -453,11 +485,9 @@ export function SessionDetail({ session, project, events, actions, posts, comman
         </section>
 
         <section className="profile-composer" aria-label="继续当前任务">
-          <VoiceInput compact value={message} onChange={setMessage} rows={1} ariaLabel="继续当前任务" placeholder={willQueue ? "说出或输入追加指令…" : "说出或输入下一步…"} disabled={!canContinue} />
+          <VoiceInput compact value={message} onChange={setMessage} onSubmit={submitMessage} rows={1} ariaLabel="继续当前任务" placeholder={willQueue ? "说出或输入追加指令…" : "说出或输入下一步…"} disabled={!canContinue} />
           {activeQueue.length > 0 && <small className="queue-position">当前有 {activeQueue.length} 条指令在执行或排队</small>}
-          <button disabled={!canContinue || !message.trim() || duplicateActive} onClick={() => {
-            send({ type: "task.follow_up", sessionId: session.id, text: message.trim(), idempotencyKey: crypto.randomUUID() });
-          }}>{duplicateActive ? "已在队列" : willQueue ? "加入队列" : "发送"}</button>
+          <button disabled={!canContinue || !message.trim() || duplicateActive} onClick={submitMessage}>{duplicateActive ? "已在队列" : willQueue ? "加入队列" : "发送"}</button>
         </section>
       </section>
     </div>

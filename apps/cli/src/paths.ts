@@ -10,6 +10,9 @@ export const ZIMLO_PATHS = {
   run: join(root, "run"),
   socket: join(root, "run", "bridge.sock"),
   serviceLock: join(root, "run", "service.lock"),
+  service: join(root, "run", "service.json"),
+  startupDiagnostics: join(root, "run", "startup-diagnostics.json"),
+  manualStop: join(root, "run", "manual-stop"),
   logs: join(root, "logs"),
   autostartLog: join(root, "logs", "autostart.log"),
 } as const;

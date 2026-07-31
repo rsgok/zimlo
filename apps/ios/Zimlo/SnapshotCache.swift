@@ -1,5 +1,12 @@
 import Foundation
 
+// 磁盘缓存格式：{ snapshot, savedAt }。savedAt 让离线 UI 能告诉用户数据多旧。
+// 旧版本写入的是裸 Snapshot JSON，读取时按文件修改时间迁移。
+struct CachedSnapshot: Codable {
+    var snapshot: Snapshot
+    var savedAt: Date
+}
+
 enum SnapshotCache {
     private static var fileURL: URL? {
         guard let directory = try? FileManager.default.url(
@@ -17,13 +24,27 @@ enum SnapshotCache {
         return folder.appending(path: "last-snapshot.json")
     }
 
-    static func load() -> Snapshot? {
+    static func load() -> Snapshot? { loadEnvelope()?.snapshot }
+
+    static func loadEnvelope() -> CachedSnapshot? {
         guard let fileURL, let data = try? Data(contentsOf: fileURL) else { return nil }
-        return try? JSONDecoder().decode(Snapshot.self, from: data)
+        let modifiedAt = (try? FileManager.default.attributesOfItem(atPath: fileURL.path))?[.modificationDate] as? Date
+        return decode(data, fileModifiedAt: modifiedAt)
+    }
+
+    static func decode(_ data: Data, fileModifiedAt: Date? = nil) -> CachedSnapshot? {
+        if let envelope = try? JSONDecoder().decode(CachedSnapshot.self, from: data) {
+            return envelope
+        }
+        if let snapshot = try? JSONDecoder().decode(Snapshot.self, from: data) {
+            return CachedSnapshot(snapshot: snapshot, savedAt: fileModifiedAt ?? .distantPast)
+        }
+        return nil
     }
 
     static func save(_ snapshot: Snapshot) {
-        guard let fileURL, let data = try? JSONEncoder().encode(snapshot) else { return }
+        guard let fileURL,
+              let data = try? JSONEncoder().encode(CachedSnapshot(snapshot: snapshot, savedAt: Date())) else { return }
         do {
             try data.write(to: fileURL, options: [.atomic, .completeFileProtectionUntilFirstUserAuthentication])
         } catch {

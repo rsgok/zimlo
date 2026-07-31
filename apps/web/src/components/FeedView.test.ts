@@ -1,9 +1,8 @@
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it, vi } from "vitest";
-import type { FeedPost, TaskReview } from "@zimlo/protocol";
-import { currentSessionPriority, FeedView, updateCurrentCohort } from "./FeedView";
-import { buildFeedItems } from "./feedItems";
+import type { FeedPost } from "@zimlo/protocol";
+import { FeedView } from "./FeedView";
 
 const post: FeedPost = {
   id: "post-a", taskId: "task-a", runId: "run-a", agentId: "codex", sessionId: "session-a",
@@ -12,61 +11,65 @@ const post: FeedPost = {
   createdAt: "2026-07-23T00:00:00.000Z",
 };
 
-describe("Feed session ordering", () => {
-  it("does not reorder the visible cohort only because a post became seen", () => {
-    expect(currentSessionPriority({ type: "post", id: post.id, createdAt: post.createdAt, needsAction: false, unread: true, priority: 2, post })).toBe(2);
-    expect(currentSessionPriority({ type: "post", id: post.id, createdAt: post.createdAt, needsAction: false, unread: false, priority: 12, post })).toBe(2);
-  });
+function renderFeed(overrides: { posts?: FeedPost[]; seenPostIds?: string[] } = {}) {
+  return renderToStaticMarkup(createElement(FeedView, {
+    projects: [],
+    posts: overrides.posts ?? [post],
+    sessions: [],
+    actions: [],
+    commands: [],
+    tasks: [],
+    seenPostIds: overrides.seenPostIds ?? [],
+    dismissedFeedItemIds: [],
+    send: vi.fn(() => true),
+    onOpen: vi.fn(),
+    onOpenProject: vi.fn(),
+    onNewTask: vi.fn(),
+  }));
+}
 
-  it("resurfaces a seen post when it gains a pending user action", () => {
-    const cohort = new Map([["post:post-a", false]]);
-    updateCurrentCohort(cohort, [{ type: "post", id: post.id, createdAt: post.createdAt, needsAction: true, unread: false, priority: 0, post: { ...post, actionRequired: true } }]);
-    expect(cohort.get("post:post-a")).toBe(true);
-  });
-
-  it("moves an accepted result into history while an unreviewed result stays actionable", () => {
-    const baseReview: TaskReview = {
-      id: "review-a",
-      taskId: post.taskId,
-      sessionId: post.sessionId!,
-      postId: post.id,
-      version: 1,
-      state: "unreviewed",
-      bundle: { conclusion: "完成", changedFiles: [], tests: [], links: [], evidenceSource: "agent_reported" },
-      createdAt: post.createdAt,
-      updatedAt: post.createdAt,
-      legacy: false,
-    };
-    const unreviewed = buildFeedItems([post], [], [post.id], [], [], [], [baseReview])[0]!;
-    const accepted = buildFeedItems([post], [], [], [], [], [], [{ ...baseReview, state: "accepted" }])[0]!;
-    expect(unreviewed).toMatchObject({ needsAction: true, unread: false });
-    expect(accepted).toMatchObject({ needsAction: false, unread: false, settledReview: true });
-    const cohort = new Map([["post:post-a", true]]);
-    updateCurrentCohort(cohort, [accepted]);
-    expect(cohort.get("post:post-a")).toBe(false);
-  });
-
-  it("numbers only the current cohort and keeps the caught-up action concise", () => {
+describe("FeedView", () => {
+  it("partitions unseen posts into the queue and seen posts into history", () => {
     const historical = { ...post, id: "post-history", createdAt: "2026-07-22T00:00:00.000Z" };
+    const markup = renderFeed({ posts: [post, historical], seenPostIds: [historical.id] });
+
+    // 队列卡带编号，历史卡带"历史"标签且无编号
+    expect(markup).toContain("01 / 01");
+    expect(markup.match(/class="post-position"/gu)).toHaveLength(1);
+    expect(markup).toContain("history-label");
+    expect(markup).toContain('data-feed-key="post:post-a"');
+    expect(markup).toContain('data-feed-key="post:post-history"');
+  });
+
+  it("renders the caught-up page and keeps the new-task action concise", () => {
+    const markup = renderFeed();
+
+    expect(markup).toContain('data-feed-key="__caught_up__"');
+    expect(markup).toContain("当前更新已经看完");
+    expect(markup).toContain("＋ 新任务");
+    expect(markup).not.toContain("现在可以布置一个新任务");
+  });
+
+  it("does not show the new-updates pill on first render", () => {
+    expect(renderFeed()).not.toContain("feed-new-updates");
+  });
+
+  it("shows the empty state when every card was dismissed", () => {
     const markup = renderToStaticMarkup(createElement(FeedView, {
       projects: [],
-      posts: [post, historical],
+      posts: [post],
       sessions: [],
       actions: [],
       commands: [],
       tasks: [],
-      seenPostIds: [historical.id],
-      dismissedFeedItemIds: [],
+      seenPostIds: [],
+      dismissedFeedItemIds: ["post:post-a"],
       send: vi.fn(() => true),
       onOpen: vi.fn(),
       onOpenProject: vi.fn(),
       onNewTask: vi.fn(),
     }));
-
-    expect(markup).toContain("01 / 01");
-    expect(markup.match(/class="post-position"/gu)).toHaveLength(1);
-    expect(markup).not.toContain("02 / 02");
-    expect(markup).not.toContain("现在可以布置一个新任务");
-    expect(markup).toContain("＋ 新任务");
+    expect(markup).toContain("Feed 已经清空");
+    expect(markup).not.toContain("post-position");
   });
 });

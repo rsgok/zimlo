@@ -10,6 +10,10 @@ final class NotificationManager: NSObject, UNUserNotificationCenterDelegate {
     var onRegistration: ((String, String) -> Void)?
     var onRoute: ((String) -> Void)?
     var onError: ((String) -> Void)?
+    // 锁屏快捷审批：actionId, sessionId, decisionId, idempotencyKey（服务端仍重校验）。
+    var onQuickDecide: ((String, String, String, String) -> Void)?
+    // 快捷审批已过期：只携带 sessionId，引导进 App 查看最新状态。
+    var onQuickExpired: ((String) -> Void)?
 
     private lazy var routePrivateKey: Curve25519.KeyAgreement.PrivateKey = {
         if let stored = KeychainStore.loadPushPrivateKey(),
@@ -23,6 +27,12 @@ final class NotificationManager: NSObject, UNUserNotificationCenterDelegate {
 
     func configure() {
         UNUserNotificationCenter.current().delegate = self
+        // 低风险审批的锁屏快捷操作；高风险与需输入的审批仍只能打开 App。
+        let allowOnce = UNNotificationAction(identifier: QuickApprove.allowOnceIdentifier, title: "批准一次")
+        let deny = UNNotificationAction(identifier: QuickApprove.denyIdentifier, title: "拒绝", options: [.destructive])
+        UNUserNotificationCenter.current().setNotificationCategories([
+            UNNotificationCategory(identifier: QuickApprove.category, actions: [allowOnce, deny], intentIdentifiers: []),
+        ])
         Task { _ = await refreshRegistration() }
     }
 
@@ -66,11 +76,24 @@ final class NotificationManager: NSObject, UNUserNotificationCenterDelegate {
     ) async {
         let info = response.notification.request.content.userInfo
         guard let route = info["route"] as? [String: String],
-              let sessionId = try? await MainActor.run(body: { try self.decryptRoute(route) }) else { return }
+              let payload = try? await MainActor.run(body: { try self.decryptRoutePayload(route) }) else { return }
+        // 锁屏快捷操作：只有 v1 路由且双 decisionId 齐全才走快捷审批，否则回退普通打开。
+        if let quickDecision = QuickApprove.Decision(actionIdentifier: response.actionIdentifier),
+           let quickRoute = QuickApprove.route(from: payload) {
+            if QuickApprove.isExpired(quickRoute) {
+                await MainActor.run { self.onQuickExpired?(quickRoute.sessionId) }
+            } else {
+                let decisionId = QuickApprove.decisionId(for: quickDecision, in: quickRoute)
+                let key = QuickApprove.idempotencyKey(actionId: quickRoute.actionId, decisionId: decisionId)
+                await MainActor.run { self.onQuickDecide?(quickRoute.actionId, quickRoute.sessionId, decisionId, key) }
+            }
+            return
+        }
+        guard let sessionId = payload["sessionId"] as? String else { return }
         await MainActor.run { self.onRoute?(sessionId) }
     }
 
-    private func decryptRoute(_ route: [String: String]) throws -> String {
+    private func decryptRoutePayload(_ route: [String: String]) throws -> [String: Any] {
         guard let publicKeyText = route["ephemeralPublicKey"],
               let nonceText = route["nonce"],
               let ciphertextText = route["ciphertext"],
@@ -96,8 +119,8 @@ final class NotificationManager: NSObject, UNUserNotificationCenterDelegate {
         )
         let data = try ChaChaPoly.open(sealed, using: key, authenticating: Data("zimlo-push-route-v1".utf8))
         let object = try JSONSerialization.jsonObject(with: data) as? [String: Any]
-        guard let sessionId = object?["sessionId"] as? String else { throw ZimloCryptoError.invalidCiphertext }
-        return sessionId
+        guard let object, object["sessionId"] is String else { throw ZimloCryptoError.invalidCiphertext }
+        return object
     }
 }
 

@@ -108,13 +108,12 @@ const worker = {
 
   /**
    * Daily waitlist retention sweep (configure a cron trigger on deploy).
-   * Idles until WAITLIST_BETA_ENDED_AT is set; logs only row counts and the
-   * run timestamp — never email addresses.
+   * Always purges inactive stragglers; active rows are swept only after the
+   * configured Beta grace period. Logs counts only, never email addresses.
    */
   async scheduled(_event: ScheduledEvent, env: Env): Promise<void> {
     if (!env.DB) return;
     const betaEndedAt = parseBetaEndedAt(env.WAITLIST_BETA_ENDED_AT);
-    if (betaEndedAt === null) return;
     const result = await runWaitlistRetention(env.DB as unknown as D1DatabaseLike, { betaEndedAt });
     console.log(
       `[waitlist-retention] ${new Date().toISOString()}`

@@ -3,7 +3,7 @@ import { readFileSync, rmSync } from "node:fs";
 import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 
-interface ServiceOwner {
+export interface ServiceOwner {
   pid: number;
   token: string;
   entrypoint: string;
@@ -64,6 +64,10 @@ async function readOwner(lockPath: string): Promise<ServiceOwner | null> {
     }
   }
   return null;
+}
+
+export async function readServiceLockOwner(lockPath: string): Promise<ServiceOwner | null> {
+  return readOwner(lockPath);
 }
 
 export async function acquireServiceInstance(options: ServiceInstanceOptions): Promise<ServiceInstanceLease> {

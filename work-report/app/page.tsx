@@ -1,3 +1,5 @@
+import facts from "./facts.json";
+
 const capabilities = [
   {
     index: "01",
@@ -60,6 +62,45 @@ const milestones = [
   ["0631957", "目标级验收修复", "修复首屏锚点、阅读跳卡、直接回复、待处理重新浮现与可靠落盘反馈。"],
 ];
 
+const reliabilityCards = [
+  {
+    index: "01",
+    title: "Feed 固定序列",
+    copy: "主 Feed 不再每次渲染按内容价值重排。首次载入按待操作优先与时间次序建序，之后序列在当前页面会话内固定，阅读不被任何状态变化打断。",
+    facts: ["已有卡不因已读、审批完成或快照刷新换位", "新卡与重新可操作的卡追加到 caught-up 之前", "已处理卡在当前会话原位显示完成状态", "未看到末尾时浮出「有 N 条新更新」"],
+  },
+  {
+    index: "02",
+    title: "发送即落盘，Outbox 可撤回",
+    copy: "Web 与 iOS 统一发送节奏：先持久化本机 outbox，同周期清空输入与草稿，本地 pending 即时展示；失败保留原文，不把文字丢给网络。",
+    facts: ["Outbox 详情展示每条指令的类型、目标、预览、时间与状态", "服务端拒绝标失败，可重试或重新编辑", "仍 queued 的 create/follow-up 可撤回（task.command.cancel）", "Feed 移除与任务归档乐观更新 + 6 秒撤销"],
+  },
+  {
+    index: "03",
+    title: "高风险审批双确认",
+    copy: "高风险审批把风险、作用域、目标命令与确认短语完整摆在面前，「填入确认短语」之后再明确提交——两次独立动作，不用 Face ID 糊过去。",
+    facts: ["iOS 底部 Sheet 双确认状态机，取消或过期自动清空", "Web 同一双确认语义：自动聚焦、Enter 提交、44px 点击目标", "撤销设备与解除配对都有确认对话框", "解除配对清理凭据、快照、outbox 与设备草稿，保留界面偏好"],
+  },
+  {
+    index: "04",
+    title: "锁屏快捷审批",
+    copy: "低风险审批（无确认短语的批准一次/拒绝）可以直接在锁屏完成；高风险与需要输入的审批仍然只能进 App。",
+    facts: ["APNs category 只是明文通用标识，不含任务内容", "决策 id 只在设备端可解密的 PushRouteV1 加密路由内", "旧客户端收到未知 category 按普通打开处理", "通知权限被拒有引导，冷启动路由失败可重试"],
+  },
+  {
+    index: "05",
+    title: "退避、熔断与服务契约",
+    copy: "重连与服务恢复不再各写各的：双端共享同一套退避序列，macOS 崩溃恢复有熔断，本机服务状态落在磁盘契约上。",
+    facts: ["双端 1/2/4/8/16/30 秒 ±20% 抖动退避，认证成功或回前台重置", "系统离线暂停，顶栏与胶囊可手动立即重试", "macOS 崩溃退避 1–30 秒，两分钟五次失败熔断，终止型故障不自动重启", "zimlo status / stop / logs 报告并管理本机服务，doctor 给出可复制修复命令", "zimlo stop 手动停止标记被 macOS 自动管理尊重，复用服务前校验 protocolVersion == 2"],
+  },
+  {
+    index: "06",
+    title: "可读性字体体系",
+    copy: "四端收敛到同一条可读性基线：语义化字体 token、分级字号阶梯，正文不再小于 13px。",
+    facts: ["Web：--font-sans/display/mono + micro→title 字号阶梯", "iOS：ZFont/ZRadius 语义字体，支持 Dynamic Type", "landing 正文 ≥14px，全面 Geist", "本站正文 ≥13px"],
+  },
+];
+
 export default function Home() {
   return (
     <main>
@@ -69,6 +110,7 @@ export default function Home() {
           <a href="#experience">体验</a>
           <a href="#system">系统</a>
           <a href="#evidence">验收</a>
+          <a href="#reliability">可靠性</a>
         </div>
         <span className="status"><i /> shipped</span>
       </nav>
@@ -188,6 +230,8 @@ export default function Home() {
             </details>
           ))}
         </div>
+        {/* 移动端（≤900px）默认只展开第一组；脚本在解析期同步执行，无展开闪烁 */}
+        <script dangerouslySetInnerHTML={{ __html: 'if(window.matchMedia("(max-width: 900px)").matches)document.querySelectorAll(".work-grid details").forEach(function(d,i){if(i>0)d.removeAttribute("open")});' }} />
       </section>
 
       <section className="data-section">
@@ -212,7 +256,7 @@ export default function Home() {
           <p>最后一轮在真实 Bridge 数据和 390 × 844 移动视口中复验，期间额外发现并修复了两个自动化测试无法暴露的首屏问题。</p>
         </div>
         <div className="proof-grid">
-          <article className="proof-main"><strong>98</strong><span>自动化测试全部通过</span><small>31 个测试文件</small></article>
+          <article className="proof-main"><strong>{facts.testCases}</strong><span>Vitest 用例已发现并执行</span><small>{facts.testFiles} 个测试文件</small></article>
           <article><strong>390 × 844</strong><span>真实移动视口</span><small>首卡、左滑、详情、Tasks、新任务</small></article>
           <article><strong>0</strong><span>横向溢出</span><small>安全区与底部操作区已验证</small></article>
           <article><strong>v2</strong><span>Bridge 协议健康</span><small>生产构建已重启</small></article>
@@ -226,8 +270,30 @@ export default function Home() {
 
         <div className="commit-timeline">
           {milestones.map(([hash, title, copy]) => (
-            <article key={hash}><code>{hash}</code><div><strong>{title}</strong><p>{copy}</p></div></article>
+            <article key={hash}>{facts.commitBaseUrl ? <a href={`${facts.commitBaseUrl}${hash}`} target="_blank" rel="noreferrer"><code>{hash}</code></a> : <code>{hash}</code>}<div><strong>{title}</strong><p>{copy}</p></div></article>
           ))}
+        </div>
+      </section>
+
+      <section className="section" id="reliability">
+        <div className="section-label">05 / RELIABILITY & READABILITY</div>
+        <div className="section-title">
+          <h2>可靠性与可读性，<br />这一轮全部落地。</h2>
+          <p>Feed 序列、发送链路、审批确认、重连恢复与字体体系的跨端收敛。策略由共享测试向量锁定，Web 与 iOS 不再各自漂移。</p>
+        </div>
+        <div className="capability-grid">
+          {reliabilityCards.map((card) => (
+            <article key={card.index}>
+              <span className="cap-index">{card.index}</span>
+              <h3>{card.title}</h3>
+              <p>{card.copy}</p>
+              <ul>{card.facts.map((fact) => <li key={fact}>{fact}</li>)}</ul>
+            </article>
+          ))}
+        </div>
+        <div className="audit-list">
+          <div><span>✓</span><p><strong>{facts.testCases} 条 Vitest 用例全部通过</strong>{facts.testFiles} 个测试文件，覆盖协议、Bridge 与 Web；Swift 和网站门禁单独执行（代码基线 {facts.commit}{facts.dirty ? "，生成时工作区仍有未提交改动" : ""}）。</p></div>
+          <div><span>✓</span><p><strong>策略双实现零漂移</strong>Feed 合并与优先级、outbox 语义键、重连退避、快捷审批与可撤回状态，由版本化 JSON 向量同时锁定 TS 与 Swift 两侧实现。</p></div>
         </div>
       </section>
 
@@ -238,7 +304,7 @@ export default function Home() {
         <a href="#top">回到顶部 ↑</a>
       </section>
 
-      <footer><span>ZIMLO · MOBILE ATTENTION SYSTEM</span><span>Built and verified · 2026</span></footer>
+      <footer><span>ZIMLO · MOBILE ATTENTION SYSTEM</span><span>Built and verified · {facts.commitBaseUrl && !facts.dirty ? <a href={`${facts.commitBaseUrl}${facts.commit}`} target="_blank" rel="noreferrer">{facts.commit}</a> : facts.commit}{facts.dirty ? " + uncommitted worktree" : ""} · 2026</span></footer>
     </main>
   );
 }

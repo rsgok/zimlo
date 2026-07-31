@@ -1,8 +1,10 @@
-import { useMemo, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 import type { Project, Session } from "@zimlo/protocol";
 import { ProviderBadge } from "./ProviderBadge";
 import { collapseProcessSessions } from "./TasksView";
 import { AgentAvatar } from "./UserAvatar";
+import { useNow } from "../lib/nowTicker";
+import { useOutsideClickClose } from "./useModalFocus";
 
 interface AgentsViewProps {
   projects: Project[];
@@ -23,8 +25,8 @@ export function agentBio(project: Project): string | null {
   return bio;
 }
 
-function relativeAgentTime(value: string): string {
-  const seconds = Math.max(0, Math.round((Date.now() - new Date(value).getTime()) / 1000));
+function relativeAgentTime(value: string, now: number): string {
+  const seconds = Math.max(0, Math.round((now - new Date(value).getTime()) / 1000));
   if (seconds < 60) return "刚刚使用";
   if (seconds < 3600) return `${Math.floor(seconds / 60)} 分钟前使用`;
   if (seconds < 86_400) return `${Math.floor(seconds / 3600)} 小时前使用`;
@@ -40,8 +42,11 @@ export function agentAvatarStyle(projectId: string) {
 }
 
 export function AgentsView({ projects, sessions, onOpen, onNewTask }: AgentsViewProps) {
+  const now = useNow();
   const [query, setQuery] = useState("");
   const [filter, setFilter] = useState<AgentFilter>("used");
+  const searchRef = useRef<HTMLDetailsElement>(null);
+  useOutsideClickClose(searchRef);
   const normalized = query.trim().toLocaleLowerCase();
   const groupedSessions = useMemo(() => collapseProcessSessions(sessions).sessions, [sessions]);
   const activeByProject = useMemo(() => new Map(projects.map((project) => [project.id, activeCount(project.id, groupedSessions)])), [groupedSessions, projects]);
@@ -66,7 +71,7 @@ export function AgentsView({ projects, sessions, onOpen, onNewTask }: AgentsView
           <button className={filter === "used" ? "active" : ""} onClick={() => setFilter("used")}>已启用 <span>{usedCount}</span></button>
           <button className={filter === "active" ? "active" : ""} onClick={() => setFilter("active")}>工作中 <span>{workingCount}</span></button>
           <button className={filter === "all" ? "active" : ""} onClick={() => setFilter("all")}>全部 <span>{projects.length}</span></button>
-          <details className="directory-search">
+          <details className="directory-search" ref={searchRef}>
             <summary aria-label="搜索 Agent">⌕</summary>
             <div className="directory-search-panel">
               <label className="task-search agent-search">
@@ -99,7 +104,7 @@ export function AgentsView({ projects, sessions, onOpen, onNewTask }: AgentsView
                   <span className="agent-card-meta">
                     <span>{project.name}</span>
                     <span>{project.sessionCount} 个任务</span>
-                    <span>{relativeAgentTime(project.lastUsedAt)}</span>
+                    <span>{relativeAgentTime(project.lastUsedAt, now)}</span>
                   </span>
                   <span className="agent-card-runtime">
                     {project.agentProfile.defaultProvider

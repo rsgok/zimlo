@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { USER_AVATAR_IDS } from "@zimlo/protocol";
 import type { ClientCommand, IntegrationStatus, NotificationSettings, Session, UserProfile } from "@zimlo/protocol";
 import type { CodexPluginInfo, DeviceInfo, PairingInfo } from "../hooks/useBridge";
+import { ConfirmDialog } from "./ConfirmDialog";
 import { ProviderBadge } from "./ProviderBadge";
 import { UserAvatar } from "./UserAvatar";
 
@@ -30,6 +31,8 @@ function integrationStateLabel(state: IntegrationStatus["state"]) {
 
 export function ProfileView({ localAdmin, devices, pairing, lanApprovalsEnabled, codexPlugin, integrations, sessions, userProfile, notificationSettings = { enabled: false, approvals: true, failures: true, reviews: true, showTaskTitle: false, updatedAt: "" }, pushRegistered = false, notificationEnabled = true, send, forgetDevice }: ProfileViewProps) {
   const [selectedAvatarId, setSelectedAvatarId] = useState(userProfile.avatarId);
+  const [confirmForgetPhone, setConfirmForgetPhone] = useState(false);
+  const [confirmRevokeDevice, setConfirmRevokeDevice] = useState<DeviceInfo | null>(null);
   useEffect(() => setSelectedAvatarId(userProfile.avatarId), [userProfile.avatarId]);
   const runtimeSummary = (["codex", "claude"] as const).map((provider) => {
     const runtimeSessions = sessions.filter((session) => session.provider === provider);
@@ -124,6 +127,7 @@ export function ProfileView({ localAdmin, devices, pairing, lanApprovalsEnabled,
               <button
                 type="button"
                 role="switch"
+                aria-label={label}
                 aria-checked={notificationSettings[field]}
                 className={`switch ${notificationSettings[field] ? "switch-on" : ""}`}
                 onClick={() => send({
@@ -198,7 +202,7 @@ export function ProfileView({ localAdmin, devices, pairing, lanApprovalsEnabled,
                         </label>
                         <button
                           className="text-button"
-                          onClick={() => send({ type: "device.revoke", deviceId: device.id })}
+                          onClick={() => setConfirmRevokeDevice(device)}
                         >撤销设备</button>
                       </span>
                     )}
@@ -245,8 +249,30 @@ export function ProfileView({ localAdmin, devices, pairing, lanApprovalsEnabled,
             <h3>这台手机</h3>
             <p>{lanApprovalsEnabled ? "可以查看、回复和完成审批；高风险操作仍会再次确认。" : "可以查看和回复。审批权限需要在 Mac 的 Zimlo 设置中开启。"}</p>
           </div>
-          <button className="secondary-button" onClick={() => void forgetDevice()}>断开这台手机</button>
+          <button className="secondary-button" onClick={() => setConfirmForgetPhone(true)}>断开这台手机</button>
         </div>
+      )}
+
+      {confirmForgetPhone && (
+        <ConfirmDialog
+          title="断开这台手机？"
+          body="这台手机的配对信息会被清除，需要重新扫码配对才能继续查看和回复任务。Mac 上的任务和其他设备不受影响。"
+          confirmLabel="断开手机"
+          onConfirm={() => void forgetDevice()}
+          onCancel={() => setConfirmForgetPhone(false)}
+        />
+      )}
+      {confirmRevokeDevice && (
+        <ConfirmDialog
+          title={`撤销「${confirmRevokeDevice.name}」？`}
+          body="这台设备会立即失去连接，不能再查看任务或完成审批；需要重新配对才能恢复。审批权限等设置可以在撤销后重新配置。"
+          confirmLabel="撤销设备"
+          onConfirm={() => {
+            send({ type: "device.revoke", deviceId: confirmRevokeDevice.id });
+            setConfirmRevokeDevice(null);
+          }}
+          onCancel={() => setConfirmRevokeDevice(null)}
+        />
       )}
     </section>
   );

@@ -80,6 +80,7 @@ export function SwipeToTask({ children, sessionId, onOpen, onDismiss }: SwipeToT
   return (
     <div
       className={`swipe-task ${dragging ? "is-dragging" : ""}`}
+      role="group"
       tabIndex={0}
       aria-label={sessionId ? "左滑查看 Task Profile，右滑移出 Feed" : "右滑移出 Feed"}
       onKeyDown={handleKeyDown}
