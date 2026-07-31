@@ -47,6 +47,19 @@ struct LocalServiceStatus: Codable {
         pairedDeviceCount = try values.decodeIfPresent(Int.self, forKey: .pairedDeviceCount) ?? 0
         integrations = try values.decode([IntegrationStatus].self, forKey: .integrations)
     }
+
+    /// Button-level integration responses contain only integration rows. Merge
+    /// them into the cached snapshot without deriving or mutating global service
+    /// state; refreshStatus() remains the sole network-to-state authority.
+    func replacingIntegrations(_ integrations: [IntegrationStatus]) -> LocalServiceStatus {
+        LocalServiceStatus(
+            ready: ready,
+            cloud: cloud,
+            pushNotifications: pushNotifications,
+            pairedDeviceCount: pairedDeviceCount,
+            integrations: integrations
+        )
+    }
 }
 
 struct PairingPayload: Codable {
@@ -72,17 +85,36 @@ struct PairingPayload: Codable {
 
 enum ServiceState: Equatable {
     case starting
+    case stopping
     case ready
+    case degraded(String)
     case manualStopped
     case unavailable(String)
 
     var label: String {
         switch self {
         case .starting: "正在准备"
+        case .stopping: "正在停止"
         case .ready: "已连接"
+        case .degraded: "连接不稳定"
         case .manualStopped: "已手动停止"
         case .unavailable: "需要修复"
         }
+    }
+
+    var recoveryMessage: String? {
+        switch self {
+        case .degraded(let message), .unavailable(let message): message
+        case .starting, .stopping, .ready, .manualStopped: nil
+        }
+    }
+}
+
+enum LocalStatusEvaluation {
+    static let notReadyMessage = "本地服务可达，但尚未准备好。Zimlo 会继续自动检查。"
+
+    static func state(for status: LocalServiceStatus) -> ServiceState {
+        status.ready ? .ready : .degraded(notReadyMessage)
     }
 }
 
@@ -91,7 +123,10 @@ final class ServiceController: ObservableObject {
     @Published private(set) var state: ServiceState = .starting
     @Published private(set) var status: LocalServiceStatus?
     @Published private(set) var pairing: PairingPayload?
-    @Published private(set) var busy = false
+    @Published private(set) var pairingImage: NSImage?
+    @Published private(set) var pairingBusy = false
+    @Published private(set) var integrationBusy = false
+    @Published private(set) var controlBusy = false
     /// 按钮级操作错误：只展示在对应按钮/步骤附近，不影响全局 state。
     @Published private(set) var pairingIssue: OperationIssue?
     @Published private(set) var integrationIssue: OperationIssue?
@@ -108,11 +143,18 @@ final class ServiceController: ObservableObject {
     static let serviceDescriptorURL = runDirectory.appending(path: "service.json")
 
     private var process: Process?
+    /// Identity of an owned process whose intentional termination must not run
+    /// the unexpected-exit recovery path. Ownership remains in `process` until
+    /// exit is confirmed, so a termination timeout can never permit a duplicate.
+    private var suppressedTerminationProcess: Process?
     private var monitorTask: Task<Void, Never>?
     private var startupActivity: NSObjectProtocol?
     private var stopping = false
     private var restartPolicy = RestartPolicy()
     private var recoveryStability = RecoveryStability()
+    private var consecutiveHealthFailures = 0
+    private var consecutiveStatusFailures = 0
+    private var monitorTick = 0
     private var manualStop: ManualStopMarker { ManualStopMarker(url: Self.manualStopURL) }
     /// 熔断或终止型故障后为 true：自动路径（监控循环、进程退出回调）不再重启，
     /// 只有用户手动 retry() 才恢复。
@@ -120,24 +162,94 @@ final class ServiceController: ObservableObject {
     /// 本次启动前 service.log 的末尾位置，用于只检索本次启动写入的日志段落。
     private var launchedLogOffset: UInt64 = 0
     private let baseURL = URL(string: "http://127.0.0.1:4747")!
+    private let session: URLSession
+
+    init(session: URLSession? = nil) {
+        if let session {
+            self.session = session
+        } else {
+            let configuration = URLSessionConfiguration.ephemeral
+            configuration.timeoutIntervalForRequest = 8
+            configuration.timeoutIntervalForResource = 20
+            configuration.requestCachePolicy = .reloadIgnoringLocalCacheData
+            self.session = URLSession(configuration: configuration)
+        }
+    }
 
     var isReady: Bool {
         state == .ready
     }
 
+    var menuBarSymbol: String {
+        switch state {
+        case .ready: "sparkles"
+        case .starting, .stopping: "hourglass"
+        case .degraded: "wifi.exclamationmark"
+        case .manualStopped: "pause.circle"
+        case .unavailable: "exclamationmark.triangle"
+        }
+    }
+
+    var menuDetail: String {
+        if let message = state.recoveryMessage { return message }
+        switch state {
+        case .ready:
+            guard let status else { return "本地服务已连接。" }
+            if status.pairedDeviceCount == 0 { return "服务正常；尚未连接手机。" }
+            if !status.cloud { return "本地服务正常；加密云连接暂不可用。" }
+            if !status.pushNotifications { return "服务正常；手机推送尚未启用。" }
+            return "本地、云连接与手机推送均正常。"
+        case .starting: return "正在启动本地 Bridge 并检查协议。"
+        case .stopping: return "正在安全停止本地 Bridge。"
+        case .manualStopped: return "自动启动已暂停，可随时手动恢复。"
+        case .degraded, .unavailable: return ""
+        }
+    }
+
+    var completionSummary: String {
+        guard let status else { return "Zimlo 会继续在菜单栏运行；你也可以稍后连接 Agent 和手机。" }
+        if status.pairedDeviceCount == 0 {
+            return "后台服务已经就绪。手机尚未连接，可稍后从菜单栏继续配对。"
+        }
+        if !status.integrations.allSatisfy(\.isReady) {
+            return "手机已经连接。仍有 Agent 接入待完成，可稍后从菜单栏继续设置。"
+        }
+        return "它会继续在菜单栏运行。下一次 Agent 需要你时，打开手机就能处理。"
+    }
+
     func start() async {
+        // Terminal/circuit-open states are resumed only by retry(), which first
+        // clears the halt. Incidental callers must not bypass the circuit.
+        guard RecoveryHaltPolicy.allowsAutomaticStateTransition(
+            recoveryHalted: recoveryHalted,
+            stopping: stopping
+        ) else { return }
         // 先探测 4747 上是否已有可复用的服务。正在运行的兼容 Bridge 是显式
         // 用户动作拉起的（zimlo start / zimlo mcp），复用它不受手动停止标记约束。
-        switch await probeExistingService() {
+        let existingService = await probeExistingService()
+        guard RecoveryHaltPolicy.allowsAutomaticStateTransition(
+            recoveryHalted: recoveryHalted,
+            stopping: stopping
+        ) else { return }
+        if transitionToManualStoppedIfRequested() { return }
+        switch existingService {
         case .compatible:
-            _ = await refreshStatus()
-            state = .ready
+            resumeUnexpectedExitRecoveryForCompatibleReuse()
+            let ready = await refreshStatus()
+            guard RecoveryHaltPolicy.allowsAutomaticStateTransition(
+                recoveryHalted: recoveryHalted,
+                stopping: stopping
+            ) else { return }
+            if !ready {
+                state = .degraded(LocalStatusEvaluation.notReadyMessage)
+            }
             beginMonitoring()
             return
         case .incompatible:
             // 端口上有进程但不是协议匹配的 Zimlo 服务：终止型，不自动重启
             recoveryHalted = true
-            if let owner = describePortOwner() {
+            haltMonitoring()
+            if let owner = await describePortOwner() {
                 state = .unavailable("端口 \(Self.port) 被 \(owner) 占用，且不是兼容的 Zimlo 服务。请退出该进程后，在菜单栏选择“重试”。")
             } else {
                 state = .unavailable("端口 \(Self.port) 被其他进程占用，且不是兼容的 Zimlo 服务。请释放端口后，在菜单栏选择“重试”。")
@@ -151,7 +263,7 @@ final class ServiceController: ObservableObject {
         case .halted:
             return
         case .manualStopped:
-            state = .manualStopped
+            _ = transitionToManualStoppedIfRequested()
             return
         case .proceed:
             break
@@ -172,16 +284,37 @@ final class ServiceController: ObservableObject {
             try launchBundledService()
             // A freshly downloaded, notarized app may need a short first-launch
             // verification pass before its bundled runtime can accept requests.
-            for _ in 0..<240 {
-                try? await Task.sleep(for: .milliseconds(250))
+            for _ in 0..<60 {
+                try? await Task.sleep(for: .seconds(1))
+                if transitionToManualStoppedIfRequested() { return }
+                guard RecoveryHaltPolicy.allowsAutomaticStateTransition(
+                    recoveryHalted: recoveryHalted,
+                    stopping: stopping
+                ) else { return }
                 if await refreshStatus() {
+                    guard RecoveryHaltPolicy.allowsAutomaticStateTransition(
+                        recoveryHalted: recoveryHalted,
+                        stopping: stopping
+                    ) else { return }
                     beginMonitoring()
                     return
                 }
             }
+            if transitionToManualStoppedIfRequested() { return }
+            guard RecoveryHaltPolicy.allowsAutomaticStateTransition(
+                recoveryHalted: recoveryHalted,
+                stopping: stopping
+            ) else { return }
+            recoveryHalted = true
+            haltMonitoring()
             state = .unavailable("Zimlo 服务启动超时，请查看日志后重试。")
         } catch {
-            state = .unavailable(error.localizedDescription)
+            recoveryHalted = true
+            haltMonitoring()
+            state = .unavailable(
+                (error as? ServiceFailure)?.errorDescription
+                    ?? "后台服务启动失败。请查看日志后重新检查。"
+            )
         }
     }
 
@@ -189,7 +322,9 @@ final class ServiceController: ObservableObject {
     /// 有响应但协议不符按"被非 Zimlo 进程占用"处理（契约见 apps/cli version.ts）。
     private func probeExistingService() async -> ExistingServiceProbe {
         do {
-            let (data, response) = try await URLSession.shared.data(from: baseURL.appending(path: "healthz"))
+            var request = URLRequest(url: baseURL.appending(path: "healthz"))
+            request.timeoutInterval = 2
+            let (data, response) = try await session.data(for: request)
             guard (response as? HTTPURLResponse)?.statusCode == 200,
                   let health = try? JSONDecoder().decode(HealthResponse.self, from: data),
                   HealthCheck.isCompatible(protocolVersion: health.protocolVersion) else {
@@ -204,16 +339,132 @@ final class ServiceController: ObservableObject {
     /// 用户显式动作（菜单"启动服务"/"重试"）：先清除手动停止标记（与
     /// `zimlo start` 清标记的行为对齐），解除熔断/终止态后走完整启动流程。
     func retry() async {
+        guard !controlBusy else { return }
+        controlBusy = true
+        defer { controlBusy = false }
         manualStop.clear()
         recoveryHalted = false
         restartPolicy.reset()
         recoveryStability.reset()
+        consecutiveHealthFailures = 0
+        consecutiveStatusFailures = 0
         state = .starting
+
+        // A launch timeout can leave the Process alive without a listening
+        // Bridge. `launchBundledService()` intentionally refuses to create a
+        // second owned process, so an explicit user retry must first retire that
+        // exact Process instance. A compatible/incompatible response means the
+        // port is owned by a responsive service and is never touched here.
+        let probe = await probeExistingService()
+        if ExplicitRetryProcessPolicy.shouldReplaceOwnedProcess(
+            hasRunningOwnedProcess: process?.isRunning == true,
+            probeIsUnreachable: probe == .unreachable
+        ) {
+            guard await terminateOwnedProcessForRetry() else { return }
+        }
         await start()
     }
 
+    /// Terminates only the Process object created and retained by this
+    /// controller. Ownership is kept until exit is confirmed; suppression uses
+    /// a separate identity so an external Bridge can never enter this path and a
+    /// termination timeout can never allow a duplicate process to launch.
+    private func terminateOwnedProcessForRetry() async -> Bool {
+        guard await terminateRetainedOwnedProcess() else {
+            recoveryHalted = true
+            state = .unavailable("上次启动未完成，且无法安全停止其后台进程。请查看日志后重试。")
+            return false
+        }
+        return true
+    }
+
+    private func terminateRetainedOwnedProcess() async -> Bool {
+        guard let ownedProcess = process else { return true }
+        guard ownedProcess.isRunning else {
+            finalizeExitedOwnedProcess(ownedProcess)
+            return true
+        }
+
+        suppressedTerminationProcess = ownedProcess
+        ownedProcess.terminate()
+        for _ in 0..<20 {
+            if !ownedProcess.isRunning {
+                finalizeExitedOwnedProcess(ownedProcess)
+                return true
+            }
+            try? await Task.sleep(for: .milliseconds(100))
+        }
+
+        let retainOwnership = OwnedProcessLifecyclePolicy.shouldRetainReference(
+            processIsStillRunning: ownedProcess.isRunning
+        )
+        guard !retainOwnership else { return false }
+        finalizeExitedOwnedProcess(ownedProcess)
+        return true
+    }
+
+    private func finalizeExitedOwnedProcess(_ ownedProcess: Process) {
+        if process === ownedProcess { process = nil }
+        if suppressedTerminationProcess === ownedProcess {
+            suppressedTerminationProcess = nil
+        }
+    }
+
+    /// A SIGTERM timeout can be followed by the same owned Bridge becoming
+    /// responsive again. Once a compatible probe is accepted, that process is
+    /// back under normal supervision; otherwise its later crash would be
+    /// mistaken for the old intentional termination and silently swallowed.
+    private func resumeUnexpectedExitRecoveryForCompatibleReuse() {
+        let suppressionMatchesRetainedProcess = {
+            guard let process else { return false }
+            return process.isRunning && suppressedTerminationProcess === process
+        }()
+        guard OwnedProcessLifecyclePolicy.shouldClearSuppressionForCompatibleReuse(
+            suppressionMatchesRetainedProcess: suppressionMatchesRetainedProcess
+        ) else { return }
+        suppressedTerminationProcess = nil
+    }
+
+    /// 与 `zimlo stop` 走同一条归属校验路径；无法证明归属的进程绝不会被结束。
+    func stopService() async {
+        guard !controlBusy else { return }
+        controlBusy = true
+        stopping = true
+        state = .stopping
+        monitorTask?.cancel()
+        monitorTask = nil
+        defer {
+            stopping = false
+            controlBusy = false
+        }
+
+        do {
+            let runtime = try bundledRuntime()
+            let terminationStatus = try await Self.runBundledCommand(
+                executable: runtime.node,
+                arguments: [runtime.entrypoint.path, "stop"],
+                currentDirectory: runtime.cliDirectory
+            )
+            guard terminationStatus == 0 else {
+                recoveryHalted = true
+                state = .unavailable(
+                    "无法安全停止后台服务；Zimlo 没有结束归属不明的进程。请查看日志确认。"
+                )
+                return
+            }
+            process = nil
+            status = nil
+            pairing = nil
+            pairingImage = nil
+            recoveryHalted = false
+            state = .manualStopped
+        } catch {
+            recoveryHalted = true
+            state = .unavailable("无法停止后台服务。请查看日志后重试。")
+        }
+    }
+
     private func markHealthy(at now: Date = Date()) {
-        recoveryHalted = false
         if recoveryStability.observeHealthy(at: now) { restartPolicy.reset() }
     }
 
@@ -221,66 +472,133 @@ final class ServiceController: ObservableObject {
     func refreshStatus() async -> Bool {
         do {
             let url = baseURL.appending(path: "api/local/status")
-            let (data, response) = try await URLSession.shared.data(from: url)
-            guard (response as? HTTPURLResponse)?.statusCode == 200 else { return false }
-            status = try JSONDecoder().decode(LocalServiceStatus.self, from: data)
-            state = .ready
+            var request = URLRequest(url: url)
+            request.timeoutInterval = 5
+            let (data, response) = try await session.data(for: request)
+            guard (response as? HTTPURLResponse)?.statusCode == 200 else {
+                recordStatusFailure()
+                return false
+            }
+            let decoded = try JSONDecoder().decode(LocalServiceStatus.self, from: data)
+            status = decoded
+            consecutiveStatusFailures = 0
+            // Keep the fresh snapshot for diagnostics, but an incidental view
+            // refresh must not turn a terminal/circuit-open controller back to
+            // ready without restoring its monitor. retry() is the sole release.
+            guard RecoveryHaltPolicy.allowsAutomaticStateTransition(
+                recoveryHalted: recoveryHalted,
+                stopping: stopping
+            ) else { return false }
+            state = LocalStatusEvaluation.state(for: decoded)
+            guard decoded.ready else { return false }
             markHealthy()
             return true
+        } catch is CancellationError {
+            return false
         } catch {
+            if (error as? URLError)?.code != .cancelled {
+                recordStatusFailure()
+            }
             return false
         }
     }
 
+    /// Completion and other user-triggered gates need an immediate answer. The
+    /// background monitor tolerates one missed status response to avoid flicker,
+    /// but a stale `.ready` value must never let onboarding finish.
+    @discardableResult
+    func verifyReady() async -> Bool {
+        let ready = await refreshStatus()
+        guard !ready, state == .ready else { return ready }
+        state = .degraded("无法确认后台服务仍在运行，请重新检查后再完成设置。")
+        return false
+    }
+
+    private func recordStatusFailure() {
+        consecutiveStatusFailures += 1
+        guard consecutiveStatusFailures >= 2, state == .ready else { return }
+        state = .degraded("本地服务状态暂时无法读取，正在自动恢复。")
+    }
+
+    /// Applies the durable CLI manual-stop marker as one atomic controller
+    /// transition. Every caller gets the same stable state and monitor shutdown,
+    /// so neither startup polling nor health polling can drift afterward.
+    @discardableResult
+    private func transitionToManualStoppedIfRequested() -> Bool {
+        guard ManualStopTransitionPolicy.decide(manualStopSet: manualStop.isSet)
+            == .enterManualStoppedAndHaltMonitoring else { return false }
+        haltMonitoring()
+        consecutiveHealthFailures = 0
+        consecutiveStatusFailures = 0
+        state = .manualStopped
+        return true
+    }
+
     func createPairing() async {
-        busy = true
-        defer { busy = false }
+        guard !pairingBusy else { return }
+        pairingBusy = true
+        pairingIssue = nil
+        pairingImage = nil
+        defer { pairingBusy = false }
         do {
             var request = URLRequest(url: baseURL.appending(path: "api/local/pairing"))
             request.httpMethod = "POST"
-            let (data, response) = try await URLSession.shared.data(for: request)
+            request.timeoutInterval = 15
+            let (data, response) = try await session.data(for: request)
             guard (response as? HTTPURLResponse)?.statusCode == 200 else {
                 pairingIssue = BridgeErrorDecoder.decode(data, fallback: "暂时无法创建配对二维码。")
                 return
             }
-            pairing = try JSONDecoder().decode(PairingPayload.self, from: data)
+            let payload = try JSONDecoder().decode(PairingPayload.self, from: data)
+            pairing = payload
+            pairingImage = payload.qrImage
             pairingIssue = nil
+        } catch is CancellationError {
+            return
         } catch {
-            pairingIssue = OperationIssue(message: error.localizedDescription, action: nil)
+            guard (error as? URLError)?.code != .cancelled else { return }
+            pairingIssue = OperationIssueMapper.issue(
+                for: error,
+                fallback: "暂时无法创建配对二维码。",
+                retryAction: "检查网络和后台服务后重试。"
+            )
         }
     }
 
     func installIntegration(_ target: String) async {
-        guard !busy else { return }
-        busy = true
-        defer { busy = false }
+        guard !integrationBusy else { return }
+        integrationBusy = true
+        integrationIssue = nil
+        defer { integrationBusy = false }
         do {
             var request = URLRequest(url: baseURL.appending(path: "api/local/integrations"))
             request.httpMethod = "POST"
+            request.timeoutInterval = 20
             request.setValue("application/json", forHTTPHeaderField: "content-type")
             request.httpBody = try JSONEncoder().encode(["target": target])
-            let (data, response) = try await URLSession.shared.data(for: request)
+            let (data, response) = try await session.data(for: request)
             guard (response as? HTTPURLResponse)?.statusCode == 200 else {
                 integrationIssue = BridgeErrorDecoder.decode(data, fallback: "接入失败，请稍后重试。")
                 return
             }
             let integrationResponse = try JSONDecoder().decode(IntegrationResponse.self, from: data)
-            status = LocalServiceStatus(
-                ready: true,
-                cloud: status?.cloud ?? true,
-                pushNotifications: status?.pushNotifications ?? false,
-                pairedDeviceCount: status?.pairedDeviceCount ?? 0,
-                integrations: integrationResponse.integrations
-            )
+            if let current = status {
+                status = current.replacingIntegrations(integrationResponse.integrations)
+            }
             integrationIssue = nil
-            state = .ready
+            // This authoritative refresh owns any global state transition and
+            // refuses promotion while recoveryHalted is set.
+            _ = await refreshStatus()
+        } catch is CancellationError {
+            return
         } catch {
-            integrationIssue = OperationIssue(message: error.localizedDescription, action: nil)
+            guard (error as? URLError)?.code != .cancelled else { return }
+            integrationIssue = OperationIssueMapper.issue(
+                for: error,
+                fallback: "接入失败，请稍后重试。",
+                retryAction: "确认后台服务正常后重试。"
+            )
         }
-    }
-
-    func openDashboard() {
-        NSWorkspace.shared.open(baseURL)
     }
 
     func openLog() {
@@ -319,16 +637,10 @@ final class ServiceController: ObservableObject {
     }
 
     private func launchBundledService() throws {
-        if process?.isRunning == true { return }
-        guard let resources = Bundle.main.resourceURL else {
-            throw ServiceFailure.message("应用资源不完整，请重新安装 Zimlo。")
-        }
-        let node = resources.appending(path: "runtime/node")
-        let entrypoint = resources.appending(path: "runtime/cli/dist/index.js")
-        guard FileManager.default.isExecutableFile(atPath: node.path),
-              FileManager.default.fileExists(atPath: entrypoint.path) else {
-            throw ServiceFailure.message("应用内置服务缺失，请重新下载 Zimlo。")
-        }
+        guard OwnedProcessLifecyclePolicy.canLaunchReplacement(
+            hasRunningOwnedProcess: process?.isRunning == true
+        ) else { return }
+        let runtime = try bundledRuntime()
 
         try FileManager.default.createDirectory(at: Self.logDirectory, withIntermediateDirectories: true)
         if !FileManager.default.fileExists(atPath: Self.logURL.path) {
@@ -341,9 +653,9 @@ final class ServiceController: ObservableObject {
         launchedLogOffset = try log.offset()
 
         let process = Process()
-        process.executableURL = node
-        process.arguments = [entrypoint.path, "start"]
-        process.currentDirectoryURL = resources.appending(path: "runtime/cli")
+        process.executableURL = runtime.node
+        process.arguments = [runtime.entrypoint.path, "start"]
+        process.currentDirectoryURL = runtime.cliDirectory
         process.qualityOfService = .userInitiated
         process.standardInput = FileHandle.nullDevice
         process.standardOutput = log
@@ -355,15 +667,58 @@ final class ServiceController: ObservableObject {
         process.terminationHandler = { [weak self] process in
             Task { @MainActor in
                 guard let self else { return }
-                if self.process === process {
-                    self.process = nil
+                if self.suppressedTerminationProcess === process {
+                    self.finalizeExitedOwnedProcess(process)
+                    return
                 }
-                guard !self.stopping, process.terminationStatus != 0 else { return }
+                guard self.process === process else { return }
+                self.process = nil
+                guard UnexpectedExitRecoveryPolicy.shouldRecover(
+                    stopping: self.stopping,
+                    recoveryHalted: self.recoveryHalted,
+                    terminationStatus: process.terminationStatus
+                ) else { return }
                 await self.handleUnexpectedExit()
             }
         }
         try process.run()
         self.process = process
+    }
+
+    private func bundledRuntime() throws -> BundledRuntime {
+        guard let resources = Bundle.main.resourceURL else {
+            throw ServiceFailure.message("应用资源不完整，请重新安装 Zimlo。")
+        }
+        let node = resources.appending(path: "runtime/node")
+        let entrypoint = resources.appending(path: "runtime/cli/dist/index.js")
+        guard FileManager.default.isExecutableFile(atPath: node.path),
+              FileManager.default.fileExists(atPath: entrypoint.path) else {
+            throw ServiceFailure.message("应用内置服务缺失，请重新下载 Zimlo。")
+        }
+        return BundledRuntime(
+            node: node,
+            entrypoint: entrypoint,
+            cliDirectory: resources.appending(path: "runtime/cli")
+        )
+    }
+
+    private nonisolated static func runBundledCommand(
+        executable: URL,
+        arguments: [String],
+        currentDirectory: URL
+    ) async throws -> Int32 {
+        try await Task.detached(priority: .userInitiated) {
+            let command = Process()
+            command.executableURL = executable
+            command.arguments = arguments
+            command.currentDirectoryURL = currentDirectory
+            command.standardInput = FileHandle.nullDevice
+            command.standardOutput = FileHandle.nullDevice
+            command.standardError = FileHandle.nullDevice
+            try command.run()
+            command.waitUntilExit()
+            return command.terminationStatus
+        }.value
     }
 
     /// 进程非零退出后的处置：手动停止标记优先于一切自动恢复；终止型故障
@@ -372,20 +727,19 @@ final class ServiceController: ObservableObject {
     private func handleUnexpectedExit() async {
         recoveryStability.observeFailure()
         // 用户运行了 `zimlo stop`：标记存在时不做任何自动重启
-        if manualStop.isSet {
-            state = .manualStopped
-            return
-        }
+        if transitionToManualStoppedIfRequested() { return }
         switch StartupLogInspector.classify(readCurrentLogSegment()) {
         case .portInUse:
             recoveryHalted = true
-            if let owner = describePortOwner() {
+            haltMonitoring()
+            if let owner = await describePortOwner() {
                 state = .unavailable("端口 \(Self.port) 被 \(owner) 占用。请退出该进程后，在菜单栏选择“重试”。")
             } else {
                 state = .unavailable("端口 \(Self.port) 已被其他进程占用。请释放端口后，在菜单栏选择“重试”。")
             }
         case .fatal(let reason):
             recoveryHalted = true
+            haltMonitoring()
             state = .unavailable("\(reason)修复后在菜单栏选择“重试”。")
         case .transient:
             switch restartPolicy.recordFailure() {
@@ -396,6 +750,7 @@ final class ServiceController: ObservableObject {
                 await start()
             case .circuitOpen:
                 recoveryHalted = true
+                haltMonitoring()
                 state = .unavailable("后台服务两分钟内多次启动失败，已暂停自动重启。请查看日志后，在菜单栏选择“重试”。")
             }
         }
@@ -405,48 +760,115 @@ final class ServiceController: ObservableObject {
     /// 崩溃段落通常只有几 KB 的 node 栈，同步读取耗时可以忽略。
     private func readCurrentLogSegment() -> String {
         guard let handle = try? FileHandle(forReadingFrom: Self.logURL),
-              let _ = try? handle.seek(toOffset: launchedLogOffset) else { return "" }
+              let endOffset = try? handle.seekToEnd() else { return "" }
         defer { try? handle.close() }
-        var data = handle.readDataToEndOfFile()
-        let limit = 64 * 1024
-        if data.count > limit {
-            data = data.suffix(limit)
-        }
+        let limit: UInt64 = 64 * 1024
+        let startOffset = max(launchedLogOffset, endOffset > limit ? endOffset - limit : 0)
+        guard let _ = try? handle.seek(toOffset: startOffset) else { return "" }
+        let data = handle.readData(ofLength: Int(limit))
         return String(data: data, encoding: .utf8) ?? ""
     }
 
     /// best-effort 用 lsof 识别端口占用者（如 "node (PID 1234)"），失败返回 nil。
-    private func describePortOwner() -> String? {
-        let process = Process()
-        process.executableURL = URL(fileURLWithPath: "/usr/sbin/lsof")
-        process.arguments = ["-nP", "-iTCP:\(Self.port)", "-sTCP:LISTEN", "-F", "pc"]
-        let pipe = Pipe()
-        process.standardOutput = pipe
-        process.standardError = FileHandle.nullDevice
-        guard let _ = try? process.run() else { return nil }
-        let data = pipe.fileHandleForReading.readDataToEndOfFile()
-        process.waitUntilExit()
-        guard let output = String(data: data, encoding: .utf8),
-              let owner = PortOwnerLookup.parse(output) else { return nil }
-        return "\(owner.command) (PID \(owner.pid))"
+    private func describePortOwner() async -> String? {
+        let port = Self.port
+        return await Task.detached(priority: .utility) { () -> String? in
+            let process = Process()
+            process.executableURL = URL(fileURLWithPath: "/usr/sbin/lsof")
+            process.arguments = ["-nP", "-iTCP:\(port)", "-sTCP:LISTEN", "-F", "pc"]
+            let pipe = Pipe()
+            process.standardOutput = pipe
+            process.standardError = FileHandle.nullDevice
+            guard let _ = try? process.run() else { return nil }
+            let data = pipe.fileHandleForReading.readDataToEndOfFile()
+            process.waitUntilExit()
+            guard let output = String(data: data, encoding: .utf8),
+                  let owner = PortOwnerLookup.parse(output) else { return nil }
+            return "\(owner.command) (PID \(owner.pid))"
+        }.value
     }
 
     private func beginMonitoring() {
-        guard monitorTask == nil else { return }
+        guard RecoveryHaltPolicy.allowsAutomaticStateTransition(
+            recoveryHalted: recoveryHalted,
+            stopping: stopping
+        ), monitorTask == nil else { return }
         monitorTask = Task { [weak self] in
             while !Task.isCancelled {
                 try? await Task.sleep(for: .seconds(8))
                 guard let self else { return }
-                if !(await self.refreshStatus()), !(self.process?.isRunning ?? false) {
-                    await self.start()
+                if self.transitionToManualStoppedIfRequested() { return }
+                guard RecoveryHaltPolicy.allowsAutomaticStateTransition(
+                    recoveryHalted: self.recoveryHalted,
+                    stopping: self.stopping
+                ) else {
+                    self.monitorTask = nil
+                    return
+                }
+                self.monitorTick += 1
+                switch await self.probeExistingService() {
+                case .compatible:
+                    self.resumeUnexpectedExitRecoveryForCompatibleReuse()
+                    self.consecutiveHealthFailures = 0
+                    // /api/local/status performs integration inspection. Keep the idle
+                    // heartbeat cheap and refresh the full snapshot every fourth tick,
+                    // or immediately while recovering from a degraded state.
+                    if self.monitorTick.isMultiple(of: 4) || !self.isReady {
+                        _ = await self.refreshStatus()
+                    }
+                case .incompatible:
+                    self.recoveryHalted = true
+                    self.haltMonitoring()
+                    self.state = .unavailable("端口 \(Self.port) 上的服务协议不匹配。请停止旧服务后重新检查。")
+                    return
+                case .unreachable:
+                    self.consecutiveHealthFailures += 1
+                    if self.consecutiveHealthFailures >= 2 {
+                        self.state = .degraded("后台服务暂时无响应，正在自动恢复。")
+                    }
+                    guard self.consecutiveHealthFailures >= 3 else { continue }
+                    self.consecutiveHealthFailures = 0
+                    await self.recoverFromHealthFailure()
                 }
             }
         }
     }
+
+    private func recoverFromHealthFailure() async {
+        recoveryStability.observeFailure()
+        switch restartPolicy.recordFailure() {
+        case .retry(let delay):
+            state = .degraded("后台服务无响应，\(Int(delay)) 秒后自动重试。")
+            try? await Task.sleep(for: .seconds(delay))
+            guard !Task.isCancelled, !recoveryHalted, !stopping else { return }
+        case .circuitOpen:
+            recoveryHalted = true
+            haltMonitoring()
+            state = .unavailable("后台服务两分钟内多次失去响应，已暂停自动重启。请查看日志后重新检查。")
+            return
+        }
+
+        if process?.isRunning == true {
+            // Only the Process retained by this controller enters this path.
+            // The shared helper keeps ownership until exit is confirmed.
+            guard await terminateRetainedOwnedProcess() else {
+                recoveryHalted = true
+                haltMonitoring()
+                state = .unavailable("后台服务无响应且无法自动停止。请查看日志后重新检查。")
+                return
+            }
+        }
+        await start()
+    }
+
+    private func haltMonitoring() {
+        monitorTask?.cancel()
+        monitorTask = nil
+    }
 }
 
 /// 4747 端口探测结果（见 ServiceController.probeExistingService）。
-private enum ExistingServiceProbe {
+private enum ExistingServiceProbe: Equatable {
     /// 协议匹配的 Zimlo Bridge，可复用。
     case compatible
     /// 有进程监听但协议不符，按非 Zimlo 进程占用处理。
@@ -457,6 +879,12 @@ private enum ExistingServiceProbe {
 
 private struct IntegrationResponse: Codable {
     let integrations: [IntegrationStatus]
+}
+
+private struct BundledRuntime {
+    let node: URL
+    let entrypoint: URL
+    let cliDirectory: URL
 }
 
 private enum ServiceFailure: LocalizedError {

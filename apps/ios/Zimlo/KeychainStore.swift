@@ -68,6 +68,16 @@ enum KeychainStore {
         try saveData(data, account: "push-route-private-key")
     }
 
+    static func clearPushPrivateKey() {
+        var query: [String: Any] = [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrService as String: service,
+            kSecAttrAccount as String: "push-route-private-key",
+        ]
+        if let pushAccessGroup { query[kSecAttrAccessGroup as String] = pushAccessGroup }
+        SecItemDelete(query as CFDictionary)
+    }
+
     private static func loadData(account: String) -> Data? {
         var query: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,

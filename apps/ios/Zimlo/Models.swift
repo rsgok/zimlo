@@ -506,18 +506,17 @@ struct OutboxEntry: Codable, Hashable, Identifiable {
     var lastError: String?
 }
 
-extension ISO8601DateFormatter {
-    static let zimlo: ISO8601DateFormatter = {
-        let formatter = ISO8601DateFormatter()
-        formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
-        return formatter
-    }()
+private enum ZimloDateFormats {
+    // ISO8601FormatStyle is an immutable Sendable value, so these shared parse
+    // strategies stay safe under Swift 6 strict concurrency.
+    static let fractional = Date.ISO8601FormatStyle(includingFractionalSeconds: true)
+    static let wholeSecond = Date.ISO8601FormatStyle(includingFractionalSeconds: false)
 }
 
 extension String {
     var zimloDate: Date {
-        ISO8601DateFormatter.zimlo.date(from: self)
-            ?? ISO8601DateFormatter().date(from: self)
+        (try? ZimloDateFormats.fractional.parse(self))
+            ?? (try? ZimloDateFormats.wholeSecond.parse(self))
             ?? .distantPast
     }
 }

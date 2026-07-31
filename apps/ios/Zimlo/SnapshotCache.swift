@@ -7,6 +7,13 @@ struct CachedSnapshot: Codable {
     var savedAt: Date
 }
 
+/// Serializes cache IO away from MainActor and preserves write ordering when a
+/// burst of WebSocket messages arrives.
+actor SnapshotWriter {
+    func save(_ snapshot: Snapshot) -> Date? { SnapshotCache.save(snapshot) }
+    func clear() { SnapshotCache.clear() }
+}
+
 enum SnapshotCache {
     private static var fileURL: URL? {
         guard let directory = try? FileManager.default.url(
@@ -42,14 +49,18 @@ enum SnapshotCache {
         return nil
     }
 
-    static func save(_ snapshot: Snapshot) {
+    @discardableResult
+    static func save(_ snapshot: Snapshot) -> Date? {
+        let savedAt = Date()
         guard let fileURL,
-              let data = try? JSONEncoder().encode(CachedSnapshot(snapshot: snapshot, savedAt: Date())) else { return }
+              let data = try? JSONEncoder().encode(CachedSnapshot(snapshot: snapshot, savedAt: savedAt)) else { return nil }
         do {
             try data.write(to: fileURL, options: [.atomic, .completeFileProtectionUntilFirstUserAuthentication])
+            return savedAt
         } catch {
             // The live snapshot remains available; cache failure must not
             // interrupt approvals or command delivery.
+            return nil
         }
     }
 

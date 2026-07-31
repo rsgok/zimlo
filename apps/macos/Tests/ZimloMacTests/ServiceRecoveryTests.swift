@@ -1,6 +1,119 @@
 import XCTest
 @testable import ZimloMac
 
+final class ExplicitRetryProcessPolicyTests: XCTestCase {
+    func testReplacesOnlyRunningOwnedProcessWhenProbeIsUnreachable() {
+        XCTAssertTrue(ExplicitRetryProcessPolicy.shouldReplaceOwnedProcess(
+            hasRunningOwnedProcess: true,
+            probeIsUnreachable: true
+        ))
+        XCTAssertFalse(ExplicitRetryProcessPolicy.shouldReplaceOwnedProcess(
+            hasRunningOwnedProcess: false,
+            probeIsUnreachable: true
+        ), "An external or unowned process must never be terminated")
+        XCTAssertFalse(ExplicitRetryProcessPolicy.shouldReplaceOwnedProcess(
+            hasRunningOwnedProcess: true,
+            probeIsUnreachable: false
+        ), "A responsive Bridge must be preserved")
+        XCTAssertFalse(ExplicitRetryProcessPolicy.shouldReplaceOwnedProcess(
+            hasRunningOwnedProcess: false,
+            probeIsUnreachable: false
+        ))
+    }
+
+    func testTerminationTimeoutRetainsOwnershipAndBlocksDuplicateLaunch() {
+        let processStillRunningAfterTimeout = true
+
+        XCTAssertTrue(OwnedProcessLifecyclePolicy.shouldRetainReference(
+            processIsStillRunning: processStillRunningAfterTimeout
+        ))
+        XCTAssertFalse(OwnedProcessLifecyclePolicy.canLaunchReplacement(
+            hasRunningOwnedProcess: processStillRunningAfterTimeout
+        ), "A second retry must not launch another Bridge while the retained owned process is alive")
+    }
+
+    func testConfirmedExitAllowsReplacementLaunch() {
+        XCTAssertFalse(OwnedProcessLifecyclePolicy.shouldRetainReference(
+            processIsStillRunning: false
+        ))
+        XCTAssertTrue(OwnedProcessLifecyclePolicy.canLaunchReplacement(
+            hasRunningOwnedProcess: false
+        ))
+    }
+
+    func testCompatibleReuseClearsSuppressionSoLaterExitIsObserved() {
+        XCTAssertTrue(OwnedProcessLifecyclePolicy.shouldClearSuppressionForCompatibleReuse(
+            suppressionMatchesRetainedProcess: true
+        ))
+        XCTAssertFalse(OwnedProcessLifecyclePolicy.shouldClearSuppressionForCompatibleReuse(
+            suppressionMatchesRetainedProcess: false
+        ), "A compatible external Bridge must not change unrelated process supervision")
+    }
+}
+
+final class RecoveryHaltPolicyTests: XCTestCase {
+    func testIncidentalHealthyRefreshCannotBypassHalt() {
+        XCTAssertFalse(RecoveryHaltPolicy.allowsAutomaticStateTransition(
+            recoveryHalted: true,
+            stopping: false
+        ))
+    }
+
+    func testExplicitRetryReleaseAllowsReadyTransitionAndMonitoringStart() {
+        // retry() is the sole owner of the true -> false transition before it
+        // calls start(); a successful start then owns beginMonitoring().
+        let recoveryHaltedAfterExplicitRetry = false
+        XCTAssertTrue(RecoveryHaltPolicy.allowsAutomaticStateTransition(
+            recoveryHalted: recoveryHaltedAfterExplicitRetry,
+            stopping: false
+        ))
+    }
+
+    func testConcurrentStopLateRefreshCannotPromoteReady() {
+        XCTAssertFalse(RecoveryHaltPolicy.allowsAutomaticStateTransition(
+            recoveryHalted: false,
+            stopping: true
+        ), "A late status response cannot replace the stopping state or return ready")
+    }
+
+    func testStartupWaitAndMonitorHonorDurableManualStop() {
+        XCTAssertEqual(
+            ManualStopTransitionPolicy.decide(manualStopSet: true),
+            .enterManualStoppedAndHaltMonitoring
+        )
+        XCTAssertEqual(
+            ManualStopTransitionPolicy.decide(manualStopSet: false),
+            .continueLifecycle
+        )
+    }
+
+    func testHaltedLateExitPreservesTerminalState() {
+        XCTAssertFalse(UnexpectedExitRecoveryPolicy.shouldRecover(
+            stopping: false,
+            recoveryHalted: true,
+            terminationStatus: 1
+        ), "A late owned-process exit must not replace the terminal state with a retry promise")
+    }
+
+    func testUnexpectedNonzeroExitRecoversOnlyWhileActivelyManaged() {
+        XCTAssertTrue(UnexpectedExitRecoveryPolicy.shouldRecover(
+            stopping: false,
+            recoveryHalted: false,
+            terminationStatus: 1
+        ))
+        XCTAssertFalse(UnexpectedExitRecoveryPolicy.shouldRecover(
+            stopping: true,
+            recoveryHalted: false,
+            terminationStatus: 1
+        ))
+        XCTAssertFalse(UnexpectedExitRecoveryPolicy.shouldRecover(
+            stopping: false,
+            recoveryHalted: false,
+            terminationStatus: 0
+        ))
+    }
+}
+
 final class RestartPolicyTests: XCTestCase {
     private let base = Date(timeIntervalSince1970: 1_000_000)
 
@@ -103,6 +216,7 @@ final class BridgeErrorDecoderTests: XCTestCase {
     func testHttpStatusNameAloneFallsBack() {
         let issue = decode(#"{"error":"Internal Server Error"}"#)
         XCTAssertEqual(issue.message, fallback)
+        XCTAssertEqual(issue.action, "检查网络和后台服务后重试。")
     }
 
     func testEmptyStableMessageFallsBack() {
@@ -113,7 +227,37 @@ final class BridgeErrorDecoderTests: XCTestCase {
     func testNonJsonFallsBack() {
         let issue = BridgeErrorDecoder.decode(Data("not json".utf8), fallback: fallback)
         XCTAssertEqual(issue.message, fallback)
-        XCTAssertNil(issue.action)
+        XCTAssertEqual(issue.action, "检查网络和后台服务后重试。")
+    }
+
+    func testTechnicalFetchFailureFallsBackToProductCopy() {
+        let issue = decode(#"{"code":"cloud_unavailable","message":"fetch failed","recoverable":true}"#)
+        XCTAssertEqual(issue.message, fallback)
+        XCTAssertEqual(issue.action, "检查网络和后台服务后重试。")
+    }
+}
+
+final class OperationIssueMapperTests: XCTestCase {
+    func testTimeoutBecomesLocalizedActionableMessage() {
+        let issue = OperationIssueMapper.issue(
+            for: URLError(.timedOut),
+            fallback: "fallback",
+            retryAction: "请重试。"
+        )
+
+        XCTAssertEqual(issue.message, "操作超时。")
+        XCTAssertEqual(issue.action, "请重试。")
+    }
+
+    func testConnectionFailureDoesNotExposeFoundationErrorText() {
+        let issue = OperationIssueMapper.issue(
+            for: URLError(.cannotConnectToHost),
+            fallback: "fallback",
+            retryAction: "确认服务后重试。"
+        )
+
+        XCTAssertEqual(issue.message, "暂时无法连接后台服务。")
+        XCTAssertEqual(issue.action, "确认服务后重试。")
     }
 }
 

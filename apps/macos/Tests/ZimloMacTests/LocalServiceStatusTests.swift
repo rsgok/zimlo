@@ -35,4 +35,56 @@ final class LocalServiceStatusTests: XCTestCase {
         XCTAssertFalse(status.pushNotifications)
         XCTAssertEqual(status.pairedDeviceCount, 0)
     }
+
+    func testReadyFlagIsTheSourceOfTruthForGlobalServiceState() {
+        let ready = LocalServiceStatus(
+            ready: true,
+            cloud: false,
+            pushNotifications: false,
+            pairedDeviceCount: 0,
+            integrations: []
+        )
+        let notReady = LocalServiceStatus(
+            ready: false,
+            cloud: true,
+            pushNotifications: true,
+            pairedDeviceCount: 1,
+            integrations: []
+        )
+
+        XCTAssertEqual(LocalStatusEvaluation.state(for: ready), .ready)
+        XCTAssertEqual(
+            LocalStatusEvaluation.state(for: notReady),
+            .degraded(LocalStatusEvaluation.notReadyMessage)
+        )
+    }
+
+    func testLateIntegrationSuccessDuringHaltUpdatesSnapshotOnly() {
+        let current = LocalServiceStatus(
+            ready: true,
+            cloud: true,
+            pushNotifications: true,
+            pairedDeviceCount: 1,
+            integrations: []
+        )
+        let integration = IntegrationStatus(
+            id: "codex-cli",
+            provider: "codex",
+            surface: "cli",
+            state: "ready",
+            label: "Codex CLI",
+            detail: "Connected"
+        )
+        let terminalState = ServiceState.unavailable("端口冲突")
+
+        let updatedSnapshot = current.replacingIntegrations([integration])
+
+        XCTAssertEqual(updatedSnapshot.integrations, [integration])
+        XCTAssertTrue(updatedSnapshot.ready, "The response may update cached facts")
+        XCTAssertEqual(terminalState, .unavailable("端口冲突"), "Button responses do not own global state")
+        XCTAssertFalse(RecoveryHaltPolicy.allowsAutomaticStateTransition(
+            recoveryHalted: true,
+            stopping: false
+        ))
+    }
 }

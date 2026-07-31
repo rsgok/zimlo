@@ -8,4 +8,13 @@ final class OnboardingStoreTests: XCTestCase {
         let store = OnboardingStore()
         XCTAssertEqual(store.step, 3)
     }
+
+    func testCompletionRequiresTruthfulReadyState() {
+        XCTAssertTrue(OnboardingCompletionGate.canFinish(.ready))
+        XCTAssertFalse(OnboardingCompletionGate.canFinish(.starting))
+        XCTAssertFalse(OnboardingCompletionGate.canFinish(.stopping))
+        XCTAssertFalse(OnboardingCompletionGate.canFinish(.degraded("recovering")))
+        XCTAssertFalse(OnboardingCompletionGate.canFinish(.manualStopped))
+        XCTAssertFalse(OnboardingCompletionGate.canFinish(.unavailable("failed")))
+    }
 }

@@ -16,8 +16,11 @@ final class BridgeClient: ObservableObject {
     var backoffRandom: () -> Double = { Double.random(in: 0..<1) }
 
     private var socket: URLSessionWebSocketTask?
+    private var connectionTask: Task<Void, Never>?
     private var reconnectTask: Task<Void, Never>?
     private var startupTask: Task<Void, Never>?
+    private var startupGeneration: UInt64?
+    private var connectionGeneration: UInt64 = 0
     private var credentials: DeviceCredentials?
     private var clientTX: Data?
     private var serverTX: Data?
@@ -41,16 +44,19 @@ final class BridgeClient: ObservableObject {
         }
         self.credentials = credentials
         pairingRequired = false
-        startupTask = Task {
-            defer { startupTask = nil }
+        let generation = beginConnectionGeneration()
+        startupGeneration = generation
+        startupTask = Task { [weak self] in
+            guard let self else { return }
+            defer { self.finishStartup(generation: generation) }
             do {
                 try await verifyProtocol(at: credentials.bridgeURL)
-                guard !Task.isCancelled else { return }
-                connect(remote: prefersRemote(credentials))
+                guard !Task.isCancelled, self.accepts(generation: generation) else { return }
+                self.connect(remote: self.prefersRemote(credentials), expectedGeneration: generation)
             } catch {
-                guard !Task.isCancelled else { return }
+                guard !Task.isCancelled, self.accepts(generation: generation) else { return }
                 if credentials.remoteRelayURL != nil, credentials.remoteAccessToken != nil {
-                    connect(remote: true)
+                    self.connect(remote: true, expectedGeneration: generation)
                 } else {
                     self.error = error.localizedDescription
                 }
@@ -65,9 +71,9 @@ final class BridgeClient: ObservableObject {
         reconnectAttempt = 0
         reconnectTask?.cancel()
         startupTask?.cancel()
+        startupGeneration = nil
         startupTask = nil
-        socket?.cancel(with: .goingAway, reason: nil)
-        socket = nil
+        invalidateConnection(closeCode: .goingAway)
         start()
     }
 
@@ -95,10 +101,11 @@ final class BridgeClient: ObservableObject {
     func stop() {
         intentionallyStopped = true
         startupTask?.cancel()
+        startupGeneration = nil
         startupTask = nil
         reconnectTask?.cancel()
-        socket?.cancel(with: .goingAway, reason: nil)
-        socket = nil
+        reconnectTask = nil
+        invalidateConnection(closeCode: .goingAway)
         connected = false
         connectionMode = "offline"
     }
@@ -112,20 +119,34 @@ final class BridgeClient: ObservableObject {
     }
 
     func pair(using pairingURL: URL) async {
+        intentionallyStopped = false
+        startupTask?.cancel()
+        startupTask = nil
+        startupGeneration = nil
+        reconnectTask?.cancel()
+        reconnectTask = nil
+        let generation = beginConnectionGeneration(closeCode: .goingAway)
+        connected = false
+        connectionMode = "offline"
         do {
             let credentials = try await performPairing(pairingURL)
+            guard accepts(generation: generation) else { return }
             try KeychainStore.save(credentials)
+            guard accepts(generation: generation) else { return }
             self.credentials = credentials
             pairingRequired = false
             error = nil
-            connect(remote: prefersRemote(credentials))
+            connect(remote: prefersRemote(credentials), expectedGeneration: generation)
         } catch {
+            guard accepts(generation: generation) else { return }
             self.error = error.localizedDescription
         }
     }
 
     func send(_ command: ClientCommand) -> Bool {
         guard connected, let socket, let key = clientTX, let credentials else { return false }
+        let generation = connectionGeneration
+        let remote = usingRemoteRelay
         do {
             let plaintext = try JSONEncoder().encode(command)
             let counter = sendCounter
@@ -140,26 +161,29 @@ final class BridgeClient: ObservableObject {
             let data = try JSONEncoder().encode(frame)
             socket.send(.string(String(decoding: data, as: UTF8.self))) { [weak self] error in
                 if let error {
-                    Task { @MainActor in self?.fail(error) }
+                    Task { @MainActor in
+                        self?.fail(error, socket: socket, generation: generation, remote: remote)
+                    }
                 }
             }
             return true
         } catch {
-            fail(error)
+            fail(error, socket: socket, generation: generation, remote: remote)
             return false
         }
     }
 
-    private func connect(remote: Bool) {
-        guard let credentials else { return }
-        socket?.cancel()
+    private func connect(remote: Bool, expectedGeneration: UInt64? = nil) {
+        if let expectedGeneration, !accepts(generation: expectedGeneration) { return }
+        guard !intentionallyStopped, let credentials else { return }
+        let generation = beginConnectionGeneration()
         clientTX = nil
         serverTX = nil
         sendCounter = 0
         receiveCounter = 0
         let baseURL = remote ? credentials.remoteRelayURL : credentials.bridgeURL
         guard let baseURL else {
-            scheduleReconnect()
+            scheduleReconnect(generation: generation)
             return
         }
         usingRemoteRelay = remote
@@ -181,12 +205,27 @@ final class BridgeClient: ObservableObject {
         let socket = URLSession.shared.webSocketTask(with: request)
         self.socket = socket
         socket.resume()
-        Task { [weak self] in await self?.authenticate(credentials: credentials) }
+        connectionTask = Task { [weak self] in
+            await self?.authenticate(
+                socket: socket,
+                credentials: credentials,
+                remote: remote,
+                generation: generation
+            )
+        }
     }
 
-    private func authenticate(credentials: DeviceCredentials) async {
-        guard let socket, let deviceKey = ZimloCrypto.fromBase64URL(credentials.deviceKey) else {
-            fail(ZimloCryptoError.invalidKey)
+    private func authenticate(
+        socket: URLSessionWebSocketTask,
+        credentials: DeviceCredentials,
+        remote: Bool,
+        generation: UInt64
+    ) async {
+        guard isCurrent(socket: socket, generation: generation),
+              let deviceKey = ZimloCrypto.fromBase64URL(credentials.deviceKey) else {
+            if isCurrent(socket: socket, generation: generation) {
+                fail(ZimloCryptoError.invalidKey, socket: socket, generation: generation, remote: remote)
+            }
             return
         }
         do {
@@ -199,7 +238,9 @@ final class BridgeClient: ObservableObject {
                 proof: ZimloCrypto.proof(key: deviceKey, message: "ws:\(clientNonceText)")
             )
             try await socket.send(.data(JSONEncoder().encode(auth)))
+            guard isCurrent(socket: socket, generation: generation) else { return }
             let message = try await socket.receive()
+            guard isCurrent(socket: socket, generation: generation) else { return }
             let data = try data(from: message)
             let response = try JSONDecoder().decode(AuthResponse.self, from: data)
             guard response.type == "auth.ok",
@@ -212,46 +253,69 @@ final class BridgeClient: ObservableObject {
                 throw ZimloCryptoError.invalidProof
             }
             let keys = ZimloCrypto.connectionKeys(deviceKey: deviceKey, clientNonce: clientNonce, serverNonce: serverNonce)
+            guard isCurrent(socket: socket, generation: generation) else { return }
             clientTX = keys.client
             serverTX = keys.server
             connected = true
-            connectionMode = usingRemoteRelay ? "cloud" : "local"
+            connectionMode = remote ? "cloud" : "local"
             error = nil
             reconnectAttempt = 0
             onSecureConnection?()
-            await receiveLoop()
+            guard isCurrent(socket: socket, generation: generation) else { return }
+            await receiveLoop(socket: socket, credentials: credentials, remote: remote, generation: generation)
         } catch {
-            fail(error)
+            guard isCurrent(socket: socket, generation: generation) else { return }
+            fail(error, socket: socket, generation: generation, remote: remote)
         }
     }
 
-    private func receiveLoop() async {
-        guard let socket else { return }
+    private func receiveLoop(
+        socket: URLSessionWebSocketTask,
+        credentials: DeviceCredentials,
+        remote: Bool,
+        generation: UInt64
+    ) async {
+        guard isCurrent(socket: socket, generation: generation) else { return }
         do {
             while !Task.isCancelled {
                 let message = try await socket.receive()
+                guard isCurrent(socket: socket, generation: generation) else { return }
                 let frame = try JSONDecoder().decode(SecureFrame.self, from: data(from: message))
                 guard frame.type == "secure", frame.counter == receiveCounter,
-                      let serverTX, let credentials else { throw ZimloCryptoError.invalidCounter }
+                      let serverTX else { throw ZimloCryptoError.invalidCounter }
                 let plaintext = try ZimloCrypto.decrypt(
                     key: serverTX,
                     counter: frame.counter,
                     ciphertext: frame.ciphertext,
                     aad: "zimlo-ws-v1:\(credentials.deviceId)"
                 )
+                guard isCurrent(socket: socket, generation: generation) else { return }
                 receiveCounter += 1
-                onMessage?(try JSONDecoder().decode(ServerEnvelope.self, from: plaintext))
+                let envelope = try JSONDecoder().decode(ServerEnvelope.self, from: plaintext)
+                guard isCurrent(socket: socket, generation: generation) else { return }
+                onMessage?(envelope)
             }
         } catch {
-            fail(error)
+            guard isCurrent(socket: socket, generation: generation) else { return }
+            fail(error, socket: socket, generation: generation, remote: remote)
         }
     }
 
-    private func fail(_ failure: Error) {
+    private func fail(
+        _ failure: Error,
+        socket failedSocket: URLSessionWebSocketTask,
+        generation: UInt64,
+        remote: Bool
+    ) {
+        guard isCurrent(socket: failedSocket, generation: generation) else { return }
         connected = false
         connectionMode = "offline"
-        error = usingRemoteRelay ? "Mac 当前离线；已显示手机缓存，操作会在重连后发送" : failure.localizedDescription
-        if socket?.closeCode == .policyViolation {
+        error = remote ? "Mac 当前离线；已显示手机缓存，操作会在重连后发送" : failure.localizedDescription
+        if failedSocket.closeCode == .policyViolation {
+            connectionGeneration &+= 1
+            connectionTask?.cancel()
+            connectionTask = nil
+            failedSocket.cancel()
             socket = nil
             KeychainStore.clear()
             credentials = nil
@@ -260,35 +324,82 @@ final class BridgeClient: ObservableObject {
             error = "设备身份已失效或被撤销，请重新配对"
             return
         }
-        socket?.cancel()
+        failedSocket.cancel()
         socket = nil
+        connectionTask = nil
         guard !intentionallyStopped, credentials != nil else { return }
         if retryRemoteNext, credentials?.remoteRelayURL != nil, credentials?.remoteAccessToken != nil {
             reconnectTask?.cancel()
             reconnectTask = Task { [weak self] in
                 try? await Task.sleep(for: .milliseconds(250))
                 guard !Task.isCancelled else { return }
-                self?.connect(remote: true)
+                guard let self, self.accepts(generation: generation) else { return }
+                self.connect(remote: true, expectedGeneration: generation)
             }
             return
         }
-        scheduleReconnect()
+        scheduleReconnect(generation: generation)
     }
 
-    private func scheduleReconnect() {
+    private func scheduleReconnect(generation: UInt64? = nil) {
         reconnectTask?.cancel()
         // 系统离线时暂停；网络恢复由 NWPathMonitor 立即触发重连。
-        guard networkAvailable else { return }
+        guard networkAvailable, !intentionallyStopped else { return }
+        let expectedGeneration = generation ?? connectionGeneration
+        guard accepts(generation: expectedGeneration) else { return }
         let delayMs = ReconnectBackoff.delayMs(attempt: Double(reconnectAttempt), random: backoffRandom)
         reconnectAttempt += 1
         reconnectTask = Task { [weak self] in
             try? await Task.sleep(for: .milliseconds(delayMs))
             guard !Task.isCancelled else { return }
-            guard let self else { return }
+            guard let self, self.accepts(generation: expectedGeneration) else { return }
             let canUseRemote = self.credentials?.remoteRelayURL != nil
                 && self.credentials?.remoteAccessToken != nil
-            self.connect(remote: canUseRemote && self.retryRemoteNext)
+            self.connect(remote: canUseRemote && self.retryRemoteNext, expectedGeneration: expectedGeneration)
         }
+    }
+
+    /// Every async connection path carries a generation lease. Replacing,
+    /// stopping, forgetting, or re-pairing advances the lease so late awaits
+    /// can neither mutate the new connection nor deliver stale snapshots.
+    @discardableResult
+    private func beginConnectionGeneration(
+        closeCode: URLSessionWebSocketTask.CloseCode = .goingAway
+    ) -> UInt64 {
+        connectionGeneration &+= 1
+        connectionTask?.cancel()
+        connectionTask = nil
+        socket?.cancel(with: closeCode, reason: nil)
+        socket = nil
+        connected = false
+        connectionMode = "offline"
+        clientTX = nil
+        serverTX = nil
+        sendCounter = 0
+        receiveCounter = 0
+        return connectionGeneration
+    }
+
+    private func invalidateConnection(closeCode: URLSessionWebSocketTask.CloseCode) {
+        _ = beginConnectionGeneration(closeCode: closeCode)
+    }
+
+    private func accepts(generation: UInt64) -> Bool {
+        BridgeConnectionLeaseRules.accepts(
+            expectedGeneration: generation,
+            currentGeneration: connectionGeneration,
+            intentionallyStopped: intentionallyStopped
+        )
+    }
+
+    private func isCurrent(socket candidate: URLSessionWebSocketTask, generation: UInt64) -> Bool {
+        accepts(generation: generation) && socket === candidate
+    }
+
+    private func finishStartup(generation: UInt64) {
+        guard startupGeneration == generation else { return }
+        startupGeneration = nil
+        startupTask = nil
     }
 
     private func performPairing(_ url: URL) async throws -> DeviceCredentials {

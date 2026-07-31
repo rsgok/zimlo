@@ -1,0 +1,43 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
+  <defs>
+    <radialGradient id="background" cx="34%" cy="24%" r="92%">
+      <stop offset="0" stop-color="#1A231E"/>
+      <stop offset="0.58" stop-color="#101612"/>
+      <stop offset="1" stop-color="#080C0A"/>
+    </radialGradient>
+    <linearGradient id="mac-end" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#B7CD82"/>
+      <stop offset="1" stop-color="#8DA760"/>
+    </linearGradient>
+    <linearGradient id="phone-end" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#F2EDE4"/>
+      <stop offset="1" stop-color="#D8D1C5"/>
+    </linearGradient>
+    <filter id="mark-shadow" x="-30%" y="-30%" width="160%" height="170%">
+      <feDropShadow dx="0" dy="22" stdDeviation="24" flood-color="#000000" flood-opacity="0.42"/>
+    </filter>
+  </defs>
+
+  <!-- iOS supplies the outer squircle mask, so the source must stay fully opaque. -->
+  <rect width="1024" height="1024" fill="url(#background)"/>
+  <circle cx="512" cy="512" r="354" fill="#131B16" stroke="#314036" stroke-width="10"/>
+  <circle cx="512" cy="512" r="318" fill="none" stroke="#263229" stroke-width="3"/>
+
+  <g filter="url(#mark-shadow)">
+    <!-- Wider muted-moss terminal: the Mac side. -->
+    <path d="M438 318 H346 Q298 318 298 366 V658 Q298 706 346 706 H438"
+          fill="none" stroke="url(#mac-end)" stroke-width="82"
+          stroke-linecap="round" stroke-linejoin="round"/>
+
+    <!-- Slimmer warm-ivory terminal: the iPhone side. -->
+    <path d="M586 318 H680 Q726 318 726 364 V660 Q726 706 680 706 H586"
+          fill="none" stroke="url(#phone-end)" stroke-width="72"
+          stroke-linecap="round" stroke-linejoin="round"/>
+
+    <path d="M430 512 H462 M562 512 H594"
+          fill="none" stroke="#E5DED3" stroke-width="18" stroke-linecap="round"/>
+    <circle cx="512" cy="512" r="50" fill="#111713" stroke="#111713" stroke-width="18"/>
+    <circle cx="512" cy="512" r="38" fill="#DC765F"/>
+    <circle cx="500" cy="499" r="9" fill="#F6B09E" opacity="0.48"/>
+  </g>
+</svg>

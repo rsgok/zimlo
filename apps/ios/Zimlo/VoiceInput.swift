@@ -12,53 +12,87 @@ final class SpeechCapture: ObservableObject {
     private let engine = AVAudioEngine()
     private var request: SFSpeechAudioBufferRecognitionRequest?
     private var task: SFSpeechRecognitionTask?
+    private var authorizationTask: Task<Void, Never>?
+    private var tapInstalled = false
+    private var audioSessionActive = false
+
+    private enum CaptureError: LocalizedError {
+        case recognizerUnavailable
+
+        var errorDescription: String? {
+            switch self {
+            case .recognizerUnavailable:
+                return "语音识别暂时不可用，请稍后重试"
+            }
+        }
+    }
 
     func toggle(onText: @escaping (String) -> Void) {
         error = nil
         if recording { stop(); return }
-        Task {
+        authorizationTask?.cancel()
+        authorizationTask = Task { [weak self] in
             let status = await withCheckedContinuation { continuation in
                 SFSpeechRecognizer.requestAuthorization { continuation.resume(returning: $0) }
             }
+            guard !Task.isCancelled, let self else { return }
+            self.authorizationTask = nil
             guard status == .authorized else {
-                error = "语音识别权限未开启，请在系统设置中允许"
+                self.error = "语音识别权限未开启，请在系统设置中允许"
                 return
             }
-            do { try start(onText: onText) }
-            catch { self.error = error.localizedDescription }
+            do { try self.start(onText: onText) }
+            catch {
+                let message = error.localizedDescription
+                self.stop()
+                self.error = message
+            }
         }
     }
 
     func stop() {
+        authorizationTask?.cancel()
+        authorizationTask = nil
         engine.stop()
-        engine.inputNode.removeTap(onBus: 0)
+        if tapInstalled {
+            engine.inputNode.removeTap(onBus: 0)
+            tapInstalled = false
+        }
         request?.endAudio()
         task?.cancel()
         request = nil
         task = nil
         recording = false
-        try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
+        if audioSessionActive {
+            try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
+            audioSessionActive = false
+        }
     }
 
     private func start(onText: @escaping (String) -> Void) throws {
+        guard let recognizer, recognizer.isAvailable else {
+            throw CaptureError.recognizerUnavailable
+        }
         task?.cancel()
         let audioSession = AVAudioSession.sharedInstance()
         try audioSession.setCategory(.record, mode: .measurement, options: .duckOthers)
         try audioSession.setActive(true, options: .notifyOthersOnDeactivation)
+        audioSessionActive = true
         let request = SFSpeechAudioBufferRecognitionRequest()
         request.shouldReportPartialResults = true
         // 优先端上识别；设备不支持时退回默认（云端）识别。
-        if recognizer?.supportsOnDeviceRecognition == true {
+        if recognizer.supportsOnDeviceRecognition {
             request.requiresOnDeviceRecognition = true
         }
         self.request = request
         let node = engine.inputNode
         let format = node.outputFormat(forBus: 0)
         node.installTap(onBus: 0, bufferSize: 1_024, format: format) { buffer, _ in request.append(buffer) }
+        tapInstalled = true
         engine.prepare()
         try engine.start()
         recording = true
-        task = recognizer?.recognitionTask(with: request) { [weak self] result, error in
+        task = recognizer.recognitionTask(with: request) { [weak self] result, error in
             Task { @MainActor in
                 if let text = result?.bestTranscription.formattedString { onText(text) }
                 if let error {
@@ -90,7 +124,7 @@ struct VoiceInput: View {
                     .foregroundStyle(ZColor.ink)
                     .padding(.horizontal, 14).padding(.vertical, 12)
                     .frame(minHeight: minHeight, alignment: .topLeading)
-                    .background(Color.white.opacity(0.72))
+                    .background(ZColor.control)
                     .clipShape(RoundedRectangle(cornerRadius: ZRadius.inner, style: .continuous))
                 Button {
                     baseText = text.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -102,14 +136,20 @@ struct VoiceInput: View {
                         .font(.system(size: 34))
                         .foregroundStyle(speech.recording ? ZColor.coral : ZColor.ink)
                 }
+                .frame(width: 44, height: 44)
+                .contentShape(Rectangle())
                 .accessibilityLabel(speech.recording ? "停止语音输入" : "开始语音输入")
             }
             // 权限拒绝 / 识别失败就地提示，不再静默。
             if let error = speech.error {
                 Text(error)
                     .font(ZFont.caption2)
-                    .foregroundStyle(ZColor.coral)
+                    .foregroundStyle(ZColor.coralText)
             }
+        }
+        .onDisappear {
+            // 离开输入页时同步停止识别并归还录音 session，避免后台残留占用麦克风。
+            speech.stop()
         }
     }
 }

@@ -12,26 +12,22 @@ struct TaskDetailView: View {
         _followUp = State(initialValue: UserDefaults.standard.string(forKey: "zimlo.task-draft.\(session.id)") ?? "")
     }
 
-    private var project: Project? { session.projectId.flatMap { id in model.snapshot.projects.first { $0.id == id } } }
-    private var posts: [FeedPost] { model.snapshot.posts.filter { $0.sessionId == session.id }.sorted { $0.createdAt > $1.createdAt } }
-    private var commands: [TaskCommand] {
-        (model.localFollowUps(session: session) + model.snapshot.commands.filter { $0.sessionId == session.id })
-            .sorted { $0.createdAt > $1.createdAt }
-    }
-    private var task: TaskRecord? { model.snapshot.tasks.filter { $0.sessionId == session.id }.max { $0.updatedAt < $1.updatedAt } }
-    private var sessionEvents: [UnifiedEvent] { model.events[session.id] ?? [] }
-    private var currentState: String { task?.state ?? session.status }
-    private var pendingActions: [PendingAction] { model.snapshot.actions.filter { $0.sessionId == session.id && $0.state == "pending" } }
-    private var activeQueue: [TaskCommand] { commands.filter { ["queued", "dispatching", "running"].contains($0.state) } }
-
     var body: some View {
-        VStack(spacing: 0) {
+        let projection = TaskDetailProjection(
+            snapshot: model.snapshot,
+            session: session,
+            sessionEvents: model.events[session.id] ?? [],
+            localFollowUps: model.localFollowUps(session: session)
+        )
+        let latestTimelineItemID = projection.timelineItems.first?.id
+
+        return VStack(spacing: 0) {
             ScrollView {
                 LazyVStack(spacing: 0) {
-                    compactHeader
-                    if !pendingActions.isEmpty { attentionSection }
-                    if let review = latestReview { reviewSection(review) }
-                    timeline
+                    compactHeader(projection)
+                    if !projection.pendingActions.isEmpty { attentionSection(projection.pendingActions) }
+                    if let review = projection.latestReview { reviewSection(review) }
+                    timeline(projection)
                 }
             }
             .scrollIndicators(.hidden)
@@ -39,13 +35,13 @@ struct TaskDetailView: View {
 
             VStack(spacing: 5) {
                 VoiceInput(text: $followUp, placeholder: canContinue ? "说出或输入下一步…" : "当前任务关联待确认")
-                if !activeQueue.isEmpty {
-                    Text("当前有 \(activeQueue.count) 条指令正在执行或排队")
+                if !projection.activeQueue.isEmpty {
+                    Text("当前有 \(projection.activeQueue.count) 条指令正在执行或排队")
                         .font(ZFont.caption2).foregroundStyle(ZColor.muted)
                 }
-                Button(reviewChangesMode ? "发送修改要求" : willQueue ? "加入队列" : "发送") {
+                Button(reviewChangesMode ? "发送修改要求" : willQueue(projection) ? "加入队列" : "发送") {
                     let value = followUp.trimmingCharacters(in: .whitespacesAndNewlines)
-                    if reviewChangesMode, let review = latestReview {
+                    if reviewChangesMode, let review = projection.latestReview {
                         model.respondReview(review, decision: "request_changes", note: value)
                         reviewChangesMode = false
                         followUp = ""
@@ -58,26 +54,26 @@ struct TaskDetailView: View {
                     }
                 }
                 .buttonStyle(ActionButtonStyle(primary: true))
-                .disabled(!canContinue || followUp.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || duplicateActive)
+                .disabled(!canContinue || followUp.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || duplicateActive(in: projection))
             }
             .padding(.horizontal, 14).padding(.vertical, 10)
             .background(ZColor.paper)
             .overlay(alignment: .top) { Rectangle().fill(ZColor.line).frame(height: 1) }
         }
         .zPageSurface()
-        .onChange(of: followUp) { _, value in
-            UserDefaults.standard.set(value, forKey: "zimlo.task-draft.\(session.id)")
+        .task(id: followUp) {
+            try? await Task.sleep(for: .milliseconds(350))
+            guard !Task.isCancelled else { return }
+            persistFollowUpDraft()
         }
-        .task(id: timelineItems.first?.id) {
-            guard let latest = timelineItems.first?.id,
+        .onDisappear { persistFollowUpDraft() }
+        .task(id: latestTimelineItemID) {
+            guard let latest = latestTimelineItemID,
                   model.snapshot.taskTimelineCursors[session.id] != latest else { return }
-            try? await Task.sleep(for: .seconds(1))
+            guard await TimelineReadDelay.wait() else { return }
+            guard model.snapshot.taskTimelineCursors[session.id] != latest else { return }
             model.markTimelineSeen(sessionId: session.id, itemId: latest)
         }
-    }
-
-    private var latestReview: TaskReview? {
-        model.snapshot.reviews.filter { $0.sessionId == session.id }.max { $0.version < $1.version }
     }
 
     @ViewBuilder
@@ -118,18 +114,18 @@ struct TaskDetailView: View {
             }
         }
         .padding(16)
-        .background(ZColor.acid.opacity(0.09))
-        .overlay(RoundedRectangle(cornerRadius: ZRadius.inner).stroke(ZColor.line))
+        .background(ZColor.raised)
+        .overlay(RoundedRectangle(cornerRadius: ZRadius.inner).stroke(ZColor.sage.opacity(0.34)))
         .clipShape(RoundedRectangle(cornerRadius: ZRadius.inner))
         .padding(.horizontal, 14).padding(.top, 12)
     }
 
-    private var compactHeader: some View {
+    private func compactHeader(_ projection: TaskDetailProjection) -> some View {
         VStack(alignment: .leading, spacing: 13) {
             HStack(spacing: 10) {
-                AgentAvatar(value: project?.agentProfile.avatar ?? "Z", size: 42)
+                AgentAvatar(value: projection.project?.agentProfile.avatar ?? "Z", size: 42)
                 VStack(alignment: .leading, spacing: 2) {
-                    Text(project?.agentProfile.displayName ?? session.provider.label).font(ZFont.headline)
+                    Text(projection.project?.agentProfile.displayName ?? session.provider.label).font(ZFont.headline)
                     HStack(spacing: 6) {
                         ProviderBadge(provider: session.provider, surface: session.surface)
                         Text(session.projectName ?? session.cwd?.split(separator: "/").last.map(String.init) ?? "未归属")
@@ -139,15 +135,15 @@ struct TaskDetailView: View {
             }
             VStack(alignment: .leading, spacing: 5) {
                 Text("TASK INPUT").font(ZFont.caption2).foregroundStyle(ZColor.muted)
-                Text(taskInput).font(ZFont.title3).lineLimit(3)
+                Text(projection.taskInput).font(ZFont.title3).lineLimit(3)
             }
-            if let latest = posts.first {
+            if let latest = projection.posts.first {
                 HStack(alignment: .top, spacing: 18) {
                     headerFact("最新结论", latest.headline)
-                    headerFact("现在需要你", nextAction)
+                    headerFact("现在需要你", nextAction(for: projection))
                 }
             } else {
-                headerFact("现在需要你", nextAction)
+                headerFact("现在需要你", nextAction(for: projection))
             }
         }
         .foregroundStyle(ZColor.ink)
@@ -157,15 +153,15 @@ struct TaskDetailView: View {
 
     private func headerFact(_ label: String, _ value: String) -> some View {
         VStack(alignment: .leading, spacing: 3) {
-            Text(label).font(ZFont.caption2).foregroundStyle(ZColor.sage)
+            Text(label).font(ZFont.caption2).foregroundStyle(ZColor.sageText)
             Text(value).font(ZFont.footnote.weight(.bold)).lineLimit(3)
         }.frame(maxWidth: .infinity, alignment: .leading)
     }
 
-    private var attentionSection: some View {
+    private func attentionSection(_ actions: [PendingAction]) -> some View {
         VStack(alignment: .leading, spacing: 10) {
-            Text("待处理").font(ZFont.caption).foregroundStyle(ZColor.coral)
-            ForEach(pendingActions) { action in
+            Text("待处理").font(ZFont.caption).foregroundStyle(ZColor.coralText)
+            ForEach(actions) { action in
                 VStack(alignment: .leading, spacing: 8) {
                     Text(action.title).font(ZFont.callout.weight(.black))
                     Text(action.detail).font(ZFont.footnote).foregroundStyle(ZColor.muted).lineLimit(3)
@@ -178,7 +174,7 @@ struct TaskDetailView: View {
         .foregroundStyle(ZColor.ink)
     }
 
-    private var timeline: some View {
+    private func timeline(_ projection: TaskDetailProjection) -> some View {
         VStack(alignment: .leading, spacing: 0) {
             HStack {
                 Text("动态").font(ZFont.title3)
@@ -187,13 +183,16 @@ struct TaskDetailView: View {
             }
             .padding(.horizontal, 18).padding(.vertical, 14)
 
-            ForEach(timelineItems) { item in
+            ForEach(projection.timelineItems) { item in
                 TimelineRow(
-                    model: model, item: item, project: project,
-                    userAvatar: model.snapshot.userProfile.avatarId, events: sessionEvents
+                    model: model,
+                    item: item,
+                    project: projection.project,
+                    userAvatar: model.snapshot.userProfile.avatarId,
+                    details: projection.detailsByItemID[item.id] ?? []
                 )
             }
-            if timelineItems.isEmpty {
+            if projection.timelineItems.isEmpty {
                 VStack(spacing: 8) {
                     Text("还没有需要阅读的更新").font(ZFont.callout.weight(.black))
                     Text("工具调用和普通执行日志不会出现在这里。").font(ZFont.footnote).foregroundStyle(ZColor.muted)
@@ -204,15 +203,10 @@ struct TaskDetailView: View {
         .foregroundStyle(ZColor.ink)
     }
 
-    private var taskInput: String {
-        let first = sessionEvents.filter { $0.kind == "user_instruction" }.min { $0.sequence < $1.sequence }
-        return first?.payload.stringValue ?? session.title
-    }
-
-    private var nextAction: String {
-        if let action = pendingActions.first { return action.title }
-        if !activeQueue.isEmpty { return "等待当前步骤结束" }
-        switch currentState {
+    private func nextAction(for projection: TaskDetailProjection) -> String {
+        if let action = projection.pendingActions.first { return action.title }
+        if !projection.activeQueue.isEmpty { return "等待当前步骤结束" }
+        switch projection.currentState {
         case "waiting_input": return "回复 Agent，让任务继续"
         case "user_review": return "审阅最新结果；需要调整时追加指令"
         case "running", "reviewing": return "Agent 正在执行，无需操作"
@@ -221,31 +215,25 @@ struct TaskDetailView: View {
         }
     }
 
-    private var statusLabel: String {
-        ["running": "进行中", "waiting": "等待中", "idle": "可继续", "completed": "已完成",
-         "failed": "失败", "ended": "已结束", "waiting_input": "等你回复",
-         "reviewing": "检查中", "user_review": "待你审阅"][currentState] ?? "状态未知"
+    private var canContinue: Bool { session.cwd != nil && !session.correlationUncertain }
+    private func willQueue(_ projection: TaskDetailProjection) -> Bool {
+        session.activePid != nil || ["running", "waiting", "reviewing"].contains(projection.currentState)
+    }
+    private func duplicateActive(in projection: TaskDetailProjection) -> Bool {
+        let value = followUp.trimmingCharacters(in: .whitespacesAndNewlines)
+        return projection.activeQueue.contains {
+            $0.text.trimmingCharacters(in: .whitespacesAndNewlines) == value
+        }
     }
 
-    private var statusColor: Color { ["failed", "waiting_input", "user_review"].contains(currentState) ? ZColor.coral : ZColor.sage }
-    private var canContinue: Bool { session.cwd != nil && !session.correlationUncertain }
-    private var willQueue: Bool { session.activePid != nil || ["running", "waiting", "reviewing"].contains(currentState) }
-    private var duplicateActive: Bool { activeQueue.contains { $0.text.trimmingCharacters(in: .whitespacesAndNewlines) == followUp.trimmingCharacters(in: .whitespacesAndNewlines) } }
-    private var timelineCount: Int { timelineItems.count }
-
-    private var timelineItems: [TaskTimelineItem] {
-        var values = posts.map { TaskTimelineItem.post($0) }
-        values += commands.map { TaskTimelineItem.command($0) }
-        let commandTexts = Set(commands.map { $0.text.trimmingCharacters(in: .whitespacesAndNewlines) })
-        values += sessionEvents
-            .filter { $0.kind == "user_instruction" }
-            .filter { !commandTexts.contains(($0.payload.stringValue ?? "").trimmingCharacters(in: .whitespacesAndNewlines)) }
-            .map { TaskTimelineItem.event($0) }
-        return values.sorted { $0.at > $1.at }
+    private func persistFollowUpDraft() {
+        let key = "zimlo.task-draft.\(session.id)"
+        if followUp.isEmpty { UserDefaults.standard.removeObject(forKey: key) }
+        else { UserDefaults.standard.set(followUp, forKey: key) }
     }
 }
 
-enum TaskTimelineItem: Identifiable {
+enum TaskTimelineItem: Identifiable, Hashable {
     case post(FeedPost)
     case command(TaskCommand)
     case event(UnifiedEvent)
@@ -266,12 +254,155 @@ enum TaskTimelineItem: Identifiable {
     }
 }
 
+enum TimelineReadDelay {
+    static func wait(for duration: Duration = .seconds(1)) async -> Bool {
+        do {
+            try await Task.sleep(for: duration)
+            try Task.checkCancellation()
+            return true
+        } catch {
+            return false
+        }
+    }
+}
+
+struct TaskDetailProjection {
+    let project: Project?
+    let posts: [FeedPost]
+    let commands: [TaskCommand]
+    let currentState: String
+    let pendingActions: [PendingAction]
+    let activeQueue: [TaskCommand]
+    let latestReview: TaskReview?
+    let taskInput: String
+    let timelineItems: [TaskTimelineItem]
+    let detailsByItemID: [String: [String]]
+
+    init(
+        snapshot: Snapshot,
+        session: AgentSession,
+        sessionEvents: [UnifiedEvent],
+        localFollowUps: [TaskCommand]
+    ) {
+        project = session.projectId.flatMap { id in snapshot.projects.first { $0.id == id } }
+        posts = snapshot.posts
+            .filter { $0.sessionId == session.id }
+            .sorted { $0.createdAt > $1.createdAt }
+        commands = (localFollowUps + snapshot.commands.filter { $0.sessionId == session.id })
+            .sorted { $0.createdAt > $1.createdAt }
+
+        let task = snapshot.tasks.lazy
+            .filter { $0.sessionId == session.id }
+            .max { $0.updatedAt < $1.updatedAt }
+        currentState = task?.state ?? session.status
+        pendingActions = snapshot.actions.filter { $0.sessionId == session.id && $0.state == "pending" }
+        activeQueue = commands.filter { ["queued", "dispatching", "running"].contains($0.state) }
+        latestReview = snapshot.reviews.lazy
+            .filter { $0.sessionId == session.id }
+            .max { $0.version < $1.version }
+        taskInput = sessionEvents.lazy
+            .filter { $0.kind == "user_instruction" }
+            .min { $0.sequence < $1.sequence }?
+            .payload.stringValue ?? session.title
+
+        var items = posts.map(TaskTimelineItem.post)
+        items += commands.map(TaskTimelineItem.command)
+        let commandTexts = Set(commands.map { Self.normalized($0.text) })
+        items += sessionEvents.lazy
+            .filter { $0.kind == "user_instruction" }
+            .filter { !commandTexts.contains(Self.normalized($0.payload.stringValue ?? "")) }
+            .map(TaskTimelineItem.event)
+        timelineItems = items.sorted { $0.at > $1.at }
+        detailsByItemID = Self.makeDetails(
+            for: timelineItems,
+            sessionEvents: sessionEvents
+        )
+    }
+
+    private static func makeDetails(
+        for items: [TaskTimelineItem],
+        sessionEvents: [UnifiedEvent]
+    ) -> [String: [String]] {
+        let instructionDetails = makeInstructionDetails(sessionEvents)
+        var firstInstructionByText: [String: UnifiedEvent] = [:]
+        for event in sessionEvents where event.kind == "user_instruction" {
+            let key = normalized(event.payload.stringValue ?? "")
+            if firstInstructionByText[key] == nil { firstInstructionByText[key] = event }
+        }
+
+        var result: [String: [String]] = [:]
+        result.reserveCapacity(items.count)
+        for item in items {
+            let details: [String]
+            switch item {
+            case .post(let post):
+                details = post.highlights
+                    + [post.proof].compactMap { $0 }
+                    + [post.actionPrompt].compactMap { $0 }
+            case .command(let command):
+                if let instruction = firstInstructionByText[normalized(command.text)] {
+                    details = instructionDetails[instruction.id] ?? []
+                } else {
+                    details = []
+                }
+            case .event(let instruction):
+                details = instructionDetails[instruction.id] ?? []
+            }
+            if !details.isEmpty { result[item.id] = details }
+        }
+        return result
+    }
+
+    private static func makeInstructionDetails(_ events: [UnifiedEvent]) -> [String: [String]] {
+        let sorted = events.sorted { $0.sequence < $1.sequence }
+        var eventsByTurn: [String: [UnifiedEvent]] = [:]
+        var followingEvents: [String: [UnifiedEvent]] = [:]
+        var currentInstructionWithoutTurn: String?
+
+        for event in sorted {
+            if let turnID = event.turnId { eventsByTurn[turnID, default: []].append(event) }
+            if event.kind == "user_instruction" {
+                currentInstructionWithoutTurn = event.turnId == nil ? event.id : nil
+            } else if let instructionID = currentInstructionWithoutTurn {
+                followingEvents[instructionID, default: []].append(event)
+            }
+        }
+
+        var result: [String: [String]] = [:]
+        for instruction in sorted where instruction.kind == "user_instruction" {
+            let related: [UnifiedEvent]
+            if let turnID = instruction.turnId {
+                related = (eventsByTurn[turnID] ?? []).filter { $0.id != instruction.id }
+            } else {
+                related = followingEvents[instruction.id] ?? []
+            }
+            let details = related.prefix(8).map(eventDetail)
+            if !details.isEmpty { result[instruction.id] = details }
+        }
+        return result
+    }
+
+    private static func eventDetail(_ event: UnifiedEvent) -> String {
+        let labels = [
+            "plan_updated": "计划", "files_changed": "文件变更", "tests_passed": "验证",
+            "tests_failed": "验证失败", "blocked": "受阻", "completed": "完成", "failed": "失败",
+        ]
+        let value = event.payload.stringValue ?? "状态已更新"
+        let concise = value.count > 500 ? "\(value.prefix(500))…" : value
+        return "\(labels[event.kind] ?? "执行")：\(concise)"
+    }
+
+    private static func normalized(_ value: String) -> String {
+        value.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+}
+
 private struct TimelineRow: View {
     @ObservedObject var model: AppModel
     let item: TaskTimelineItem
     let project: Project?
     let userAvatar: String
-    let events: [UnifiedEvent]
+    let details: [String]
 
     var body: some View {
         HStack(alignment: .top, spacing: 11) {
@@ -289,7 +420,7 @@ private struct TimelineRow: View {
                 if case .command(let command) = item, command.state == "failed" {
                     Button("重试") { model.retry(commandId: command.id) }
                         .font(ZFont.caption)
-                        .foregroundStyle(ZColor.coral)
+                        .foregroundStyle(ZColor.coralText)
                 }
                 if !details.isEmpty {
                     DisclosureGroup("查看 \(details.count) 项执行细节") {
@@ -297,7 +428,7 @@ private struct TimelineRow: View {
                             ForEach(details, id: \.self) { Text("• \($0)").font(ZFont.footnote).foregroundStyle(ZColor.muted) }
                         }.padding(.top, 7)
                     }
-                    .font(ZFont.caption).tint(ZColor.sage)
+                    .font(ZFont.caption).tint(ZColor.sageText)
                 }
             }
             Spacer(minLength: 0)
@@ -337,43 +468,6 @@ private struct TimelineRow: View {
         case .event(let event): return event.payload.stringValue ?? label
         }
     }
-    private var details: [String] {
-        switch item {
-        case .post(let post):
-            return post.highlights + [post.proof].compactMap { $0 } + [post.actionPrompt].compactMap { $0 }
-        case .command(let command):
-            let instruction = events.first {
-                $0.kind == "user_instruction"
-                    && ($0.payload.stringValue ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
-                    == command.text.trimmingCharacters(in: .whitespacesAndNewlines)
-            }
-            guard let instruction else { return [] }
-            return detailsForInstruction(instruction)
-        case .event(let instruction):
-            return detailsForInstruction(instruction)
-        }
-    }
-
-    private func detailsForInstruction(_ instruction: UnifiedEvent) -> [String] {
-        let sorted = events.sorted { $0.sequence < $1.sequence }
-        let related: [UnifiedEvent]
-        if let turnId = instruction.turnId {
-            related = sorted.filter { $0.id != instruction.id && $0.turnId == turnId }
-        } else if let index = sorted.firstIndex(where: { $0.id == instruction.id }) {
-            related = Array(sorted.dropFirst(index + 1).prefix { $0.kind != "user_instruction" })
-        } else {
-            related = []
-        }
-        let labels = [
-            "plan_updated": "计划", "files_changed": "文件变更", "tests_passed": "验证",
-            "tests_failed": "验证失败", "blocked": "受阻", "completed": "完成", "failed": "失败",
-        ]
-        return related.prefix(8).map { event in
-            let value = event.payload.stringValue ?? "状态已更新"
-            let concise = value.count > 500 ? "\(value.prefix(500))…" : value
-            return "\(labels[event.kind] ?? "执行")：\(concise)"
-        }
-    }
 }
 
 struct NewTaskView: View {
@@ -381,7 +475,7 @@ struct NewTaskView: View {
     @Environment(\.dismiss) private var dismiss
     @AppStorage("zimlo.lastWorkspace") private var lastWorkspace = ""
     @AppStorage("zimlo.lastProvider") private var lastProvider = Provider.codex.rawValue
-    @AppStorage("zimlo.newTaskDraft") private var text = ""
+    @State private var text = UserDefaults.standard.string(forKey: "zimlo.newTaskDraft") ?? ""
     @State private var search = ""
     @State private var choosingAgent = false
     @State private var submitting = false
@@ -449,7 +543,7 @@ struct NewTaskView: View {
                                     }
                                     Spacer()
                                     ProviderBadge(provider: selectedProvider, iconOnly: true)
-                                    Text(choosingAgent ? "收起" : "更换").font(ZFont.caption2).foregroundStyle(ZColor.sage)
+                                    Text(choosingAgent ? "收起" : "更换").font(ZFont.caption2).foregroundStyle(ZColor.sageText)
                                 }
                                 .padding(12).foregroundStyle(ZColor.ink)
                                 .background(ZColor.acid.opacity(0.08))
@@ -482,18 +576,17 @@ struct NewTaskView: View {
                                                         ForEach(workspace.providers) { ProviderBadge(provider: $0, iconOnly: true) }
                                                     }
                                                     if workspace.id == lastWorkspace {
-                                                        Image(systemName: "checkmark").font(ZFont.caption).foregroundStyle(ZColor.sage)
+                                                        Image(systemName: "checkmark").font(ZFont.caption).foregroundStyle(ZColor.sageText)
                                                     }
                                                 }
                                                 .padding(.horizontal, 10).padding(.vertical, 8)
                                                 .foregroundStyle(ZColor.ink)
-                                                .background(workspace.id == lastWorkspace ? ZColor.acid.opacity(0.1) : Color.white.opacity(0.65))
+                                                .background(workspace.id == lastWorkspace ? ZColor.acid.opacity(0.18) : ZColor.raised)
                                             }
                                             .buttonStyle(.plain)
                                             Divider()
                                         }
                                     }
-                                    .frame(maxHeight: 220)
                                     .clipShape(RoundedRectangle(cornerRadius: ZRadius.control, style: .continuous))
 
                                     HStack {
@@ -509,8 +602,8 @@ struct NewTaskView: View {
                                                 }
                                                 .padding(.horizontal, 10).padding(.vertical, 7)
                                                 .foregroundStyle(ZColor.ink)
-                                                .background(lastProvider == provider.rawValue ? Color.white : Color.clear)
-                                                .overlay(Capsule().stroke(lastProvider == provider.rawValue ? ZColor.muted : ZColor.line))
+                                                .background(lastProvider == provider.rawValue ? ZColor.acid.opacity(0.18) : Color.clear)
+                                                .overlay(Capsule().stroke(lastProvider == provider.rawValue ? ZColor.acid : ZColor.line))
                                                 .clipShape(Capsule())
                                             }
                                             .buttonStyle(.plain)
@@ -527,7 +620,7 @@ struct NewTaskView: View {
 
                         if model.snapshot.workspaces.isEmpty {
                             Text("先在 Mac 的 Codex 或 Claude Code 中打开一次项目，Zimlo 才能安全地把任务交给它。")
-                                .font(ZFont.footnote).foregroundStyle(ZColor.coral)
+                                .font(ZFont.footnote).foregroundStyle(ZColor.coralText)
                         }
                     }
                     .padding(20)
@@ -544,13 +637,18 @@ struct NewTaskView: View {
                     Button {
                         guard !submitting else { return }
                         submitting = true
-                        model.createTask(
+                        let didPersist = model.createTask(
                             provider: selectedProvider,
                             workspaceId: lastWorkspace,
                             text: text.trimmingCharacters(in: .whitespacesAndNewlines)
                         )
-                        text = ""
-                        dismiss()
+                        if didPersist {
+                            text = ""
+                            UserDefaults.standard.removeObject(forKey: "zimlo.newTaskDraft")
+                            dismiss()
+                        } else {
+                            submitting = false
+                        }
                     } label: {
                         HStack { Text("开始任务"); Image(systemName: "arrow.right") }
                     }
@@ -584,6 +682,12 @@ struct NewTaskView: View {
                     lastProvider = first.rawValue
                 }
             }
+            .task(id: text) {
+                try? await Task.sleep(for: .milliseconds(350))
+                guard !Task.isCancelled else { return }
+                persistTaskDraft()
+            }
+            .onDisappear { persistTaskDraft() }
         }
     }
 
@@ -596,5 +700,10 @@ struct NewTaskView: View {
         }
         search = ""
         withAnimation(.easeOut(duration: 0.18)) { choosingAgent = false }
+    }
+
+    private func persistTaskDraft() {
+        if text.isEmpty { UserDefaults.standard.removeObject(forKey: "zimlo.newTaskDraft") }
+        else { UserDefaults.standard.set(text, forKey: "zimlo.newTaskDraft") }
     }
 }

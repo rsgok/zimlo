@@ -1,0 +1,12 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="64" height="64" viewBox="0 0 64 64">
+  <!-- Template-safe monochrome companion to the two-color app mark. -->
+  <path d="M27 13 H15 Q11 13 11 17 V47 Q11 51 15 51 H27"
+        fill="none" stroke="#000" stroke-width="6.5"
+        stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M39 15 H49 Q53 15 53 19 V45 Q53 49 49 49 H39"
+        fill="none" stroke="#000" stroke-width="5.5"
+        stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M28.5 32 H29.5 M34.5 32 H36"
+        fill="none" stroke="#000" stroke-width="3.5" stroke-linecap="round"/>
+  <circle cx="32" cy="32" r="4.5" fill="#000"/>
+</svg>

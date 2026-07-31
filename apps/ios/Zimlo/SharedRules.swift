@@ -202,6 +202,8 @@ enum CommandCancelRules {
 // Feed 页面会话固定序列：已进入当前队列的卡保持原位；只有显式消失才移除，
 // 新卡或重新变成待处理的历史卡追加到末尾。
 enum FeedCohortRules {
+    static let caughtUpID = "caught-up"
+
     static func signature(_ entries: [FeedEntry]) -> [String] {
         entries.map { "\($0.id):\($0.unread):\($0.needsAction)" }
     }
@@ -214,6 +216,22 @@ enum FeedCohortRules {
             if included.insert(entry.id).inserted { order.append(entry.id) }
         }
         return order
+    }
+
+    // 用户已经翻到「已清空」时，新到达的卡就是下一条注意力，不应继续藏在
+    // 空状态上方。阅读任意真实卡片时则返回 nil，保持原有锚点不跳动。
+    static func arrivalTarget(
+        visibleID: String?,
+        previous: [String],
+        next: [String],
+        entries: [FeedEntry]
+    ) -> String? {
+        guard visibleID == caughtUpID else { return nil }
+        let previousIDs = Set(previous)
+        let added = next.filter { !previousIDs.contains($0) }
+        guard !added.isEmpty else { return nil }
+        let byID = Dictionary(uniqueKeysWithValues: entries.map { ($0.id, $0) })
+        return added.first(where: { byID[$0]?.needsAction == true }) ?? added.first
     }
 }
 
@@ -228,6 +246,16 @@ enum ReconnectBackoff {
         let index = min(max(Int(attempt.rounded(.towardZero)), 0), delaysMs.count - 1)
         let base = delaysMs[index]
         return Int((base * (1 + (random() * 2 - 1) * jitterRatio)).rounded(.toNearestOrAwayFromZero))
+    }
+}
+
+enum BridgeConnectionLeaseRules {
+    static func accepts(
+        expectedGeneration: UInt64,
+        currentGeneration: UInt64,
+        intentionallyStopped: Bool
+    ) -> Bool {
+        !intentionallyStopped && expectedGeneration == currentGeneration
     }
 }
 

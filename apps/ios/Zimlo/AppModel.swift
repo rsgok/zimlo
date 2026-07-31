@@ -1,6 +1,7 @@
 import Combine
 import Foundation
 import SwiftUI
+import UIKit
 import UserNotifications
 
 enum MainTab: String, CaseIterable {
@@ -33,6 +34,48 @@ struct NoticeAction {
     let perform: () -> Void
 }
 
+enum EventBufferRules {
+    static let timelineLimit = 500
+
+    /// Keep the original task input even when a long-running session exceeds
+    /// the rendering window. The remaining timeline is bounded to cap memory.
+    static func bounded(_ values: [UnifiedEvent]) -> [UnifiedEvent] {
+        let sorted = Dictionary(values.map { ($0.id, $0) }, uniquingKeysWith: { _, latest in latest })
+            .values.sorted { $0.sequence < $1.sequence }
+        var bounded = Array(sorted.suffix(timelineLimit))
+        if let firstInstruction = sorted.first(where: { $0.kind == "user_instruction" }),
+           !bounded.contains(where: { $0.id == firstInstruction.id }) {
+            bounded.insert(firstInstruction, at: 0)
+        }
+        return bounded
+    }
+}
+
+enum FeedDismissAcknowledgementRules {
+    static func snapshotConfirmsUndo(_ entry: OutboxEntry, snapshot: Snapshot) -> Bool {
+        guard entry.command.type == "feed.dismiss.set",
+              entry.command.values["dismissed"] == .bool(false),
+              case .string(let itemId) = entry.command.values["itemId"] else { return false }
+        return !snapshot.dismissedFeedItemIds.contains(itemId)
+    }
+}
+
+enum NotificationDeviceAcknowledgementRules {
+    static func confirms(_ entry: OutboxEntry, registration: PushDeviceRegistration?) -> Bool {
+        switch entry.command.type {
+        case "notification.device.register": return registration != nil
+        case "notification.device.unregister": return registration == nil
+        default: return false
+        }
+    }
+}
+
+enum NotificationDeviceRevocationRules {
+    static func hasPendingUnregister(_ entries: [OutboxEntry]) -> Bool {
+        entries.contains { $0.command.type == "notification.device.unregister" }
+    }
+}
+
 @MainActor
 final class AppModel: ObservableObject {
     let bridge = BridgeClient()
@@ -48,13 +91,19 @@ final class AppModel: ObservableObject {
     @Published var newTaskProjectId: String?
     @Published private(set) var notice: String?
     @Published private(set) var noticeAction: NoticeAction?
+    @Published private(set) var noticeGeneration = 0
     @Published var notificationPermission = "正在检查"
+    @Published private(set) var isForgettingDevice = false
     // 冷启动点通知时本地还没有这条 session：保留可重试路由，直到成功打开。
     @Published private(set) var pendingRouteSessionId: String?
 
     private var bridgeObserver: AnyCancellable?
     private var outbox: [OutboxEntry] = []
     private var outboxRetryTask: Task<Void, Never>?
+    private var snapshotSaveTask: Task<Void, Never>?
+    private var snapshotClearTask: Task<Void, Never>?
+    private var forgetDeviceTask: Task<Void, Never>?
+    private let snapshotWriter = SnapshotWriter()
     private let outboxKey = "zimlo.native.command-outbox.v1"
 
     init() {
@@ -103,6 +152,9 @@ final class AppModel: ObservableObject {
         bridge.onSecureConnection = { [weak self] in
             guard let self else { return }
             self.flushOutbox()
+            // Re-registering with APNs after a new pairing also publishes the
+            // freshly rotated push-route public key to this Mac.
+            Task { _ = await NotificationManager.shared.refreshRegistration() }
             _ = self.bridge.send(ClientCommand(type: "snapshot.request", [
                 "afterSequence": .number(Double(self.snapshot.sequence)),
             ]))
@@ -125,10 +177,11 @@ final class AppModel: ObservableObject {
     func showNotice(_ text: String, action: NoticeAction? = nil) {
         notice = text
         noticeAction = action
+        noticeGeneration &+= 1
     }
 
-    func clearNotice(_ expected: String? = nil) {
-        guard expected == nil || notice == expected else { return }
+    func clearNotice(expectedGeneration: Int? = nil) {
+        guard expectedGeneration == nil || noticeGeneration == expectedGeneration else { return }
         notice = nil
         noticeAction = nil
     }
@@ -221,7 +274,10 @@ final class AppModel: ObservableObject {
     }
 
     func start() { bridge.start() }
-    func stop() { bridge.stop() }
+    func stop() {
+        bridge.stop()
+        flushSnapshotForBackground()
+    }
 
     func openTask(sessionId: String) {
         guard let session = snapshot.sessions.first(where: { $0.id == sessionId }) else { return }
@@ -273,11 +329,13 @@ final class AppModel: ObservableObject {
     func markSeen(_ postId: String) {
         guard !snapshot.seenPostIds.contains(postId) else { return }
         snapshot.seenPostIds.append(postId)
+        scheduleSnapshotSave()
         _ = sendDurable(ClientCommand(type: "feed.seen", ["postId": .string(postId)]))
     }
 
     func markTimelineSeen(sessionId: String, itemId: String) {
         snapshot.taskTimelineCursors[sessionId] = itemId
+        scheduleSnapshotSave()
         _ = sendDurable(ClientCommand(type: "task.timeline.seen", [
             "sessionId": .string(sessionId),
             "itemId": .string(itemId),
@@ -285,7 +343,10 @@ final class AppModel: ObservableObject {
     }
 
     func dismiss(_ itemId: String) {
-        if !snapshot.dismissedFeedItemIds.contains(itemId) { snapshot.dismissedFeedItemIds.append(itemId) }
+        if !snapshot.dismissedFeedItemIds.contains(itemId) {
+            snapshot.dismissedFeedItemIds.append(itemId)
+            scheduleSnapshotSave()
+        }
         Haptics.destructiveLocalAction()
         _ = sendDurable(ClientCommand(type: "feed.dismiss.set", [
             "itemId": .string(itemId),
@@ -301,6 +362,7 @@ final class AppModel: ObservableObject {
     // 所以这条指令发送成功后即视为完成（fire-and-forget），失败则留在 outbox 重放。
     func undismiss(_ itemId: String) {
         snapshot.dismissedFeedItemIds.removeAll { $0 == itemId }
+        scheduleSnapshotSave()
         _ = sendDurable(ClientCommand(type: "feed.dismiss.set", [
             "itemId": .string(itemId),
             "dismissed": .bool(false),
@@ -308,16 +370,18 @@ final class AppModel: ObservableObject {
         ]))
     }
 
-    func createTask(provider: Provider, workspaceId: String, text: String) {
+    @discardableResult
+    func createTask(provider: Provider, workspaceId: String, text: String) -> Bool {
         let command = ClientCommand(type: "task.create", [
             "provider": .string(provider.rawValue),
             "workspaceId": .string(workspaceId),
             "text": .string(text),
             "idempotencyKey": .string(UUID().uuidString),
         ])
-        _ = sendDurable(command)
+        guard sendDurable(command) else { return false }
         selectedTab = .feed
         showingNewTask = false
+        return true
     }
 
     // 返回是否已成功持久化到 outbox：成功时调用方在同一交互周期清空输入与草稿，
@@ -390,12 +454,20 @@ final class AppModel: ObservableObject {
 
     func requestNotifications() {
         Task {
-            let allowed = await NotificationManager.shared.requestAuthorization()
-            notificationPermission = allowed ? "系统已允许" : "系统未允许"
+            _ = await NotificationManager.shared.requestAuthorization()
+            // requestAuthorization(false) 同时覆盖“明确拒绝”和请求异常；以系统
+            // 最终状态为准，确保用户首次点拒绝后立刻看到可操作的设置入口。
+            let status = await NotificationManager.shared.authorizationStatus()
+            let allowed = Self.notificationsAllowed(status)
+            notificationPermission = Self.notificationPermissionLabel(status)
             var settings = snapshot.notificationSettings
             settings.enabled = allowed
             updateNotificationSettings(settings)
-            if !allowed { showNotice("通知未开启，可稍后在系统设置中允许。") }
+            if status == .denied {
+                showNotice("通知已被系统拒绝，可在设置页直接打开系统设置。")
+            } else if !allowed {
+                showNotice("通知未开启，请稍后重试。")
+            }
         }
     }
 
@@ -415,6 +487,10 @@ final class AppModel: ObservableObject {
         }
     }
 
+    private static func notificationsAllowed(_ status: UNAuthorizationStatus) -> Bool {
+        [.authorized, .provisional, .ephemeral].contains(status)
+    }
+
     @discardableResult
     func submitInput(action: PendingAction, answer: String) -> Bool {
         sendDurable(ClientCommand(type: "action.decide", [
@@ -428,6 +504,7 @@ final class AppModel: ObservableObject {
 
     func updateAvatar(_ id: String) {
         snapshot.userProfile.avatarId = id
+        scheduleSnapshotSave()
         _ = sendDurable(ClientCommand(type: "user.profile.update", ["avatarId": .string(id)]))
     }
 
@@ -438,6 +515,7 @@ final class AppModel: ObservableObject {
             snapshot.projects[index].agentProfile.bio = bio
             snapshot.projects[index].agentProfile.defaultProvider = provider
             selectedProject = snapshot.projects[index]
+            scheduleSnapshotSave()
         }
         _ = sendDurable(ClientCommand(type: "agent.profile.update", [
             "projectId": .string(project.id),
@@ -480,9 +558,12 @@ final class AppModel: ObservableObject {
             ?? TaskPreference(sessionId: sessionId, pinnedAt: nil, archivedAt: nil)
         mutate(&preference)
         upsert(&snapshot.taskPreferences, preference)
+        scheduleSnapshotSave()
     }
 
-    private func now() -> String { ISO8601DateFormatter.zimlo.string(from: Date()) }
+    private func now() -> String {
+        Date.ISO8601FormatStyle(includingFractionalSeconds: true).format(Date())
+    }
 
     func retry(commandId: String) {
         _ = sendDurable(ClientCommand(type: "task.command.retry", [
@@ -569,12 +650,61 @@ final class AppModel: ObservableObject {
         }
     }
 
-    // 解除配对：断开 Mac，清除本机凭据、快照、outbox、设备级草稿与待处理通知路由；
-    // 界面偏好（最近 Runtime / Project 选择）保留。
+    // 安全解除配对：先在线撤销 Mac/云端推送注册，收到权威确认后再清本机。
     func forgetDevice() {
+        guard !isForgettingDevice else { return }
+        guard bridge.connected else {
+            showNotice("请先重连 Mac，再解除配对并撤销该设备的通知权限。")
+            return
+        }
+        isForgettingDevice = true
+        let idempotencyKey = UUID().uuidString
+        guard sendDurable(ClientCommand(type: "notification.device.unregister", [
+            "idempotencyKey": .string(idempotencyKey),
+        ])) else {
+            isForgettingDevice = false
+            return
+        }
+        forgetDeviceTask?.cancel()
+        forgetDeviceTask = Task { [weak self] in
+            // Bridge 的 send 只表示已排队；必须等 notification.device.updated(null)
+            // 清掉这条 outbox，才能承诺远端通知注册已撤销。
+            for _ in 0..<80 {
+                try? await Task.sleep(for: .milliseconds(100))
+                guard !Task.isCancelled, let self else { return }
+                // sendDurable may deduplicate a retry onto an older semantic
+                // entry. Any pending unregister means the authoritative null
+                // acknowledgement has not arrived yet, regardless of key.
+                let pending = NotificationDeviceRevocationRules.hasPendingUnregister(self.outbox)
+                if !pending {
+                    self.finishForgettingDevice()
+                    return
+                }
+            }
+            guard let self, !Task.isCancelled else { return }
+            self.isForgettingDevice = false
+            self.showNotice("未能确认通知设备已撤销，请保持 Mac 在线后重试。")
+        }
+    }
+
+    // 清除本机凭据、快照、outbox、设备级草稿与待处理通知路由；界面偏好保留。
+    private func finishForgettingDevice() {
+        forgetDeviceTask?.cancel()
+        forgetDeviceTask = nil
+        NotificationManager.shared.resetRouteKey()
         bridge.forgetDevice()
         snapshot = .empty
-        SnapshotCache.clear()
+        let pendingSave = snapshotSaveTask
+        pendingSave?.cancel()
+        let writer = snapshotWriter
+        // Clear is serialized after any write already executing in the actor.
+        // Future saves await this task, so an old snapshot can never reappear
+        // after the user explicitly removes the device.
+        snapshotClearTask = Task {
+            await pendingSave?.value
+            await writer.clear()
+        }
+        snapshotSaveTask = nil
         snapshotSavedAt = nil
         events = [:]
         outbox = []
@@ -583,6 +713,7 @@ final class AppModel: ObservableObject {
         selectedProject = nil
         clearPendingRoute()
         clearNotice()
+        isForgettingDevice = false
         let defaults = UserDefaults.standard
         for key in defaults.dictionaryRepresentation().keys {
             if key.hasPrefix("zimlo.task-draft.")
@@ -612,8 +743,7 @@ final class AppModel: ObservableObject {
                 outbox[index].enqueuedAt = now()
                 outbox[index].lastError = nil
                 guard persistOutbox() else { return false }
-                let sent = bridge.send(command)
-                removeIfFireAndForget(command, sent: sent)
+                _ = bridge.send(command)
                 if command.type != "feed.dismiss.set" { showNotice("设置已更新，等待 Bridge 确认") }
                 return true
             }
@@ -634,7 +764,6 @@ final class AppModel: ObservableObject {
             return false
         }
         let sent = bridge.send(command)
-        removeIfFireAndForget(command, sent: sent)
         if Self.hapticSendTypes.contains(command.type) { Haptics.persisted() }
         showNotice(sent ? "指令已发送，等待 Bridge 确认" : "指令已保存在手机，将在重连后自动发送")
         return true
@@ -644,17 +773,6 @@ final class AppModel: ObservableObject {
     private static let hapticSendTypes: Set<String> = [
         "task.create", "task.follow_up", "session.message", "action.decide", "review.respond",
     ]
-
-    // feed.dismiss.set{dismissed:false} 无增量回执，发送成功即视为完成。
-    private func isFireAndForget(_ command: ClientCommand) -> Bool {
-        command.type == "feed.dismiss.set" && command.values["dismissed"] == .bool(false)
-    }
-
-    private func removeIfFireAndForget(_ command: ClientCommand, sent: Bool) {
-        guard sent, isFireAndForget(command), let key = command.idempotencyKey else { return }
-        outbox.removeAll { $0.command.idempotencyKey == key && isFireAndForget($0.command) }
-        persistOutbox()
-    }
 
     @discardableResult
     private func persistOutbox() -> Bool {
@@ -666,12 +784,12 @@ final class AppModel: ObservableObject {
     private func flushOutbox() {
         guard bridge.connected, !outbox.isEmpty else { return }
         for entry in outbox {
-            let sent = bridge.send(entry.command)
-            removeIfFireAndForget(entry.command, sent: sent)
+            _ = bridge.send(entry.command)
         }
     }
 
     private func acknowledge(_ message: ServerEnvelope) {
+        let previousCount = outbox.count
         outbox.removeAll { entry in
             switch message.type {
             case "task.command.updated":
@@ -694,10 +812,13 @@ final class AppModel: ObservableObject {
                 return false
             case "feed.dismissed.updated":
                 guard case .string(let itemId) = entry.command.values["itemId"] else { return false }
-                // dismissed=false 的撤销条目无回执（fire-and-forget），不能在这里误确认。
+                // dismissed=false 用权威 session.snapshot 确认，不能被旧式增量事件误清。
                 return ["feed.dismiss", "feed.dismiss.set"].contains(entry.command.type)
                     && entry.command.values["dismissed"] != .bool(false)
                     && itemId == message.itemId
+            case "session.snapshot":
+                guard let snapshot = message.snapshot else { return false }
+                return FeedDismissAcknowledgementRules.snapshotConfirmsUndo(entry, snapshot: snapshot)
             case "feed.seen.updated":
                 guard case .string(let postId) = entry.command.values["postId"] else { return false }
                 return entry.command.type == "feed.seen" && postId == message.postId
@@ -721,17 +842,19 @@ final class AppModel: ObservableObject {
             case "notification.settings.updated":
                 return entry.command.type == "notification.settings.update"
             case "notification.device.updated":
-                return ["notification.device.register", "notification.device.unregister"].contains(entry.command.type)
+                return NotificationDeviceAcknowledgementRules.confirms(entry, registration: message.registration)
             case "action.result":
                 guard case .string(let actionId) = entry.command.values["actionId"] else { return false }
                 return entry.command.type == "action.decide" && actionId == message.actionId
             default: return false
             }
         }
-        persistOutbox()
+        if outbox.count != previousCount { persistOutbox() }
     }
 
     private func apply(_ message: ServerEnvelope) {
+        var snapshotChanged = false
+        var shouldRefreshSnapshotCache = false
         // 审批的服务端确认在 acknowledge 之前判定：确认成功才播成功触觉（本地操作不播）。
         var approvalConfirmed = false
         if message.type == "action.result", message.ok == true, let actionId = message.actionId {
@@ -744,58 +867,82 @@ final class AppModel: ObservableObject {
         switch message.type {
         case "session.snapshot":
             if let snapshot = message.snapshot {
-                self.snapshot = snapshot
+                // A full snapshot is a successful sync boundary. Persist it
+                // even when its contents are unchanged so offline freshness
+                // reflects the last verified connection, not the last mutation.
+                shouldRefreshSnapshotCache = true
+                if snapshot != self.snapshot {
+                    self.snapshot = snapshot
+                    snapshotChanged = true
+                }
                 if let sessionId = pendingRouteSessionId,
                    snapshot.sessions.contains(where: { $0.id == sessionId }) {
                     openTask(sessionId: sessionId)
                 }
             }
         case "user.profile.updated":
-            if let profile = message.userProfile { snapshot.userProfile = profile }
+            if let profile = message.userProfile { snapshot.userProfile = profile; snapshotChanged = true }
         case "project.updated":
-            if let project = message.project { upsert(&snapshot.projects, project) }
+            if let project = message.project { upsert(&snapshot.projects, project); snapshotChanged = true }
         case "session.updated":
             if let session = message.session {
                 upsert(&snapshot.sessions, session)
                 if selectedSession?.id == session.id { selectedSession = session }
+                snapshotChanged = true
             }
         case "session.removed":
+            let previousCount = snapshot.sessions.count
             snapshot.sessions.removeAll { $0.id == message.sessionId }
+            snapshotChanged = snapshot.sessions.count != previousCount
         case "feed.posted":
-            if let post = message.post { upsert(&snapshot.posts, post) }
+            if let post = message.post { upsert(&snapshot.posts, post); snapshotChanged = true }
         case "task.updated":
-            if let task = message.task { upsert(&snapshot.tasks, task) }
+            if let task = message.task { upsert(&snapshot.tasks, task); snapshotChanged = true }
         case "task.command.updated":
-            if let command = message.command { upsert(&snapshot.commands, command) }
+            if let command = message.command { upsert(&snapshot.commands, command); snapshotChanged = true }
         case "task.command.cancel.result":
             showNotice(message.message ?? (message.ok == false ? "指令无法撤回" : "指令已撤回"))
         case "feed.seen.updated":
-            if let postId = message.postId, !snapshot.seenPostIds.contains(postId) { snapshot.seenPostIds.append(postId) }
+            if let postId = message.postId, !snapshot.seenPostIds.contains(postId) {
+                snapshot.seenPostIds.append(postId); snapshotChanged = true
+            }
         case "feed.dismissed.updated":
-            if let itemId = message.itemId, !snapshot.dismissedFeedItemIds.contains(itemId) { snapshot.dismissedFeedItemIds.append(itemId) }
+            if let itemId = message.itemId, !snapshot.dismissedFeedItemIds.contains(itemId) {
+                snapshot.dismissedFeedItemIds.append(itemId); snapshotChanged = true
+            }
         case "task.timeline.seen.updated":
-            if let sessionId = message.sessionId, let itemId = message.itemId { snapshot.taskTimelineCursors[sessionId] = itemId }
+            if let sessionId = message.sessionId, let itemId = message.itemId {
+                snapshot.taskTimelineCursors[sessionId] = itemId; snapshotChanged = true
+            }
         case "task.preference.updated":
-            if let preference = message.preference { upsert(&snapshot.taskPreferences, preference) }
+            if let preference = message.preference { upsert(&snapshot.taskPreferences, preference); snapshotChanged = true }
         case "review.updated":
-            if let review = message.review { upsert(&snapshot.reviews, review) }
+            if let review = message.review { upsert(&snapshot.reviews, review); snapshotChanged = true }
         case "reviews.list":
-            if let reviews = message.reviews { snapshot.reviews = reviews }
+            if let reviews = message.reviews { snapshot.reviews = reviews; snapshotChanged = true }
         case "trust.policy.updated":
-            if let policy = message.policy { upsert(&snapshot.trustPolicies, policy) }
+            if let policy = message.policy { upsert(&snapshot.trustPolicies, policy); snapshotChanged = true }
         case "trust.policies":
-            if let policies = message.policies { snapshot.trustPolicies = policies }
-            if let audit = message.audit { snapshot.trustAudit = audit }
+            if let policies = message.policies { snapshot.trustPolicies = policies; snapshotChanged = true }
+            if let audit = message.audit { snapshot.trustAudit = audit; snapshotChanged = true }
         case "notification.settings.updated":
-            if let settings = message.settings { snapshot.notificationSettings = settings }
+            if let settings = message.settings { snapshot.notificationSettings = settings; snapshotChanged = true }
         case "notification.device.updated":
             snapshot.pushDevices = message.registration.map { [$0] } ?? []
+            snapshotChanged = true
         case "action.upsert":
-            if let action = message.action { upsert(&snapshot.actions, action) }
+            if let action = message.action { upsert(&snapshot.actions, action); snapshotChanged = true }
         case "session.events":
-            if let sessionId = message.sessionId, let events = message.events { self.events[sessionId] = events }
+            if let sessionId = message.sessionId, let events = message.events {
+                self.events[sessionId] = EventBufferRules.bounded(events)
+            }
         case "event.upsert":
-            if let event = message.event { events[event.sessionId, default: []].append(event) }
+            if let event = message.event {
+                var sessionEvents = events[event.sessionId] ?? []
+                if let index = sessionEvents.firstIndex(where: { $0.id == event.id }) { sessionEvents[index] = event }
+                else { sessionEvents.append(event) }
+                events[event.sessionId] = EventBufferRules.bounded(sessionEvents)
+            }
         case "action.result":
             showNotice(message.message ?? (message.ok == false ? "审批未被接受" : "审批已确认"))
         case "session.message.result":
@@ -811,8 +958,52 @@ final class AppModel: ObservableObject {
         default:
             break
         }
-        SnapshotCache.save(snapshot)
-        snapshotSavedAt = Date()
+        if snapshotChanged || shouldRefreshSnapshotCache { scheduleSnapshotSave() }
+    }
+
+    /// Coalesces message bursts, then moves JSON encoding and atomic disk IO
+    /// off MainActor. The writer actor guarantees an older snapshot cannot win
+    /// a race and overwrite a newer one.
+    private func scheduleSnapshotSave(after delay: Duration = .milliseconds(350)) {
+        snapshotSaveTask?.cancel()
+        let value = snapshot
+        let writer = snapshotWriter
+        let pendingClear = snapshotClearTask
+        snapshotSaveTask = Task { [weak self] in
+            if delay != .zero { try? await Task.sleep(for: delay) }
+            guard !Task.isCancelled else { return }
+            await pendingClear?.value
+            guard !Task.isCancelled else { return }
+            let savedAt = await writer.save(value)
+            guard !Task.isCancelled, let savedAt else { return }
+            self?.snapshotSavedAt = savedAt
+        }
+    }
+
+    private func flushSnapshotForBackground() {
+        guard !bridge.pairingRequired else { return }
+        let pendingSave = snapshotSaveTask
+        pendingSave?.cancel()
+        let pendingClear = snapshotClearTask
+        let value = snapshot
+        let writer = snapshotWriter
+        var backgroundTask = UIBackgroundTaskIdentifier.invalid
+        backgroundTask = UIApplication.shared.beginBackgroundTask(withName: "snapshot-cache") {
+            if backgroundTask != .invalid {
+                UIApplication.shared.endBackgroundTask(backgroundTask)
+                backgroundTask = .invalid
+            }
+        }
+        snapshotSaveTask = Task { [weak self] in
+            await pendingSave?.value
+            await pendingClear?.value
+            let savedAt = await writer.save(value)
+            if let savedAt { self?.snapshotSavedAt = savedAt }
+            if backgroundTask != .invalid {
+                UIApplication.shared.endBackgroundTask(backgroundTask)
+                backgroundTask = .invalid
+            }
+        }
     }
 
     // 服务端拒绝：标失败（不静默恢复、不重复发送），outbox 详情里提供重试/重新编辑。

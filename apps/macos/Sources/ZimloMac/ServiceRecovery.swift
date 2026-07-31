@@ -1,10 +1,89 @@
 import Foundation
 
+/// Explicit retry may replace a hung process only when it is a Process instance
+/// launched by this controller and the Bridge probe is unreachable. Keeping the
+/// two ownership conditions in one policy makes the external-service boundary
+/// testable and fail-closed.
+enum ExplicitRetryProcessPolicy {
+    static func shouldReplaceOwnedProcess(
+        hasRunningOwnedProcess: Bool,
+        probeIsUnreachable: Bool
+    ) -> Bool {
+        hasRunningOwnedProcess && probeIsUnreachable
+    }
+}
+
+enum OwnedProcessLifecyclePolicy {
+    static func shouldRetainReference(processIsStillRunning: Bool) -> Bool {
+        processIsStillRunning
+    }
+
+    static func canLaunchReplacement(hasRunningOwnedProcess: Bool) -> Bool {
+        !hasRunningOwnedProcess
+    }
+
+    static func shouldClearSuppressionForCompatibleReuse(
+        suppressionMatchesRetainedProcess: Bool
+    ) -> Bool {
+        suppressionMatchesRetainedProcess
+    }
+}
+
+enum RecoveryHaltPolicy {
+    static func allowsAutomaticStateTransition(
+        recoveryHalted: Bool,
+        stopping: Bool
+    ) -> Bool {
+        !recoveryHalted && !stopping
+    }
+}
+
+enum ManualStopTransitionDecision: Equatable {
+    case continueLifecycle
+    case enterManualStoppedAndHaltMonitoring
+}
+
+enum ManualStopTransitionPolicy {
+    static func decide(manualStopSet: Bool) -> ManualStopTransitionDecision {
+        manualStopSet ? .enterManualStoppedAndHaltMonitoring : .continueLifecycle
+    }
+}
+
+enum UnexpectedExitRecoveryPolicy {
+    static func shouldRecover(
+        stopping: Bool,
+        recoveryHalted: Bool,
+        terminationStatus: Int32
+    ) -> Bool {
+        !stopping && !recoveryHalted && terminationStatus != 0
+    }
+}
+
 /// 按钮级操作错误：只展示在触发它的按钮/步骤附近，
 /// 不写入全局 ServiceState，避免单次操作失败让整个菜单栏变成"需要修复"。
 struct OperationIssue: Equatable {
     let message: String
     let action: String?
+}
+
+enum OperationIssueMapper {
+    static func issue(
+        for error: Error,
+        fallback: String,
+        retryAction: String
+    ) -> OperationIssue {
+        guard let urlError = error as? URLError else {
+            return OperationIssue(message: fallback, action: retryAction)
+        }
+        switch urlError.code {
+        case .timedOut:
+            return OperationIssue(message: "操作超时。", action: retryAction)
+        case .cannotConnectToHost, .cannotFindHost, .networkConnectionLost, .notConnectedToInternet:
+            return OperationIssue(message: "暂时无法连接后台服务。", action: retryAction)
+        default:
+            return OperationIssue(message: fallback, action: retryAction)
+        }
+    }
 }
 
 /// 解析 Bridge 的错误响应体，产出面向用户的展示文案。
@@ -23,18 +102,29 @@ enum BridgeErrorDecoder {
         "Internal Server Error", "Bad Gateway", "Service Unavailable", "Gateway Timeout",
     ]
 
+    private static func isTechnicalMessage(_ value: String) -> Bool {
+        let normalized = value.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        return normalized == "fetch failed"
+            || normalized == "failed to fetch"
+            || normalized.contains("operation was aborted due to timeout")
+    }
+
     static func decode(_ data: Data, fallback: String) -> OperationIssue {
         if let stable = try? JSONDecoder().decode(StableError.self, from: data),
-           !stable.message.isEmpty {
+           !stable.message.isEmpty,
+           !isTechnicalMessage(stable.message) {
             return OperationIssue(message: stable.message, action: stable.action)
         }
         if let legacy = try? JSONDecoder().decode(LegacyError.self, from: data) {
             for candidate in [legacy.message, legacy.error] {
-                guard let candidate, !candidate.isEmpty, !httpStatusNames.contains(candidate) else { continue }
+                guard let candidate,
+                      !candidate.isEmpty,
+                      !httpStatusNames.contains(candidate),
+                      !isTechnicalMessage(candidate) else { continue }
                 return OperationIssue(message: candidate, action: nil)
             }
         }
-        return OperationIssue(message: fallback, action: nil)
+        return OperationIssue(message: fallback, action: "检查网络和后台服务后重试。")
     }
 
     private struct StableError: Decodable {

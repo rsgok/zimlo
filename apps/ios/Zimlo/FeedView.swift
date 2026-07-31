@@ -5,27 +5,27 @@ struct NativeFeedView: View {
     @State private var visibleID: String?
     @State private var currentOrder: [String] = []
 
-    private var current: [FeedEntry] {
-        let byId = Dictionary(uniqueKeysWithValues: model.feedEntries.map { ($0.id, $0) })
-        return currentOrder.compactMap { byId[$0] }
-    }
-    private var history: [FeedEntry] {
-        let ids = Set(currentOrder)
-        return model.feedEntries.filter { !ids.contains($0.id) }
-    }
-
     var body: some View {
+        // Feed projection is intentionally built once per render. It used to be
+        // recomputed for every card, position lookup and empty-state check.
+        let entries = model.feedEntries
+        let byID = Dictionary(uniqueKeysWithValues: entries.map { ($0.id, $0) })
+        let current = currentOrder.compactMap { byID[$0] }
+        let currentIDs = Set(currentOrder)
+        let history = entries.filter { !currentIDs.contains($0.id) }
+        let positions = Dictionary(uniqueKeysWithValues: current.enumerated().map { ($0.element.id, $0.offset + 1) })
+
         GeometryReader { geometry in
             ScrollView(.vertical) {
                 LazyVStack(spacing: 0) {
                     ForEach(current) { entry in
-                        FeedPage(model: model, entry: entry, position: position(entry), total: current.count)
+                        FeedPage(model: model, entry: entry, position: positions[entry.id] ?? 1, total: current.count)
                             .frame(width: geometry.size.width, height: geometry.size.height)
                             .id(entry.id)
                     }
-                    CaughtUpPage(model: model, hasHistory: !history.isEmpty)
+                    CaughtUpPage(model: model, feedIsEmpty: entries.isEmpty, hasHistory: !history.isEmpty)
                         .frame(width: geometry.size.width, height: geometry.size.height)
-                        .id("caught-up")
+                        .id(FeedCohortRules.caughtUpID)
                     ForEach(history) { entry in
                         FeedPage(model: model, entry: entry, position: 0, total: current.count, historical: true)
                             .frame(width: geometry.size.width, height: geometry.size.height)
@@ -37,27 +37,33 @@ struct NativeFeedView: View {
             .scrollIndicators(.hidden)
             .scrollTargetBehavior(.paging)
             .scrollPosition(id: $visibleID)
-            .background(ZColor.ink)
+            .background(ZColor.canvas)
             .onAppear { updateCohort() }
-            .onChange(of: FeedCohortRules.signature(model.feedEntries)) { _, _ in updateCohort() }
-            .onChange(of: visibleID) { _, id in
-                guard let id, let entry = model.feedEntries.first(where: { $0.id == id }),
+            .onChange(of: FeedCohortRules.signature(entries)) { _, _ in updateCohort() }
+            .task(id: visibleID) {
+                guard let id = visibleID, let entry = byID[id],
                       case .post(let post) = entry.content, entry.unread else { return }
-                Task {
-                    try? await Task.sleep(for: .seconds(1))
-                    guard visibleID == id else { return }
-                    model.markSeen(post.id)
-                }
+                try? await Task.sleep(for: .seconds(1))
+                guard !Task.isCancelled, visibleID == id else { return }
+                model.markSeen(post.id)
             }
         }
     }
 
-    private func position(_ entry: FeedEntry) -> Int {
-        (current.firstIndex(of: entry) ?? 0) + 1
-    }
-
     private func updateCohort() {
-        currentOrder = FeedCohortRules.reconcile(previous: currentOrder, entries: model.feedEntries)
+        let entries = model.feedEntries
+        let previous = currentOrder
+        let next = FeedCohortRules.reconcile(previous: previous, entries: entries)
+        let arrival = FeedCohortRules.arrivalTarget(
+            visibleID: visibleID,
+            previous: previous,
+            next: next,
+            entries: entries
+        )
+        withAnimation(.easeOut(duration: 0.22)) {
+            currentOrder = next
+            if let arrival { visibleID = arrival }
+        }
     }
 }
 
@@ -72,9 +78,9 @@ private struct FeedPage: View {
     var body: some View {
         ZStack {
             HStack {
-                Label("查看任务", systemImage: "arrow.left").foregroundStyle(ZColor.acid)
+                Label("移出 Feed", systemImage: "arrow.right").foregroundStyle(ZColor.coralText)
                 Spacer()
-                Label("移出 Feed", systemImage: "arrow.right").foregroundStyle(ZColor.coral)
+                Label("查看任务", systemImage: "arrow.left").foregroundStyle(ZColor.acid)
             }
             .font(ZFont.subheadline.weight(.black))
             .padding(.horizontal, 28)
@@ -89,9 +95,9 @@ private struct FeedPage: View {
                     CommandCard(model: model, command: command, position: position, total: total, historical: historical)
                 }
             }
-            // 历史卡降视觉权重：降饱和与透明度，与当前卡拉开层级。
+            .environment(\.colorScheme, .dark)
+            // 历史卡仅降低彩度；整卡透明会连文字与控件一起压低对比度。
             .saturation(historical ? 0.5 : 1)
-            .opacity(historical ? 0.68 : 1)
             .padding(.horizontal, 10).padding(.vertical, 6)
             .offset(x: offset)
             .gesture(
@@ -110,6 +116,12 @@ private struct FeedPage: View {
                         withAnimation(.spring(response: 0.28, dampingFraction: 0.8)) { offset = 0 }
                     }
             )
+        }
+        .accessibilityActions {
+            if let sessionID = entry.sessionId {
+                Button("查看任务") { model.openTask(sessionId: sessionID) }
+            }
+            Button("移出 Feed") { model.dismiss(entry.id) }
         }
     }
 }
@@ -164,7 +176,7 @@ private struct PostCard: View {
                 VStack(alignment: .leading, spacing: 10) {
                     ForEach(post.highlights.prefix(2), id: \.self) { fact in
                         HStack(alignment: .top, spacing: 10) {
-                            Image(systemName: "checkmark").fontWeight(.black).foregroundStyle(ZColor.sage)
+                            Image(systemName: "checkmark").fontWeight(.black).foregroundStyle(ZColor.sageText)
                             Text(fact).font(ZFont.callout.weight(.semibold)).lineLimit(2)
                         }
                     }
@@ -174,7 +186,7 @@ private struct PostCard: View {
             Spacer(minLength: 22)
 
             VStack(alignment: .leading, spacing: 5) {
-                Text("下一步").font(ZFont.caption2).foregroundStyle(ZColor.sage)
+                Text("下一步").font(ZFont.caption2).foregroundStyle(ZColor.sageText)
                 Text(nextAction).font(ZFont.subheadline.weight(.bold)).lineLimit(2)
             }
             .padding(14)
@@ -204,12 +216,13 @@ private struct PostCard: View {
                         }
                         .font(ZFont.caption)
                         .padding(.horizontal, 12).padding(.vertical, 11)
+                        .foregroundStyle(ZColor.onAccent)
                         .background(ZColor.acid).clipShape(RoundedRectangle(cornerRadius: 12))
                         .disabled(reply.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || session.correlationUncertain)
                     }
                     if model.hasPendingLocalReply(sessionId: session.id) {
                         Text("回复已保存在手机，等待 Mac 确认")
-                            .font(ZFont.caption2).foregroundStyle(ZColor.sage)
+                            .font(ZFont.caption2).foregroundStyle(ZColor.sageText)
                     }
                 }.padding(.top, 10)
             }
@@ -229,6 +242,7 @@ private struct PostCard: View {
                 if needsAction {
                     Text("需要你处理")
                         .font(ZFont.caption2)
+                        .foregroundStyle(ZColor.ink)
                         .padding(.horizontal, 9).padding(.vertical, 6)
                         .background(ZColor.coral).clipShape(Capsule())
                 }
@@ -249,9 +263,12 @@ private struct PostCard: View {
         .onAppear {
             reply = UserDefaults.standard.string(forKey: "zimlo.feed-reply.\(post.id)") ?? ""
         }
-        .onChange(of: reply) { _, value in
-            UserDefaults.standard.set(value, forKey: "zimlo.feed-reply.\(post.id)")
+        .task(id: reply) {
+            try? await Task.sleep(for: .milliseconds(350))
+            guard !Task.isCancelled else { return }
+            persistReplyDraft()
         }
+        .onDisappear { persistReplyDraft() }
     }
 
     private var nextAction: String {
@@ -260,6 +277,12 @@ private struct PostCard: View {
         if post.kind == "result" { return "左滑查看完整结果" }
         if session?.status == "running" { return "Agent 继续执行，重要变化会再次出现" }
         return "等待下一条重要更新"
+    }
+
+    private func persistReplyDraft() {
+        let key = "zimlo.feed-reply.\(post.id)"
+        if reply.isEmpty { UserDefaults.standard.removeObject(forKey: key) }
+        else { UserDefaults.standard.set(reply, forKey: key) }
     }
 }
 
@@ -325,63 +348,131 @@ private struct CommandCard: View {
         }
         .padding(24).foregroundStyle(ZColor.ink)
         .background(ZColor.paper)
-        .overlay(alignment: .top) { Rectangle().fill(command.state == "failed" ? ZColor.coral : ZColor.acid).frame(height: 9) }
+        .overlay(alignment: .top) { Rectangle().fill(command.state == "failed" ? ZColor.coral : ZColor.sage).frame(height: 9) }
         .clipShape(RoundedRectangle(cornerRadius: ZRadius.card, style: .continuous))
     }
 }
 
 private struct CaughtUpPage: View {
     @ObservedObject var model: AppModel
+    let feedIsEmpty: Bool
     let hasHistory: Bool
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
 
     var body: some View {
+        Group {
+            if dynamicTypeSize.isAccessibilitySize {
+                GeometryReader { geometry in
+                    ScrollView(.vertical) {
+                        caughtUpContent
+                            .padding(.horizontal, 28)
+                            .padding(.vertical, 32)
+                            .frame(maxWidth: .infinity, minHeight: geometry.size.height, alignment: .center)
+                    }
+                    .scrollIndicators(.visible)
+                }
+            } else {
+                VStack(spacing: 0) {
+                    Spacer()
+                    caughtUpContent
+                    Spacer()
+                }
+                .padding(28)
+            }
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .foregroundStyle(ZColor.ink)
+        .background(ZColor.paper)
+        .environment(\.colorScheme, .dark)
+    }
+
+    private var caughtUpContent: some View {
         VStack(spacing: 0) {
-            Spacer()
             VStack(spacing: 13) {
                 Text("✓")
                     .font(ZFont.title.weight(.black))
-                    .frame(width: 56, height: 56)
-                    .foregroundStyle(ZColor.ink)
-                    .background(ZColor.acid)
+                    .frame(
+                        width: dynamicTypeSize.isAccessibilitySize ? 72 : 56,
+                        height: dynamicTypeSize.isAccessibilitySize ? 72 : 56
+                    )
+                    .foregroundStyle(ZColor.onAccent)
+                    .background(ZColor.sage)
                     .clipShape(Circle())
-                Text("YOU'RE ALL CAUGHT UP").font(ZFont.caption)
+                Text("YOU'RE ALL CAUGHT UP")
+                    .font(ZFont.caption)
+                    .multilineTextAlignment(.center)
+                    .fixedSize(horizontal: false, vertical: true)
             }
-            Text(model.feedEntries.isEmpty ? "Feed 已经清空" : "当前更新已经看完")
+            Text(feedIsEmpty ? "Feed 已经清空" : "当前更新已经看完")
                 .font(ZFont.title).lineSpacing(0).minimumScaleFactor(0.8)
+                .multilineTextAlignment(.center)
+                .fixedSize(horizontal: false, vertical: true)
                 .padding(.top, 18)
             Text("重要更新、待审批和需要回复的任务会出现在这里。")
                 .font(ZFont.footnote)
                 .foregroundStyle(ZColor.muted)
                 .multilineTextAlignment(.center)
                 .frame(maxWidth: 270)
+                .fixedSize(horizontal: false, vertical: true)
                 .padding(.top, 9)
             Button("＋ 新任务") { model.showingNewTask = true }.buttonStyle(ActionButtonStyle(primary: true))
-                .frame(maxWidth: 240)
+                .frame(maxWidth: dynamicTypeSize.isAccessibilitySize ? 300 : 240)
                 .padding(.top, 22)
             if hasHistory {
                 Text("继续向下浏览历史 ↓")
                     .font(ZFont.footnote)
                     .foregroundStyle(ZColor.muted)
+                    .multilineTextAlignment(.center)
+                    .fixedSize(horizontal: false, vertical: true)
                     .padding(.top, 14)
             }
-            Spacer()
         }
-        .padding(28)
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .foregroundStyle(ZColor.ink)
-        .background(ZColor.paper)
     }
 }
 
+enum ActionButtonRole {
+    case primary
+    case neutral
+    case danger
+}
+
 struct ActionButtonStyle: ButtonStyle {
-    let primary: Bool
+    let role: ActionButtonRole
+    @Environment(\.isEnabled) private var isEnabled
+
+    init(primary: Bool) {
+        role = primary ? .primary : .danger
+    }
+
+    init(role: ActionButtonRole) {
+        self.role = role
+    }
+
     func makeBody(configuration: Configuration) -> some View {
+        let foreground: Color = switch role {
+        case .primary: ZColor.onAccent
+        case .neutral: ZColor.ink
+        case .danger: ZColor.coralText
+        }
+        let background: Color = switch role {
+        case .primary: ZColor.acid.opacity(isEnabled ? 1 : 0.32)
+        case .neutral: ZColor.control
+        case .danger: .clear
+        }
+        let stroke: Color = switch role {
+        case .primary: .clear
+        case .neutral: ZColor.line
+        case .danger: ZColor.coral.opacity(isEnabled ? 1 : 0.35)
+        }
         configuration.label
             .font(ZFont.callout.weight(.black))
-            .frame(maxWidth: .infinity).padding(.vertical, 13)
-            .foregroundStyle(primary ? ZColor.ink : ZColor.coral)
-            .background(primary ? ZColor.acid : Color.clear)
-            .overlay(RoundedRectangle(cornerRadius: ZRadius.control).stroke(primary ? Color.clear : ZColor.coral))
+            .multilineTextAlignment(.center)
+            .fixedSize(horizontal: false, vertical: true)
+            .frame(maxWidth: .infinity, minHeight: 44)
+            .padding(.horizontal, 12).padding(.vertical, 4)
+            .foregroundStyle(foreground.opacity(isEnabled ? 1 : 0.48))
+            .background(background)
+            .overlay(RoundedRectangle(cornerRadius: ZRadius.control).stroke(stroke))
             .clipShape(RoundedRectangle(cornerRadius: ZRadius.control, style: .continuous))
             .opacity(configuration.isPressed ? 0.7 : 1)
     }
@@ -409,6 +500,7 @@ struct DecisionButton: View {
                 },
                 onCancel: { showingConfirmation = false }
             )
+            .environment(\.colorScheme, .dark)
             .presentationDetents([.medium, .large])
             .presentationDragIndicator(.visible)
             .presentationBackground(ZColor.paper)
@@ -444,7 +536,7 @@ struct PendingActionControls: View {
                     }
                     .font(ZFont.caption)
                     .padding(.horizontal, 12).padding(.vertical, 11)
-                    .background(ZColor.acid).foregroundStyle(ZColor.ink)
+                    .background(ZColor.acid).foregroundStyle(ZColor.onAccent)
                     .clipShape(RoundedRectangle(cornerRadius: 12))
                     .disabled(answer.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
                 }
@@ -456,9 +548,18 @@ struct PendingActionControls: View {
                 }
             }
         }
-        .onChange(of: answer) { _, value in
-            UserDefaults.standard.set(value, forKey: "zimlo.action-draft.\(action.actionId)")
+        .task(id: answer) {
+            try? await Task.sleep(for: .milliseconds(350))
+            guard !Task.isCancelled else { return }
+            persistAnswerDraft()
         }
+        .onDisappear { persistAnswerDraft() }
+    }
+
+    private func persistAnswerDraft() {
+        let key = "zimlo.action-draft.\(action.actionId)"
+        if answer.isEmpty { UserDefaults.standard.removeObject(forKey: key) }
+        else { UserDefaults.standard.set(answer, forKey: key) }
     }
 }
 

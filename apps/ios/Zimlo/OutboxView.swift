@@ -12,7 +12,7 @@ struct OutboxView: View {
             Group {
                 if model.outboxEntries.isEmpty {
                     VStack(spacing: 10) {
-                        Image(systemName: "checkmark.circle").font(.largeTitle).foregroundStyle(ZColor.sage)
+                        Image(systemName: "checkmark.circle").font(.largeTitle).foregroundStyle(ZColor.sageText)
                         Text("没有待同步操作").font(ZFont.title3)
                         Text("离线时的回复、审批和设置变更会先保存在这里，连接 Mac 后自动发送。")
                             .font(ZFont.footnote).foregroundStyle(ZColor.muted)
@@ -39,12 +39,14 @@ struct OutboxView: View {
                 }
             }
         }
+        .environment(\.colorScheme, .dark)
     }
 }
 
 private struct OutboxRow: View {
     @ObservedObject var model: AppModel
     let entry: OutboxEntry
+    @State private var showingRemoveConfirmation = false
 
     private var stateLabel: String {
         if entry.lastError != nil { return "发送失败" }
@@ -52,8 +54,8 @@ private struct OutboxRow: View {
     }
 
     private var stateColor: Color {
-        if entry.lastError != nil { return ZColor.coral }
-        return model.bridge.connected ? ZColor.sage : ZColor.muted
+        if entry.lastError != nil { return ZColor.coralText }
+        return model.bridge.connected ? ZColor.sageText : ZColor.muted
     }
 
     var body: some View {
@@ -74,18 +76,18 @@ private struct OutboxRow: View {
                 Text("创建于 \(relative(entry.enqueuedAt))").font(ZFont.caption2).foregroundStyle(ZColor.muted)
             }
             if let error = entry.lastError {
-                Text(error).font(ZFont.caption).foregroundStyle(ZColor.coral).lineLimit(2)
+                Text(error).font(ZFont.caption).foregroundStyle(ZColor.coralText).lineLimit(2)
             }
             HStack(spacing: 14) {
                 if entry.lastError != nil {
                     Button("重试") { model.retryOutboxEntry(entry) }
-                        .font(ZFont.caption).foregroundStyle(ZColor.sage)
+                        .font(ZFont.caption).foregroundStyle(ZColor.sageText)
                     if canReedit {
                         Button("重新编辑") { _ = model.reeditOutboxEntry(entry) }
-                            .font(ZFont.caption).foregroundStyle(ZColor.sage)
+                            .font(ZFont.caption).foregroundStyle(ZColor.sageText)
                     }
                     if !canReedit {
-                        Button("移除", role: .destructive) { model.removeOutboxEntry(entry) }
+                        Button("移除", role: .destructive) { showingRemoveConfirmation = true }
                             .font(ZFont.caption)
                     }
                 }
@@ -96,6 +98,12 @@ private struct OutboxRow: View {
             }
         }
         .padding(.vertical, 6)
+        .confirmationDialog("移除这条待同步操作？", isPresented: $showingRemoveConfirmation, titleVisibility: .visible) {
+            Button("从本机队列移除", role: .destructive) { model.removeOutboxEntry(entry) }
+            Button("取消", role: .cancel) {}
+        } message: {
+            Text("移除后这条操作不会再次发送，且无法撤销。")
+        }
     }
 
     private var canReedit: Bool {

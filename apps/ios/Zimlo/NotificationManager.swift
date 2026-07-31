@@ -15,15 +15,26 @@ final class NotificationManager: NSObject, UNUserNotificationCenterDelegate {
     // 快捷审批已过期：只携带 sessionId，引导进 App 查看最新状态。
     var onQuickExpired: ((String) -> Void)?
 
-    private lazy var routePrivateKey: Curve25519.KeyAgreement.PrivateKey = {
+    private var cachedRoutePrivateKey: Curve25519.KeyAgreement.PrivateKey?
+    private var routePrivateKey: Curve25519.KeyAgreement.PrivateKey {
+        if let cachedRoutePrivateKey { return cachedRoutePrivateKey }
         if let stored = KeychainStore.loadPushPrivateKey(),
            let key = try? Curve25519.KeyAgreement.PrivateKey(rawRepresentation: stored) {
+            cachedRoutePrivateKey = key
             return key
         }
         let key = Curve25519.KeyAgreement.PrivateKey()
         try? KeychainStore.savePushPrivateKey(key.rawRepresentation)
+        cachedRoutePrivateKey = key
         return key
-    }()
+    }
+
+    /// A new pairing must not reuse a push-route identity from the removed
+    /// device. The next APNs registration lazily creates and persists a new key.
+    func resetRouteKey() {
+        cachedRoutePrivateKey = nil
+        KeychainStore.clearPushPrivateKey()
+    }
 
     func configure() {
         UNUserNotificationCenter.current().delegate = self
@@ -89,11 +100,10 @@ final class NotificationManager: NSObject, UNUserNotificationCenterDelegate {
             }
             return
         }
-        guard let sessionId = payload["sessionId"] as? String else { return }
-        await MainActor.run { self.onRoute?(sessionId) }
+        await MainActor.run { self.onRoute?(payload.sessionId) }
     }
 
-    private func decryptRoutePayload(_ route: [String: String]) throws -> [String: Any] {
+    private func decryptRoutePayload(_ route: [String: String]) throws -> QuickApprove.Payload {
         guard let publicKeyText = route["ephemeralPublicKey"],
               let nonceText = route["nonce"],
               let ciphertextText = route["ciphertext"],
@@ -118,9 +128,7 @@ final class NotificationManager: NSObject, UNUserNotificationCenterDelegate {
             tag: ciphertext.suffix(16)
         )
         let data = try ChaChaPoly.open(sealed, using: key, authenticating: Data("zimlo-push-route-v1".utf8))
-        let object = try JSONSerialization.jsonObject(with: data) as? [String: Any]
-        guard let object, object["sessionId"] is String else { throw ZimloCryptoError.invalidCiphertext }
-        return object
+        return try JSONDecoder().decode(QuickApprove.Payload.self, from: data)
     }
 }
 

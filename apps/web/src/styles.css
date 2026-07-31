@@ -961,3 +961,592 @@ code, pre { font-family: var(--font-mono); }
 @media (prefers-reduced-motion: reduce) {
   * { scroll-behavior: auto !important; transition: none !important; }
 }
+
+/* The native macOS shell marks the document before first paint. Keep this
+   theme scoped so browser/mobile clients retain the paper-card presentation. */
+html[data-zimlo-shell="macos"][data-theme="dark"] {
+  color-scheme: dark;
+  color: #edf1eb;
+  background: #0b0e0c;
+  --ink: #edf1eb;
+  --muted: #9ba49c;
+  --paper: #141915;
+  --line: rgba(235, 244, 237, .12);
+  --lime: #739f64;
+  --red: #d97970;
+  --orange: #c28a5c;
+  --blue: #7ca4c2;
+  --violet: #a18ab8;
+  --shadow: 0 18px 48px rgba(0, 0, 0, .32);
+}
+
+html[data-zimlo-shell="macos"][data-theme="dark"] body {
+  color: var(--ink);
+  background: radial-gradient(circle at 88% -10%, rgba(115, 159, 100, .09), transparent 32rem), #0b0e0c;
+}
+
+html[data-zimlo-shell="macos"][data-theme="dark"] .app-shell,
+html[data-zimlo-shell="macos"][data-theme="dark"] .detail-backdrop {
+  background: #0b0e0c;
+}
+
+html[data-zimlo-shell="macos"][data-theme="dark"] .app-top-bar,
+html[data-zimlo-shell="macos"][data-theme="dark"] .feed-stage,
+html[data-zimlo-shell="macos"][data-theme="dark"] .bottom-nav {
+  color: var(--ink);
+  background: #0e1210;
+  border-color: rgba(235, 244, 237, .08);
+}
+
+html[data-zimlo-shell="macos"][data-theme="dark"] .app-top-bar-status,
+html[data-zimlo-shell="macos"][data-theme="dark"] .bottom-nav button {
+  color: #8f9991;
+}
+
+html[data-zimlo-shell="macos"][data-theme="dark"] .app-top-bar-status.is-connected i,
+html[data-zimlo-shell="macos"][data-theme="dark"] .integration-state-ready,
+html[data-zimlo-shell="macos"][data-theme="dark"] .agent-presence.is-active {
+  background: var(--lime);
+  box-shadow: none;
+}
+
+html[data-zimlo-shell="macos"][data-theme="dark"] .bottom-nav button.active {
+  color: var(--ink);
+}
+
+html[data-zimlo-shell="macos"][data-theme="dark"] .bottom-nav button.active .bottom-nav-icon,
+html[data-zimlo-shell="macos"][data-theme="dark"] .bottom-nav .new-task-nav.active .bottom-nav-create,
+html[data-zimlo-shell="macos"][data-theme="dark"] .app-top-bar-action,
+html[data-zimlo-shell="macos"][data-theme="dark"] .app-top-bar-retry,
+html[data-zimlo-shell="macos"][data-theme="dark"] .new-task-submit,
+html[data-zimlo-shell="macos"][data-theme="dark"] .feed-reply-row .action-submit:not(:disabled),
+html[data-zimlo-shell="macos"][data-theme="dark"] .feed-review-actions details button,
+html[data-zimlo-shell="macos"][data-theme="dark"] .undo-toast button {
+  color: #0b100c;
+  background: var(--lime);
+  border-color: rgba(7, 12, 8, .45);
+}
+
+html[data-zimlo-shell="macos"][data-theme="dark"] .bottom-nav .bottom-nav-create {
+  color: var(--ink);
+  background: #252c27;
+  box-shadow: inset 0 0 0 1px var(--line);
+}
+
+html[data-zimlo-shell="macos"][data-theme="dark"] .brand-mark,
+html[data-zimlo-shell="macos"][data-theme="dark"] .empty-mark {
+  color: var(--lime);
+  background: #202721;
+  border-color: rgba(115, 159, 100, .36);
+  box-shadow: 3px 3px 0 #090b0a;
+}
+
+html[data-zimlo-shell="macos"][data-theme="dark"] .system-notice {
+  color: #d4dad4;
+  background: rgba(29, 35, 30, .94);
+  border-color: rgba(235, 244, 237, .16);
+  box-shadow: 0 12px 34px rgba(0, 0, 0, .3);
+}
+
+html[data-zimlo-shell="macos"][data-theme="dark"] .system-notice-error,
+html[data-zimlo-shell="macos"][data-theme="dark"] .pair-required-error,
+html[data-zimlo-shell="macos"][data-theme="dark"] .composer-warning,
+html[data-zimlo-shell="macos"][data-theme="dark"] .task-profile-note,
+html[data-zimlo-shell="macos"][data-theme="dark"] .timeline-turn-alert {
+  color: #e3a097;
+  background: rgba(150, 65, 55, .16);
+  border-color: rgba(217, 121, 112, .34);
+}
+
+html[data-zimlo-shell="macos"][data-theme="dark"] .feed-post {
+  color: var(--ink);
+  background: #151a16;
+  border-color: rgba(235, 244, 237, .13);
+  box-shadow: 0 18px 52px rgba(0, 0, 0, .38);
+}
+
+html[data-zimlo-shell="macos"][data-theme="dark"] .template-paper {
+  background: radial-gradient(rgba(222, 234, 224, .035) .7px, transparent .7px), #151a16;
+  background-size: 7px 7px;
+}
+
+html[data-zimlo-shell="macos"][data-theme="dark"] .template-grid {
+  background-color: #141a16;
+  background-image: linear-gradient(rgba(228, 238, 230, .045) 1px, transparent 1px), linear-gradient(90deg, rgba(228, 238, 230, .045) 1px, transparent 1px);
+}
+
+html[data-zimlo-shell="macos"][data-theme="dark"] .template-sticky {
+  background: linear-gradient(135deg, #1d211b, #171b17);
+  box-shadow: 0 18px 48px rgba(0, 0, 0, .35);
+}
+
+html[data-zimlo-shell="macos"][data-theme="dark"] .template-marker {
+  background: #141916;
+  border-color: #333d35;
+  box-shadow: 7px 7px 0 #202821;
+}
+
+html[data-zimlo-shell="macos"][data-theme="dark"] .template-poster {
+  color: var(--ink);
+  background: #202620;
+  border-color: #39433b;
+  box-shadow: 7px 7px 0 #090b0a;
+}
+
+html[data-zimlo-shell="macos"][data-theme="dark"] .template-poster.is-attention {
+  --post-accent: #b85d58;
+  color: #f3efeb;
+  background: #6f3734;
+  border-color: rgba(229, 180, 173, .34);
+  box-shadow: 7px 7px 0 #160c0b;
+}
+
+html[data-zimlo-shell="macos"][data-theme="dark"] .post-attention.is-attention,
+html[data-zimlo-shell="macos"][data-theme="dark"] .post-failure.is-attention {
+  --post-accent: #d2766d;
+}
+
+html[data-zimlo-shell="macos"][data-theme="dark"] .post-takeaway,
+html[data-zimlo-shell="macos"][data-theme="dark"] .post-highlights li,
+html[data-zimlo-shell="macos"][data-theme="dark"] .text-button,
+html[data-zimlo-shell="macos"][data-theme="dark"] .agent-project-link {
+  color: #c6cdc7;
+}
+
+html[data-zimlo-shell="macos"][data-theme="dark"] .feed-reply-row .voice-input,
+html[data-zimlo-shell="macos"][data-theme="dark"] .post-proof,
+html[data-zimlo-shell="macos"][data-theme="dark"] .post-action-prompt,
+html[data-zimlo-shell="macos"][data-theme="dark"] .agent-project-link,
+html[data-zimlo-shell="macos"][data-theme="dark"] .session-meta > span,
+html[data-zimlo-shell="macos"][data-theme="dark"] .provider-codex,
+html[data-zimlo-shell="macos"][data-theme="dark"] .provider-claude,
+html[data-zimlo-shell="macos"][data-theme="dark"] .action-panel,
+html[data-zimlo-shell="macos"][data-theme="dark"] .action-confirm,
+html[data-zimlo-shell="macos"][data-theme="dark"] .history-label {
+  color: #c7cec8;
+  background: rgba(41, 49, 42, .8) !important;
+  border-color: rgba(235, 244, 237, .13);
+}
+
+html[data-zimlo-shell="macos"][data-theme="dark"] .template-poster .session-meta > span,
+html[data-zimlo-shell="macos"][data-theme="dark"] .template-poster .post-proof,
+html[data-zimlo-shell="macos"][data-theme="dark"] .template-poster .post-action-prompt {
+  color: #e2e7e2;
+  background: rgba(24, 29, 25, .88) !important;
+}
+
+html[data-zimlo-shell="macos"][data-theme="dark"] .feed-post input,
+html[data-zimlo-shell="macos"][data-theme="dark"] .feed-post textarea,
+html[data-zimlo-shell="macos"][data-theme="dark"] .feed-reply-row .voice-input-button {
+  color: var(--ink);
+}
+
+html[data-zimlo-shell="macos"][data-theme="dark"] .feed-reply-row .action-submit:disabled,
+html[data-zimlo-shell="macos"][data-theme="dark"] .voice-input-button:disabled {
+  color: #717a72;
+  background: #242a25;
+}
+
+html[data-zimlo-shell="macos"][data-theme="dark"] .action-sync-state,
+html[data-zimlo-shell="macos"][data-theme="dark"] .task-state-active,
+html[data-zimlo-shell="macos"][data-theme="dark"] .task-status-running,
+html[data-zimlo-shell="macos"][data-theme="dark"] .task-status-waiting,
+html[data-zimlo-shell="macos"][data-theme="dark"] .attention-badge.is-ready,
+html[data-zimlo-shell="macos"][data-theme="dark"] .review-state-accepted {
+  color: #a7c49e !important;
+  background: rgba(115, 159, 100, .15) !important;
+  border-color: rgba(115, 159, 100, .3);
+}
+
+html[data-zimlo-shell="macos"][data-theme="dark"] .action-choice-secondary,
+html[data-zimlo-shell="macos"][data-theme="dark"] .secondary-button,
+html[data-zimlo-shell="macos"][data-theme="dark"] .task-search button {
+  color: var(--ink);
+  background: #252c27;
+  border-color: var(--line);
+}
+
+html[data-zimlo-shell="macos"][data-theme="dark"] .primary-button,
+html[data-zimlo-shell="macos"][data-theme="dark"] .feed-review-actions > button,
+html[data-zimlo-shell="macos"][data-theme="dark"] .action-submit:not(:disabled),
+html[data-zimlo-shell="macos"][data-theme="dark"] .action-choice-primary:not(:disabled) {
+  color: #0b100c;
+  background: var(--lime);
+  border-color: rgba(7, 12, 8, .45);
+}
+
+html[data-zimlo-shell="macos"][data-theme="dark"] .voice-input-button:not(:disabled) {
+  color: #d5dcd6;
+  background: #252d27;
+  border-color: rgba(235, 244, 237, .14);
+}
+
+html[data-zimlo-shell="macos"][data-theme="dark"] .task-search,
+html[data-zimlo-shell="macos"][data-theme="dark"] .task-project-select,
+html[data-zimlo-shell="macos"][data-theme="dark"] .directory-search-panel,
+html[data-zimlo-shell="macos"][data-theme="dark"] .task-row-menu > div,
+html[data-zimlo-shell="macos"][data-theme="dark"] .detail-panel,
+html[data-zimlo-shell="macos"][data-theme="dark"] .task-timeline-item,
+html[data-zimlo-shell="macos"][data-theme="dark"] .profile-composer,
+html[data-zimlo-shell="macos"][data-theme="dark"] .new-task-sheet,
+html[data-zimlo-shell="macos"][data-theme="dark"] .new-task-footer,
+html[data-zimlo-shell="macos"][data-theme="dark"] .settings-card,
+html[data-zimlo-shell="macos"][data-theme="dark"] .agent-directory-card,
+html[data-zimlo-shell="macos"][data-theme="dark"] .outbox-sheet,
+html[data-zimlo-shell="macos"][data-theme="dark"] .confirm-dialog,
+html[data-zimlo-shell="macos"][data-theme="dark"] .pair-required {
+  color: var(--ink);
+  background: #141915;
+  border-color: var(--line);
+}
+
+html[data-zimlo-shell="macos"][data-theme="dark"] .task-row {
+  border-color: rgba(235, 244, 237, .1);
+}
+
+html[data-zimlo-shell="macos"][data-theme="dark"] .task-row:hover,
+html[data-zimlo-shell="macos"][data-theme="dark"] .task-row-menu summary:hover,
+html[data-zimlo-shell="macos"][data-theme="dark"] .task-row-menu[open] summary,
+html[data-zimlo-shell="macos"][data-theme="dark"] .task-row-menu button:hover,
+html[data-zimlo-shell="macos"][data-theme="dark"] .task-row-menu button.active {
+  color: var(--ink);
+  background: #202721;
+}
+
+html[data-zimlo-shell="macos"][data-theme="dark"] .task-provider-mark,
+html[data-zimlo-shell="macos"][data-theme="dark"] .task-input-full .formatted-text,
+html[data-zimlo-shell="macos"][data-theme="dark"] .timeline-proof,
+html[data-zimlo-shell="macos"][data-theme="dark"] .timeline-action-prompt,
+html[data-zimlo-shell="macos"][data-theme="dark"] .timeline-state-pill,
+html[data-zimlo-shell="macos"][data-theme="dark"] .task-profile-identity > .task-status,
+html[data-zimlo-shell="macos"][data-theme="dark"] .task-group > header > strong,
+html[data-zimlo-shell="macos"][data-theme="dark"] .task-filters button span {
+  color: #aeb6af;
+  background: #202620;
+  border-color: var(--line);
+}
+
+html[data-zimlo-shell="macos"][data-theme="dark"] .task-state-pill {
+  color: #b4bbb5;
+  background: #242a25;
+}
+
+html[data-zimlo-shell="macos"][data-theme="dark"] .task-state-attention,
+html[data-zimlo-shell="macos"][data-theme="dark"] .task-state-failed,
+html[data-zimlo-shell="macos"][data-theme="dark"] .task-status-failed,
+html[data-zimlo-shell="macos"][data-theme="dark"] .outbox-state-failed {
+  color: #e1a097 !important;
+  background: rgba(180, 75, 65, .16) !important;
+}
+
+html[data-zimlo-shell="macos"][data-theme="dark"] .task-state-completed {
+  color: #c1b1d4;
+  background: rgba(130, 104, 160, .18);
+}
+
+html[data-zimlo-shell="macos"][data-theme="dark"] .timeline-avatar,
+html[data-zimlo-shell="macos"][data-theme="dark"] .timeline-avatar-agent {
+  color: var(--ink);
+  background: #262d27;
+  border-color: var(--line);
+}
+
+html[data-zimlo-shell="macos"][data-theme="dark"] .profile-attention-panel,
+html[data-zimlo-shell="macos"][data-theme="dark"] .task-review-area,
+html[data-zimlo-shell="macos"][data-theme="dark"] .agent-trust-card {
+  color: var(--ink);
+  background: #181d19;
+  border-color: rgba(217, 121, 112, .24);
+}
+
+html[data-zimlo-shell="macos"][data-theme="dark"] .agent-timeline-item.is-user {
+  background: #181d19;
+}
+
+html[data-zimlo-shell="macos"][data-theme="dark"] .profile-composer textarea,
+html[data-zimlo-shell="macos"][data-theme="dark"] .composer-brief .voice-input textarea,
+html[data-zimlo-shell="macos"][data-theme="dark"] .action-panel textarea,
+html[data-zimlo-shell="macos"][data-theme="dark"] .reply-section textarea,
+html[data-zimlo-shell="macos"][data-theme="dark"] .confirm-field input,
+html[data-zimlo-shell="macos"][data-theme="dark"] .action-confirm input,
+html[data-zimlo-shell="macos"][data-theme="dark"] .new-task-sheet .composer-project-search,
+html[data-zimlo-shell="macos"][data-theme="dark"] .composer-agent-list,
+html[data-zimlo-shell="macos"][data-theme="dark"] .agent-profile-editor input,
+html[data-zimlo-shell="macos"][data-theme="dark"] .agent-profile-editor textarea,
+html[data-zimlo-shell="macos"][data-theme="dark"] .agent-profile-editor select,
+html[data-zimlo-shell="macos"][data-theme="dark"] .review-actions textarea,
+html[data-zimlo-shell="macos"][data-theme="dark"] .feed-review-actions textarea {
+  color: var(--ink);
+  background: #0f1310;
+  border-color: rgba(235, 244, 237, .16);
+}
+
+html[data-zimlo-shell="macos"][data-theme="dark"] .new-task-header > button,
+html[data-zimlo-shell="macos"][data-theme="dark"] .outbox-header > button,
+html[data-zimlo-shell="macos"][data-theme="dark"] .composer-brief .voice-input-button {
+  color: #c9d0ca;
+  background: #252b26;
+  border-color: var(--line);
+}
+
+html[data-zimlo-shell="macos"][data-theme="dark"] .composer-assignee,
+html[data-zimlo-shell="macos"][data-theme="dark"] .composer-agent-chooser,
+html[data-zimlo-shell="macos"][data-theme="dark"] .agent-profile-editor,
+html[data-zimlo-shell="macos"][data-theme="dark"] .agent-workspace-card,
+html[data-zimlo-shell="macos"][data-theme="dark"] .runtime-overview > div,
+html[data-zimlo-shell="macos"][data-theme="dark"] .integration-list,
+html[data-zimlo-shell="macos"][data-theme="dark"] .qr-wrap,
+html[data-zimlo-shell="macos"][data-theme="dark"] .empty-setting,
+html[data-zimlo-shell="macos"][data-theme="dark"] .review-actions details {
+  color: var(--ink);
+  background: #1b211c;
+  border-color: var(--line);
+}
+
+html[data-zimlo-shell="macos"][data-theme="dark"] .composer-agent-list > button,
+html[data-zimlo-shell="macos"][data-theme="dark"] .agent-workspace-row {
+  color: var(--ink);
+  background: #121713;
+  border-color: var(--line);
+}
+
+html[data-zimlo-shell="macos"][data-theme="dark"] .composer-agent-list > button.selected,
+html[data-zimlo-shell="macos"][data-theme="dark"] .composer-runtime-choice button.selected,
+html[data-zimlo-shell="macos"][data-theme="dark"] .agent-filters button.active {
+  color: var(--ink);
+  background: #2a322b;
+  border-color: rgba(235, 244, 237, .2);
+  box-shadow: none;
+}
+
+html[data-zimlo-shell="macos"][data-theme="dark"] .agent-filters,
+html[data-zimlo-shell="macos"][data-theme="dark"] .agent-profile-meta > span,
+html[data-zimlo-shell="macos"][data-theme="dark"] .agent-card-title > span,
+html[data-zimlo-shell="macos"][data-theme="dark"] .agent-directory-heading > span {
+  color: #aeb6af;
+  background: #202620;
+  border-color: var(--line);
+}
+
+html[data-zimlo-shell="macos"][data-theme="dark"] .agent-directory-card.is-active {
+  background: #182019;
+  border-color: rgba(115, 159, 100, .34);
+}
+
+html[data-zimlo-shell="macos"][data-theme="dark"] .agent-quick-task,
+html[data-zimlo-shell="macos"][data-theme="dark"] .agent-workspace-row button,
+html[data-zimlo-shell="macos"][data-theme="dark"] .review-links a,
+html[data-zimlo-shell="macos"][data-theme="dark"] .security-note {
+  color: #b1c7a9 !important;
+  background: rgba(115, 159, 100, .14);
+  border-color: rgba(115, 159, 100, .26);
+}
+
+html[data-zimlo-shell="macos"][data-theme="dark"] .agent-presence {
+  border-color: #141915;
+}
+
+html[data-zimlo-shell="macos"][data-theme="dark"] .agent-tone-lime { background: #65714c; }
+html[data-zimlo-shell="macos"][data-theme="dark"] .agent-tone-sand { background: #77664c; }
+html[data-zimlo-shell="macos"][data-theme="dark"] .agent-tone-blue { background: #526c78; }
+html[data-zimlo-shell="macos"][data-theme="dark"] .agent-tone-violet { background: #695a78; }
+html[data-zimlo-shell="macos"][data-theme="dark"] .agent-tone-coral { background: #795750; }
+
+html[data-zimlo-shell="macos"][data-theme="dark"] .switch {
+  background: #343a35;
+  border-color: var(--line);
+}
+
+html[data-zimlo-shell="macos"][data-theme="dark"] .switch span {
+  background: #dbe1dc;
+}
+
+html[data-zimlo-shell="macos"][data-theme="dark"] .switch-on {
+  background: var(--lime);
+  border-color: #55784b;
+}
+
+html[data-zimlo-shell="macos"][data-theme="dark"] .outbox-entry-failed,
+html[data-zimlo-shell="macos"][data-theme="dark"] .review-state-changes_requested {
+  background: rgba(150, 65, 55, .11);
+  border-color: rgba(217, 121, 112, .24);
+}
+
+html[data-zimlo-shell="macos"][data-theme="dark"] .outbox-state-queued {
+  color: #d0bd8f;
+  background: rgba(194, 138, 92, .16);
+}
+
+html[data-zimlo-shell="macos"][data-theme="dark"] .outbox-state-sent {
+  color: #a7c49e;
+  background: rgba(115, 159, 100, .15);
+}
+
+html[data-zimlo-shell="macos"][data-theme="dark"] .attention-badge {
+  color: #dcb18a;
+  background: rgba(194, 138, 92, .15);
+}
+
+html[data-zimlo-shell="macos"][data-theme="dark"] .feed-review-actions summary {
+  color: #bbc3bc;
+  background: #252c27;
+  border-color: var(--line);
+}
+
+html[data-zimlo-shell="macos"][data-theme="dark"] .feed-review-actions details[open] {
+  color: var(--ink);
+  background: rgba(23, 29, 24, .98);
+  border-color: var(--line);
+  box-shadow: 0 18px 44px rgba(0, 0, 0, .38);
+}
+
+html[data-zimlo-shell="macos"][data-theme="dark"] .feed-review-actions details[open] summary {
+  color: #bac2bb;
+  background: #272e28;
+}
+
+html[data-zimlo-shell="macos"][data-theme="dark"] .formatted-text code {
+  background: rgba(235, 244, 237, .09);
+}
+
+html[data-zimlo-shell="macos"][data-theme="dark"] input::placeholder,
+html[data-zimlo-shell="macos"][data-theme="dark"] textarea::placeholder {
+  color: #7c867e;
+}
+
+html[data-zimlo-shell="macos"][data-theme="dark"] .system-notice-close {
+  background: rgba(235, 244, 237, .1);
+}
+
+html[data-zimlo-shell="macos"][data-theme="dark"] .task-input,
+html[data-zimlo-shell="macos"][data-theme="dark"] .timeline-meta strong,
+html[data-zimlo-shell="macos"][data-theme="dark"] .timeline-content h3 {
+  color: var(--ink);
+}
+
+html[data-zimlo-shell="macos"][data-theme="dark"] .task-next-action strong,
+html[data-zimlo-shell="macos"][data-theme="dark"] .task-input-full summary,
+html[data-zimlo-shell="macos"][data-theme="dark"] .timeline-thread > summary,
+html[data-zimlo-shell="macos"][data-theme="dark"] .timeline-proof span,
+html[data-zimlo-shell="macos"][data-theme="dark"] .agent-timeline-footer button,
+html[data-zimlo-shell="macos"][data-theme="dark"] .formatted-text a {
+  color: #9dbb94;
+}
+
+html[data-zimlo-shell="macos"][data-theme="dark"] .timeline-content > .formatted-text,
+html[data-zimlo-shell="macos"][data-theme="dark"] .timeline-thread-panel ul,
+html[data-zimlo-shell="macos"][data-theme="dark"] .timeline-detail-row > .formatted-text,
+html[data-zimlo-shell="macos"][data-theme="dark"] .timeline-command-text,
+html[data-zimlo-shell="macos"][data-theme="dark"] .timeline-turn-summary,
+html[data-zimlo-shell="macos"][data-theme="dark"] .agent-card-copy small,
+html[data-zimlo-shell="macos"][data-theme="dark"] .agent-profile-header > p,
+html[data-zimlo-shell="macos"][data-theme="dark"] .agent-workspace-row code,
+html[data-zimlo-shell="macos"][data-theme="dark"] .agent-timeline-content > .formatted-text,
+html[data-zimlo-shell="macos"][data-theme="dark"] .review-evidence p,
+html[data-zimlo-shell="macos"][data-theme="dark"] .review-impact,
+html[data-zimlo-shell="macos"][data-theme="dark"] .outbox-entry-preview,
+html[data-zimlo-shell="macos"][data-theme="dark"] .confirm-dialog p {
+  color: #b9c1ba;
+}
+
+html[data-zimlo-shell="macos"][data-theme="dark"] .review-evidence summary,
+html[data-zimlo-shell="macos"][data-theme="dark"] .review-history summary,
+html[data-zimlo-shell="macos"][data-theme="dark"] .review-actions summary {
+  color: #aeb8b0;
+}
+
+html[data-zimlo-shell="macos"][data-theme="dark"] .outbox-entry-error,
+html[data-zimlo-shell="macos"][data-theme="dark"] .timeline-command-error,
+html[data-zimlo-shell="macos"][data-theme="dark"] .timeline-detail-row.is-failure {
+  color: #e19a91 !important;
+}
+
+html[data-zimlo-shell="macos"][data-theme="dark"] .task-profile-summary,
+html[data-zimlo-shell="macos"][data-theme="dark"] .task-profile-summary > div + div,
+html[data-zimlo-shell="macos"][data-theme="dark"] .timeline-heading,
+html[data-zimlo-shell="macos"][data-theme="dark"] .timeline-detail-row,
+html[data-zimlo-shell="macos"][data-theme="dark"] .outbox-entry {
+  border-color: rgba(235, 244, 237, .1);
+}
+
+html[data-zimlo-shell="macos"][data-theme="dark"] .timeline-thread-panel {
+  border-color: rgba(115, 159, 100, .34);
+}
+
+html[data-zimlo-shell="macos"][data-theme="dark"] .task-group-attention > header h3 {
+  color: #d5a07a;
+}
+
+html[data-zimlo-shell="macos"][data-theme="dark"] .task-group-active > header h3 {
+  color: #a7c49e;
+}
+
+html[data-zimlo-shell="macos"][data-theme="dark"] .task-group-attention > header > strong {
+  color: #d8aa85;
+  background: rgba(194, 138, 92, .15);
+}
+
+html[data-zimlo-shell="macos"][data-theme="dark"] .task-group-active > header > strong {
+  color: #a7c49e;
+  background: rgba(115, 159, 100, .15);
+}
+
+html[data-zimlo-shell="macos"][data-theme="dark"] .pairing-hint strong {
+  color: #c5cdc6;
+}
+
+html[data-zimlo-shell="macos"][data-theme="dark"] .task-next-step {
+  color: #a4aea6;
+}
+
+html[data-zimlo-shell="macos"][data-theme="dark"] .task-row-attention .task-next-step {
+  color: #d5a07a;
+}
+
+html[data-zimlo-shell="macos"][data-theme="dark"] .timeline-diff summary,
+html[data-zimlo-shell="macos"][data-theme="dark"] .composer-change-label,
+html[data-zimlo-shell="macos"][data-theme="dark"] .composer-selected-check {
+  color: #9dbb94;
+}
+
+html[data-zimlo-shell="macos"][data-theme="dark"] .action-risk-high {
+  color: #e39a91;
+}
+
+html[data-zimlo-shell="macos"][data-theme="dark"] .voice-input.is-listening .voice-input-button,
+html[data-zimlo-shell="macos"][data-theme="dark"] .feed-reply-row .voice-input.is-listening .voice-input-button,
+html[data-zimlo-shell="macos"][data-theme="dark"] .composer-brief .voice-input.is-listening .voice-input-button {
+  color: #0b100c;
+  background: var(--lime);
+  border-color: #55784b;
+}
+
+html[data-zimlo-shell="macos"][data-theme="dark"] .user-avatar-picker button.selected,
+html[data-zimlo-shell="macos"][data-theme="dark"] .agent-avatar-picker button.selected {
+  border-color: #739f64;
+  box-shadow: 0 0 0 2px rgba(115, 159, 100, .35);
+}
+
+html[data-zimlo-shell="macos"][data-theme="dark"] .session-meta > .action-required-badge {
+  color: #e7aaa3;
+  background: rgba(180, 75, 65, .16);
+  border-color: rgba(227, 154, 145, .3);
+}
+
+html[data-zimlo-shell="macos"][data-theme="dark"] .task-filters button.active span {
+  color: #0b100c;
+  background: var(--lime);
+}
+
+html[data-zimlo-shell="macos"][data-theme="dark"] .agent-directory-heading > span.is-working,
+html[data-zimlo-shell="macos"][data-theme="dark"] .is-active .agent-card-title > span {
+  color: #b1c7a9;
+  background: rgba(115, 159, 100, .16);
+  border-color: rgba(115, 159, 100, .28);
+}
+
+html[data-zimlo-shell="macos"][data-theme="dark"] .task-filters button,
+html[data-zimlo-shell="macos"][data-theme="dark"] .composer-runtime-choice button,
+html[data-zimlo-shell="macos"][data-theme="dark"] .agent-filters button span {
+  color: #9ba49c;
+}

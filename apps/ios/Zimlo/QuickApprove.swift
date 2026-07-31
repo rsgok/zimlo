@@ -8,7 +8,16 @@ enum QuickApprove {
     static let allowOnceIdentifier = "ZIMLO_APPROVE_ONCE"
     static let denyIdentifier = "ZIMLO_DENY"
 
-    struct Route: Equatable {
+    struct Payload: Decodable, Sendable {
+        let version: Int?
+        let sessionId: String
+        let actionId: String?
+        let decision: String?
+        let denyDecision: String?
+        let expiresAt: String?
+    }
+
+    struct Route: Equatable, Sendable {
         let sessionId: String
         let actionId: String
         let allowOnceId: String
@@ -16,7 +25,7 @@ enum QuickApprove {
         let expiresAt: Date
     }
 
-    enum Decision {
+    enum Decision: Sendable {
         case allowOnce
         case deny
 
@@ -32,14 +41,25 @@ enum QuickApprove {
     // 从解密后的推送路由 JSON 解析快捷审批路由。非 v1 或关键字段缺失时返回 nil，
     // 调用方回退为普通打开路由（旧推送格式与旧客户端兼容）。
     static func route(from payload: [String: Any]) -> Route? {
-        guard let version = payload["version"] as? Int, version == 1,
-              let sessionId = payload["sessionId"] as? String,
-              let actionId = payload["actionId"] as? String,
-              let allowOnceId = payload["decision"] as? String,
-              let denyId = payload["denyDecision"] as? String,
-              let expiresAtText = payload["expiresAt"] as? String,
+        guard let sessionId = payload["sessionId"] as? String else { return nil }
+        return route(from: Payload(
+            version: payload["version"] as? Int,
+            sessionId: sessionId,
+            actionId: payload["actionId"] as? String,
+            decision: payload["decision"] as? String,
+            denyDecision: payload["denyDecision"] as? String,
+            expiresAt: payload["expiresAt"] as? String
+        ))
+    }
+
+    static func route(from payload: Payload) -> Route? {
+        guard payload.version == 1,
+              let actionId = payload.actionId,
+              let allowOnceId = payload.decision,
+              let denyId = payload.denyDecision,
+              let expiresAtText = payload.expiresAt,
               let expiresAt = parseISO8601(expiresAtText) else { return nil }
-        return Route(sessionId: sessionId, actionId: actionId,
+        return Route(sessionId: payload.sessionId, actionId: actionId,
                      allowOnceId: allowOnceId, denyId: denyId, expiresAt: expiresAt)
     }
 
