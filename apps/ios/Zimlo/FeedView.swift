@@ -20,15 +20,15 @@ struct NativeFeedView: View {
                 LazyVStack(spacing: 0) {
                     ForEach(current) { entry in
                         FeedPage(model: model, entry: entry, position: position(entry), total: current.count)
-                            .frame(height: geometry.size.height)
+                            .frame(width: geometry.size.width, height: geometry.size.height)
                             .id(entry.id)
                     }
                     CaughtUpPage(model: model, hasHistory: !history.isEmpty)
-                        .frame(height: geometry.size.height)
+                        .frame(width: geometry.size.width, height: geometry.size.height)
                         .id("caught-up")
                     ForEach(history) { entry in
                         FeedPage(model: model, entry: entry, position: 0, total: current.count, historical: true)
-                            .frame(height: geometry.size.height)
+                            .frame(width: geometry.size.width, height: geometry.size.height)
                             .id(entry.id)
                     }
                 }
@@ -349,9 +349,15 @@ private struct CaughtUpPage: View {
             Text(model.feedEntries.isEmpty ? "Feed 已经清空" : "当前更新已经看完")
                 .font(ZFont.title).lineSpacing(0).minimumScaleFactor(0.8)
                 .padding(.top, 18)
+            Text("重要更新、待审批和需要回复的任务会出现在这里。")
+                .font(ZFont.footnote)
+                .foregroundStyle(ZColor.muted)
+                .multilineTextAlignment(.center)
+                .frame(maxWidth: 270)
+                .padding(.top, 9)
             Button("＋ 新任务") { model.showingNewTask = true }.buttonStyle(ActionButtonStyle(primary: true))
-                .frame(maxWidth: 210)
-                .padding(.top, 24)
+                .frame(maxWidth: 240)
+                .padding(.top, 22)
             if hasHistory {
                 Text("继续向下浏览历史 ↓")
                     .font(ZFont.footnote)
@@ -360,10 +366,10 @@ private struct CaughtUpPage: View {
             }
             Spacer()
         }
-        .padding(28).foregroundStyle(ZColor.ink)
+        .padding(28)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .foregroundStyle(ZColor.ink)
         .background(ZColor.paper)
-        .clipShape(RoundedRectangle(cornerRadius: ZRadius.card, style: .continuous))
-        .padding(.horizontal, 10).padding(.vertical, 6)
     }
 }
 

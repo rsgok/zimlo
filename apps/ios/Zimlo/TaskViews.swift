@@ -64,8 +64,7 @@ struct TaskDetailView: View {
             .background(ZColor.paper)
             .overlay(alignment: .top) { Rectangle().fill(ZColor.line).frame(height: 1) }
         }
-        .clipShape(RoundedRectangle(cornerRadius: ZRadius.sheet, style: .continuous))
-        .padding(.horizontal, 8).padding(.bottom, 5)
+        .zPageSurface()
         .onChange(of: followUp) { _, value in
             UserDefaults.standard.set(value, forKey: "zimlo.task-draft.\(session.id)")
         }

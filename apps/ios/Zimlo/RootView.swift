@@ -20,7 +20,9 @@ struct RootView: View {
                         AgentDetailView(model: model, project: project)
                     } else {
                         switch model.selectedTab {
-                        case .feed: NativeFeedView(model: model)
+                        case .feed:
+                            NativeFeedView(model: model)
+                                .ignoresSafeArea(.container, edges: .horizontal)
                         case .tasks: TasksDirectoryView(model: model)
                         case .agents: AgentsDirectoryView(model: model)
                         case .settings: SettingsView(model: model)
@@ -53,6 +55,8 @@ struct RootView: View {
                     statusBanners
                         .padding(.horizontal, 14)
                 }
+                .frame(maxWidth: .infinity)
+                .background(ZColor.ink)
             }
             .overlay(alignment: .bottom) {
                 if let notice = model.notice {
@@ -138,7 +142,7 @@ struct RootView: View {
             .clipShape(Capsule())
         }
         if let error = model.bridge.error {
-            Text(error)
+            Text(userFacingBridgeError(error))
                 .font(ZFont.caption)
                 .foregroundStyle(.white)
                 .padding(.horizontal, 14).padding(.vertical, 9)
@@ -155,6 +159,17 @@ struct RootView: View {
             return "当前离线 · 数据更新于 \(relative(savedAt))"
         }
         return "当前离线，操作已保存在手机"
+    }
+
+    private func userFacingBridgeError(_ error: String) -> String {
+        let normalized = error.lowercased()
+        if normalized.contains("could not connect") || normalized.contains("connection refused") {
+            return "无法连接 Mac，请确认 Bridge 正在运行"
+        }
+        if normalized.contains("timed out") || normalized.contains("timeout") {
+            return "连接 Mac 超时，点按上方状态重试"
+        }
+        return error
     }
 
     private var isShowingDetail: Bool { model.selectedSession != nil || model.selectedProject != nil }

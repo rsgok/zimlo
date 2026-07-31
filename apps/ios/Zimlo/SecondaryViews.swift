@@ -31,18 +31,17 @@ struct TasksDirectoryView: View {
     var body: some View {
         VStack(spacing: 0) {
             VStack(alignment: .leading, spacing: 8) {
-                HStack(spacing: 8) {
-                    Picker("筛选", selection: $filter) {
-                        ForEach(filters, id: \.self) { Text($0).tag($0) }
-                    }.pickerStyle(.segmented)
-                    Button { withAnimation(.easeInOut(duration: 0.18)) { showingSearch.toggle() } } label: {
-                        Image(systemName: showingSearch ? "xmark" : "magnifyingglass")
-                            .frame(width: 34, height: 34)
-                    }
-                }
+                ZFilterBar(
+                    options: filters,
+                    selection: $filter,
+                    searchExpanded: showingSearch,
+                    toggleSearch: { withAnimation(.easeInOut(duration: 0.18)) { showingSearch.toggle() } }
+                )
                 if showingSearch {
                     TextField("搜索任务或项目", text: $search)
-                        .textFieldStyle(.roundedBorder)
+                        .padding(.horizontal, 12).frame(height: 42)
+                        .background(ZColor.raised)
+                        .clipShape(RoundedRectangle(cornerRadius: ZRadius.control, style: .continuous))
                         .transition(.move(edge: .top).combined(with: .opacity))
                 }
             }
@@ -53,6 +52,9 @@ struct TasksDirectoryView: View {
                     Section {
                         ForEach(section.sessions) { session in
                             taskRow(session)
+                                .listRowInsets(EdgeInsets(top: 5, leading: 14, bottom: 5, trailing: 14))
+                                .listRowSeparator(.hidden)
+                                .listRowBackground(ZColor.paper)
                                 .swipeActions(edge: .leading, allowsFullSwipe: false) {
                                     let pinned = model.snapshot.taskPreferences.first { $0.sessionId == session.id }?.pinnedAt != nil
                                     Button { model.setPinned(sessionId: session.id, pinned: !pinned) } label: {
@@ -84,14 +86,24 @@ struct TasksDirectoryView: View {
             }
             .listStyle(.plain)
             .scrollContentBackground(.hidden)
-            .listRowSeparator(.hidden)
-            .listRowBackground(Color.clear)
-            .listRowInsets(EdgeInsets(top: 0, leading: 14, bottom: 0, trailing: 14))
             .scrollIndicators(.hidden)
+            .background(ZColor.paper)
+            .overlay {
+                if taskSections.isEmpty {
+                    VStack(spacing: 10) {
+                        Image(systemName: filter == "已归档" ? "archivebox" : "checklist")
+                            .font(ZFont.title2).foregroundStyle(ZColor.sage)
+                        Text(filter == "已归档" ? "还没有归档任务" : "没有符合条件的任务")
+                            .font(ZFont.headline)
+                        Text(showingSearch || !search.isEmpty ? "换个关键词或筛选条件试试。" : "新任务创建后会按下一步动作自动归类。")
+                            .font(ZFont.footnote).foregroundStyle(ZColor.muted)
+                    }
+                    .multilineTextAlignment(.center)
+                    .padding(24)
+                }
+            }
         }
-        .foregroundStyle(ZColor.ink).background(ZColor.paper)
-        .clipShape(RoundedRectangle(cornerRadius: ZRadius.sheet, style: .continuous))
-        .padding(.horizontal, 8).padding(.bottom, 5)
+        .zPageSurface()
     }
 
     private func taskRow(_ session: AgentSession) -> some View {
@@ -122,8 +134,11 @@ struct TasksDirectoryView: View {
                     .background(statusColor(state).opacity(0.11))
                     .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
             }
-            .foregroundStyle(ZColor.ink).padding(.vertical, 12)
-            .overlay(alignment: .top) { Rectangle().fill(ZColor.line).frame(height: 1) }
+            .foregroundStyle(ZColor.ink)
+            .padding(14)
+            .background(ZColor.raised)
+            .overlay(RoundedRectangle(cornerRadius: ZRadius.inner, style: .continuous).stroke(ZColor.line))
+            .clipShape(RoundedRectangle(cornerRadius: ZRadius.inner, style: .continuous))
         }
     }
 
@@ -258,17 +273,17 @@ struct AgentsDirectoryView: View {
     var body: some View {
         VStack(spacing: 0) {
             VStack(alignment: .leading, spacing: 8) {
-                HStack(spacing: 8) {
-                    Picker("筛选", selection: $filter) {
-                        ForEach(filters, id: \.self) { Text($0).tag($0) }
-                    }.pickerStyle(.segmented)
-                    Button { withAnimation(.easeInOut(duration: 0.18)) { showingSearch.toggle() } } label: {
-                        Image(systemName: showingSearch ? "xmark" : "magnifyingglass")
-                            .frame(width: 34, height: 34)
-                    }
-                }
+                ZFilterBar(
+                    options: filters,
+                    selection: $filter,
+                    searchExpanded: showingSearch,
+                    toggleSearch: { withAnimation(.easeInOut(duration: 0.18)) { showingSearch.toggle() } }
+                )
                 if showingSearch {
-                    TextField("搜索 Agent 或项目", text: $search).textFieldStyle(.roundedBorder)
+                    TextField("搜索 Agent 或项目", text: $search)
+                        .padding(.horizontal, 12).frame(height: 42)
+                        .background(ZColor.raised)
+                        .clipShape(RoundedRectangle(cornerRadius: ZRadius.control, style: .continuous))
                         .transition(.move(edge: .top).combined(with: .opacity))
                 }
             }
@@ -333,15 +348,14 @@ struct AgentsDirectoryView: View {
                                 .background(ZColor.acid.opacity(0.14))
                             }
                         }
-                        .background(Color.white.opacity(0.5))
+                        .background(ZColor.raised)
+                        .overlay(RoundedRectangle(cornerRadius: ZRadius.inner, style: .continuous).stroke(ZColor.line))
                         .clipShape(RoundedRectangle(cornerRadius: ZRadius.inner, style: .continuous))
                     }
                 }.padding(12)
             }.scrollIndicators(.hidden)
         }
-        .background(ZColor.paper)
-        .clipShape(RoundedRectangle(cornerRadius: ZRadius.sheet, style: .continuous))
-        .padding(.horizontal, 8).padding(.bottom, 5)
+        .zPageSurface()
     }
 
     private var managedSessions: [AgentSession] { collapsedDirectorySessions(model.snapshot.sessions) }
@@ -470,9 +484,7 @@ struct AgentDetailView: View {
                 }
             }.scrollIndicators(.hidden)
         }
-        .foregroundStyle(ZColor.ink).background(ZColor.paper)
-        .clipShape(RoundedRectangle(cornerRadius: ZRadius.sheet, style: .continuous))
-        .padding(.horizontal, 8).padding(.bottom, 5)
+        .zPageSurface()
         .sheet(isPresented: $editing) {
             AgentEditorView(model: model, project: project)
                 .presentationDetents([.large])
@@ -710,7 +722,8 @@ struct SettingsView: View {
                     row("审批权限", model.snapshot.lanApprovalsEnabled ? "已由 Mac 授权" : "仅查看与回复")
                 }
                 DisclosureGroup("高级诊断") {
-                    section("运行边界") {
+                    VStack(alignment: .leading, spacing: 0) {
+                        Text("运行边界").font(ZFont.caption2).foregroundStyle(ZColor.muted).padding(.top, 12).padding(.bottom, 8)
                         row("可信项目", "\(model.snapshot.workspaces.count)")
                         HStack {
                             ProviderBadge(provider: .codex, iconOnly: true)
@@ -723,6 +736,10 @@ struct SettingsView: View {
                         row("加密连接", "Secure WS · v2")
                     }
                 }
+                .padding(14)
+                .background(ZColor.raised)
+                .overlay(RoundedRectangle(cornerRadius: ZRadius.inner, style: .continuous).stroke(ZColor.line))
+                .clipShape(RoundedRectangle(cornerRadius: ZRadius.inner, style: .continuous))
                 Button("解除当前设备配对", role: .destructive) { showingForgetConfirmation = true }
                     .font(ZFont.subheadline.weight(.bold))
                     .frame(maxWidth: .infinity).padding(.vertical, 13)
@@ -735,9 +752,7 @@ struct SettingsView: View {
                     }
             }.padding(18)
         }
-        .foregroundStyle(ZColor.ink).background(ZColor.paper)
-        .clipShape(RoundedRectangle(cornerRadius: ZRadius.sheet, style: .continuous))
-        .padding(.horizontal, 8).padding(.bottom, 5)
+        .zPageSurface()
     }
 
     private func section<Content: View>(_ title: String, @ViewBuilder content: () -> Content) -> some View {
@@ -745,6 +760,10 @@ struct SettingsView: View {
             Text(title.uppercased()).font(ZFont.caption2).foregroundStyle(ZColor.muted).padding(.bottom, 8)
             content()
         }
+        .padding(14)
+        .background(ZColor.raised)
+        .overlay(RoundedRectangle(cornerRadius: ZRadius.inner, style: .continuous).stroke(ZColor.line))
+        .clipShape(RoundedRectangle(cornerRadius: ZRadius.inner, style: .continuous))
     }
     private func row(_ label: String, _ value: String) -> some View {
         HStack { Text(label).fontWeight(.semibold); Spacer(); Text(value).foregroundStyle(ZColor.muted) }

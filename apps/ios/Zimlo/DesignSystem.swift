@@ -9,6 +9,8 @@ enum ZColor {
     static let sage = Color(red: 0.39, green: 0.64, blue: 0.31)
     static let muted = Color(red: 0.42, green: 0.42, blue: 0.38)
     static let line = Color.black.opacity(0.12)
+    static let raised = Color.white.opacity(0.58)
+    static let control = Color.black.opacity(0.07)
 }
 
 // 语义字体：映射系统 text style，天然支持 Dynamic Type。正文与标题一律从这里取，
@@ -208,9 +210,65 @@ struct AppTopBar: View {
     }
 }
 
+/// 顶层目录页共享的筛选器。系统 segmented control 在 App 强制深色模式时会
+/// 把浅色页面上的文字渲染成白色，改为语义色后可保证所有页面的对比度一致。
+struct ZFilterBar: View {
+    let options: [String]
+    @Binding var selection: String
+    let searchExpanded: Bool
+    let toggleSearch: () -> Void
+
+    var body: some View {
+        HStack(spacing: 8) {
+            HStack(spacing: 3) {
+                ForEach(options, id: \.self) { option in
+                    Button {
+                        selection = option
+                    } label: {
+                        Text(option)
+                            .font(ZFont.caption2)
+                            .lineLimit(1)
+                            .minimumScaleFactor(0.75)
+                            .frame(maxWidth: .infinity)
+                            .padding(.vertical, 9)
+                            .foregroundStyle(ZColor.ink.opacity(selection == option ? 1 : 0.58))
+                            .background(selection == option ? ZColor.acid : Color.clear)
+                            .clipShape(RoundedRectangle(cornerRadius: ZRadius.small, style: .continuous))
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityAddTraits(selection == option ? .isSelected : [])
+                }
+            }
+            .padding(3)
+            .background(ZColor.control)
+            .clipShape(RoundedRectangle(cornerRadius: ZRadius.control, style: .continuous))
+
+            Button(action: toggleSearch) {
+                Image(systemName: searchExpanded ? "xmark" : "magnifyingglass")
+                    .font(ZFont.body.weight(.semibold))
+                    .foregroundStyle(ZColor.ink)
+                    .frame(width: 42, height: 42)
+                    .background(ZColor.control)
+                    .clipShape(RoundedRectangle(cornerRadius: ZRadius.control, style: .continuous))
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel(searchExpanded ? "关闭搜索" : "搜索")
+        }
+    }
+}
+
 extension View {
     func zCard() -> some View {
         self.background(ZColor.paper)
             .clipShape(RoundedRectangle(cornerRadius: ZRadius.card, style: .continuous))
+    }
+
+    /// 页面本身使用满宽 paper；圆角只留给内容卡片。避免顶层页面重复套一张
+    /// “悬浮纸片”，在窄屏和 Dynamic Type 下损失可用宽度。
+    func zPageSurface() -> some View {
+        self
+            .foregroundStyle(ZColor.ink)
+            .background(ZColor.paper)
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 }
