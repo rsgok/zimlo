@@ -211,7 +211,7 @@ export class CloudService {
 
   private async registerInstallation(): Promise<boolean> {
     if (!this.baseURL) return false;
-    await this.refreshHealth();
+    if (!await this.refreshHealth()) return false;
     this.identity = this.loadOrCreateIdentity();
     const timestamp = new Date().toISOString();
     const message = `${timestamp}.POST./v1/installations.${this.identity.installationId}.${this.identity.publicKey}`;

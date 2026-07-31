@@ -251,6 +251,23 @@ private struct PhoneStep: View {
         (service.status?.pairedDeviceCount ?? 0) > 0
     }
 
+    private var usesLocalPairing: Bool {
+        service.pairing?.transport == .lan
+    }
+
+    private var pairingInstructions: String {
+        if isPaired {
+            if usesLocalPairing {
+                return "已通过本地网络安全配对。当前请保持 iPhone 与 Mac 连接同一 Wi-Fi。"
+            }
+            return "这台 iPhone 已安全配对。离开当前 Wi-Fi 后，Zimlo 会自动切换到加密云连接。"
+        }
+        if usesLocalPairing {
+            return "云端暂不可用，已切换到本地配对。请让 iPhone 与 Mac 连接同一 Wi-Fi 后扫码。"
+        }
+        return "打开 iPhone 上的 Zimlo 扫描二维码。手机和 Mac 不需要连接同一个 Wi-Fi。"
+    }
+
     var body: some View {
         StepShell {
             HStack(alignment: .top, spacing: 24) {
@@ -259,9 +276,7 @@ private struct PhoneStep: View {
                         .font(.system(size: 29, weight: .black, design: .rounded))
                         .lineLimit(1)
                         .minimumScaleFactor(0.82)
-                    Text(isPaired
-                         ? "这台 iPhone 已安全配对。离开当前 Wi-Fi 后，Zimlo 会自动切换到加密云连接。"
-                         : "打开 iPhone 上的 Zimlo 扫描二维码。手机和 Mac 不需要连接同一个 Wi-Fi。")
+                    Text(pairingInstructions)
                         .font(.system(size: 14, weight: .medium))
                         .foregroundStyle(ZColor.muted)
                         .lineSpacing(4)
@@ -273,7 +288,7 @@ private struct PhoneStep: View {
                         Label("二维码 2 分钟后自动失效", systemImage: "timer")
                             .font(.system(size: 12, weight: .bold))
                             .foregroundStyle(ZColor.muted)
-                        Label("云端只转发加密连接", systemImage: "lock.shield")
+                        Label(usesLocalPairing ? "本地加密直连" : "云端只转发加密连接", systemImage: "lock.shield")
                             .font(.system(size: 12, weight: .bold))
                             .foregroundStyle(ZColor.muted)
                     }
@@ -293,10 +308,15 @@ private struct PhoneStep: View {
                 model.onboarding.step = 3
             }
         }
+        .task(id: service.state) {
+            guard PairingAutostartPolicy.shouldCreate(
+                serviceState: service.state,
+                hasPairing: service.pairing != nil,
+                isPaired: isPaired
+            ) else { return }
+            await service.createPairing()
+        }
         .task {
-            if service.pairing == nil {
-                await service.createPairing()
-            }
             while !Task.isCancelled && !isPaired {
                 try? await Task.sleep(for: .seconds(3))
                 guard !Task.isCancelled else { return }
@@ -717,8 +737,8 @@ private struct PairingCard: View {
                             .padding(16)
                             .accessibilityLabel("用于连接 iPhone 的 Zimlo 二维码")
                     }
-                } else if service.pairingBusy {
-                    ProgressView("正在生成二维码")
+                } else if service.pairingBusy || service.state == .starting {
+                    ProgressView(service.pairingBusy ? "正在生成二维码" : "正在准备后台服务")
                         .controlSize(.large)
                         .tint(ZColor.acid)
                 } else {
@@ -868,13 +888,11 @@ private struct ZimloMark: View {
     let size: CGFloat
 
     var body: some View {
-        ZStack {
-            Circle().fill(ZColor.surfaceRaised)
-            Circle().stroke(ZColor.acid.opacity(0.74), lineWidth: 2).padding(4)
-            Image(systemName: "sparkles")
-                .font(.system(size: size * 0.34, weight: .black))
-                .foregroundStyle(ZColor.acid)
-        }
+        Image(nsImage: NSApplication.shared.applicationIconImage)
+            .resizable()
+            .interpolation(.high)
+            .antialiased(true)
+            .scaledToFit()
         .frame(width: size, height: size)
         .accessibilityHidden(true)
     }

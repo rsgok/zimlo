@@ -56,4 +56,20 @@ describe("CloudService health capabilities", () => {
     expect(cloud.pushNotificationsAvailable).toBe(false);
     store.close();
   });
+
+  it("does not attempt registration after the cloud health check fails", async () => {
+    process.env.ZIMLO_CLOUD_URL = "https://cloud.example";
+    delete process.env.ZIMLO_CLOUD_DISABLED;
+    const fetchMock = vi.fn(async () => {
+      throw new Error("offline");
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    const store = new ZimloStore(":memory:");
+    const cloud = new CloudService(store);
+
+    await expect(cloud.ensureReady()).resolves.toBe(false);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(fetchMock.mock.calls[0]?.[0]).toBe("https://cloud.example/healthz");
+    store.close();
+  });
 });

@@ -65,6 +65,89 @@ final class HealthCheckTests: XCTestCase {
     }
 }
 
+final class DesktopBridgeLaunchTests: XCTestCase {
+    func testDesktopBridgeEnablesTrustedLANFallback() {
+        let entrypoint = URL(fileURLWithPath: "/Applications/Zimlo.app/Contents/Resources/runtime/cli/dist/index.js")
+        XCTAssertEqual(
+            DesktopBridgeLaunch.arguments(entrypoint: entrypoint),
+            ["--use-env-proxy", entrypoint.path, "start", "--lan"]
+        )
+    }
+}
+
+final class PairingAutostartPolicyTests: XCTestCase {
+    func testCreatesOnlyAfterServiceBecomesReady() {
+        XCTAssertFalse(PairingAutostartPolicy.shouldCreate(
+            serviceState: .starting,
+            hasPairing: false,
+            isPaired: false
+        ))
+        XCTAssertTrue(PairingAutostartPolicy.shouldCreate(
+            serviceState: .ready,
+            hasPairing: false,
+            isPaired: false
+        ))
+    }
+
+    func testDoesNotReplaceExistingOrCompletedPairing() {
+        XCTAssertFalse(PairingAutostartPolicy.shouldCreate(
+            serviceState: .ready,
+            hasPairing: true,
+            isPaired: false
+        ))
+        XCTAssertFalse(PairingAutostartPolicy.shouldCreate(
+            serviceState: .ready,
+            hasPairing: false,
+            isPaired: true
+        ))
+    }
+}
+
+final class SystemProxyEnvironmentTests: XCTestCase {
+    func testMapsSystemHTTPProxyAndKeepsBridgeTrafficLocal() {
+        let environment = SystemProxyEnvironment.environment(from: [
+            "HTTPEnable": 1,
+            "HTTPProxy": "127.0.0.1",
+            "HTTPPort": 7897,
+            "HTTPSEnable": 1,
+            "HTTPSProxy": "127.0.0.1",
+            "HTTPSPort": 7897,
+            "ExceptionsList": ["192.168.0.0/16", "localhost", "<local>"],
+        ])
+
+        XCTAssertEqual(environment["HTTP_PROXY"], "http://127.0.0.1:7897")
+        XCTAssertEqual(environment["HTTPS_PROXY"], "http://127.0.0.1:7897")
+        XCTAssertEqual(environment["NO_PROXY"], "192.168.0.0/16,localhost,127.0.0.1,::1")
+    }
+
+    func testIgnoresDisabledOrMalformedProxySettings() {
+        let environment = SystemProxyEnvironment.environment(from: [
+            "HTTPEnable": 0,
+            "HTTPProxy": "127.0.0.1",
+            "HTTPPort": 7897,
+            "HTTPSEnable": 1,
+            "HTTPSProxy": "",
+            "HTTPSPort": 0,
+        ])
+
+        XCTAssertNil(environment["HTTP_PROXY"])
+        XCTAssertNil(environment["HTTPS_PROXY"])
+        XCTAssertEqual(environment["NO_PROXY"], "127.0.0.1,localhost,::1")
+    }
+}
+
+final class PairingPayloadTests: XCTestCase {
+    func testDecodesLANTransport() throws {
+        let payload = try JSONDecoder().decode(PairingPayload.self, from: Data(#"{"pairUrl":"http://192.168.1.8:4747/#pair","qrDataUrl":"data:image/png;base64,AA==","expiresAt":"2026-08-01T00:00:00.000Z","transport":"lan"}"#.utf8))
+        XCTAssertEqual(payload.transport, .lan)
+    }
+
+    func testOlderBridgePayloadRemainsCompatible() throws {
+        let payload = try JSONDecoder().decode(PairingPayload.self, from: Data(#"{"pairUrl":"https://cloud.example/#pair","qrDataUrl":"data:image/png;base64,AA==","expiresAt":"2026-08-01T00:00:00.000Z"}"#.utf8))
+        XCTAssertNil(payload.transport)
+    }
+}
+
 final class ServiceDescriptorTests: XCTestCase {
     private let fallback = "/Users/x/Library/Logs/Zimlo/service.log"
 

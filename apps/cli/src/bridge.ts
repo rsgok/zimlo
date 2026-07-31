@@ -14,6 +14,7 @@ import { DeviceManager, type PairingResult } from "./device-manager.js";
 import { applyFeedDismissSet } from "./feed-dismiss.js";
 import { inspectIntegrationStatuses, installCliIntegrations } from "./integration-status.js";
 import { isLoopbackAddress, isTrustedLanAddress, preferredLanAddress } from "./network.js";
+import { selectPairingEndpoint, type PairingTransport } from "./pairing-endpoint.js";
 import { RuntimeHub } from "./runtime.js";
 import { SecureSocket } from "./secure-socket.js";
 import { TaskCommandService } from "./task-command-service.js";
@@ -609,18 +610,21 @@ export class BridgeServer {
     pairUrl: string;
     qrDataUrl: string;
     expiresAt: string;
+    transport: PairingTransport;
   }> {
     const cloudReady = this.cloud.enabled && await this.cloud.ensureReady();
-    const host = preferredLanAddress();
-    const localBaseURL = this.options.lan && host
-      ? `http://${host}:${this.options.port}`
-      : null;
-    const baseURL = cloudReady ? this.cloud.relayURL : localBaseURL;
-    if (!baseURL) {
+    const endpoint = selectPairingEndpoint({
+      cloudReady,
+      cloudURL: this.cloud.relayURL,
+      lanEnabled: this.options.lan,
+      lanHost: preferredLanAddress(),
+      port: this.options.port,
+    });
+    if (!endpoint) {
       throw new Error("云端暂时无法连接，请检查网络后重试。");
     }
-    const result = this.devices.createPairing(baseURL);
-    if (cloudReady) {
+    const result = this.devices.createPairing(endpoint.baseURL);
+    if (endpoint.transport === "cloud") {
       const registered = await this.cloud.registerPairing(
         result.pairingId,
         result.relayToken,
@@ -633,6 +637,7 @@ export class BridgeServer {
       pairUrl: result.pairUrl,
       qrDataUrl: await QRCode.toDataURL(result.pairUrl, { margin: 1, width: 320 }),
       expiresAt: result.expiresAt,
+      transport: endpoint.transport,
     };
   }
 

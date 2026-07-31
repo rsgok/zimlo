@@ -62,10 +62,16 @@ struct LocalServiceStatus: Codable {
     }
 }
 
+enum PairingTransport: String, Codable {
+    case cloud
+    case lan
+}
+
 struct PairingPayload: Codable {
     let pairUrl: String
     let qrDataUrl: String
     let expiresAt: String
+    let transport: PairingTransport?
 
     var expiresAtDate: Date? {
         if let date = try? Date(expiresAt, strategy: Date.ISO8601FormatStyle(includingFractionalSeconds: true)) {
@@ -654,16 +660,23 @@ final class ServiceController: ObservableObject {
 
         let process = Process()
         process.executableURL = runtime.node
-        process.arguments = [runtime.entrypoint.path, "start"]
+        process.arguments = DesktopBridgeLaunch.arguments(entrypoint: runtime.entrypoint)
         process.currentDirectoryURL = runtime.cliDirectory
         process.qualityOfService = .userInitiated
         process.standardInput = FileHandle.nullDevice
         process.standardOutput = log
         process.standardError = log
-        process.environment = ProcessInfo.processInfo.environment.merging([
+        var environment = ProcessInfo.processInfo.environment
+        for (key, value) in SystemProxyEnvironment.current() {
+            if environment[key] == nil && environment[key.lowercased()] == nil {
+                environment[key] = value
+            }
+        }
+        environment.merge([
             "ZIMLO_DESKTOP": "1",
             "ZIMLO_STARTUP_TRACE": "1",
         ]) { _, bundled in bundled }
+        process.environment = environment
         process.terminationHandler = { [weak self] process in
             Task { @MainActor in
                 guard let self else { return }

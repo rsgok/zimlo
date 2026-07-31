@@ -120,9 +120,6 @@ program.command("start")
         await hooks.start();
         traceStartup("hooks-started");
         taskCommands.start();
-        const discoveryStarted = Date.now();
-        await discovery.start();
-        traceStartup("discovery-started");
         await cloudHealth;
         traceStartup("cloud-health-checked");
         traceStartup("start-bridge");
@@ -150,6 +147,12 @@ program.command("start")
         });
         const cloudStarted = await cloudRelay.start();
         traceStartup("cloud-relay-started");
+        // Session discovery can take tens of seconds with a large local
+        // history. Keep the HTTP/WS Bridge available while it ingests so the
+        // desktop can render and create a pairing QR immediately.
+        const discoveryStarted = Date.now();
+        await discovery.start();
+        traceStartup("discovery-started");
         console.log(`Zimlo 已启动：${urls.localUrl}`);
         if (urls.lanUrl) console.log(`可信局域网：${urls.lanUrl}`);
         console.log(cloudStarted ? `Cloudflare 远程同步：${cloud.relayURL}` : "Cloudflare 远程同步：未配置");

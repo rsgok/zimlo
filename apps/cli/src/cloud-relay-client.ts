@@ -1,5 +1,7 @@
 import WebSocket, { type RawData } from "ws";
+import { HttpsProxyAgent } from "https-proxy-agent";
 import type { CloudService } from "./cloud-service.js";
+import { proxyURLFor } from "./proxy-environment.js";
 
 interface RelayFrame {
   type: "open" | "data" | "close";
@@ -49,7 +51,11 @@ export class CloudRelayClient {
     if (!baseURL || !headers || this.stopped) return this.scheduleReconnect();
     const url = new URL("/v1/sync/mac", baseURL);
     url.protocol = url.protocol === "https:" ? "wss:" : "ws:";
-    const relay = new WebSocket(url, { headers });
+    const proxyURL = proxyURLFor(url);
+    const relay = new WebSocket(url, {
+      headers,
+      ...(proxyURL ? { agent: new HttpsProxyAgent(proxyURL) } : {}),
+    });
     this.relay = relay;
     relay.on("open", () => {
       this.retryMs = 1_000;

@@ -20,6 +20,26 @@ enum HealthCheck {
     }
 }
 
+/// The desktop-owned Bridge must be reachable from an iPhone when cloud
+/// pairing is unavailable. The Bridge still restricts local admin routes to
+/// loopback and accepts phone traffic only from trusted private networks.
+enum DesktopBridgeLaunch {
+    static func arguments(entrypoint: URL) -> [String] {
+        ["--use-env-proxy", entrypoint.path, "start", "--lan"]
+    }
+}
+
+enum PairingAutostartPolicy {
+    static func shouldCreate(
+        serviceState: ServiceState,
+        hasPairing: Bool,
+        isPaired: Bool
+    ) -> Bool {
+        guard !hasPairing, !isPaired else { return false }
+        return serviceState == .ready
+    }
+}
+
 /// ~/.zimlo/run/service.json：运行中 Bridge 写下的服务描述符。
 struct ServiceDescriptor: Decodable, Equatable {
     let pid: Int
