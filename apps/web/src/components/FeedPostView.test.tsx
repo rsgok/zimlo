@@ -1,6 +1,6 @@
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it, vi } from "vitest";
-import { EMPTY_CAPABILITIES, type FeedPost, type Session } from "@zimlo/protocol";
+import { EMPTY_CAPABILITIES, type FeedPost, type Material, type Session, type TaskReview } from "@zimlo/protocol";
 import { FeedPostView } from "./FeedPostView";
 
 const session: Session = {
@@ -36,5 +36,41 @@ describe("FeedPostView", () => {
 
     expect(markup).toContain("打开任务查看完整结果");
     expect(markup).not.toContain("左滑");
+  });
+
+  it("opens documents and video through explicit in-app preview controls", () => {
+    const document: Material = {
+      id: "material_0123456789abcdef", kind: "pdf", name: "brief.pdf", mimeType: "application/pdf",
+      sizeBytes: 12_000, sha256: "a".repeat(64), origin: "agent", status: "ready", createdAt: "2026-08-01T00:00:00.000Z",
+    };
+    const video: Material = {
+      ...document, id: "material_abcdef0123456789", kind: "video", name: "demo.mp4", mimeType: "video/mp4", durationMs: 6_000,
+    };
+    const documentMarkup = renderToStaticMarkup(<FeedPostView
+      post={{ ...post, content: { type: "document", materialId: document.id } }} materials={[document]}
+      session={session} project={undefined} actions={[]} needsAction={false} send={vi.fn()} onOpenProject={vi.fn()} position={1} total={1}
+    />);
+    const videoMarkup = renderToStaticMarkup(<FeedPostView
+      post={{ ...post, content: { type: "video", materialId: video.id } }} materials={[video]}
+      session={session} project={undefined} actions={[]} needsAction={false} send={vi.fn()} onOpenProject={vi.fn()} position={1} total={1}
+    />);
+
+    expect(documentMarkup).toContain("<button type=\"button\" class=\"feed-document\"");
+    expect(documentMarkup).not.toContain("target=\"_blank\"");
+    expect(videoMarkup).toContain("播放视频：demo.mp4");
+    expect(videoMarkup).toContain(">播放</strong>");
+  });
+
+  it("keeps result review actions compact and plainly named", () => {
+    const review = { id: "review-a", state: "unreviewed" } as TaskReview;
+    const markup = renderToStaticMarkup(<FeedPostView
+      post={post} session={session} project={undefined} actions={[]} review={review}
+      needsAction send={vi.fn()} onOpenProject={vi.fn()} position={1} total={1}
+    />);
+
+    expect(markup).toContain(">接受</button>");
+    expect(markup).toContain("<summary>修改</summary>");
+    expect(markup).not.toContain("接受结果");
+    expect(markup).not.toContain("要求修改");
   });
 });

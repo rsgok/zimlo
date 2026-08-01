@@ -49,4 +49,18 @@ final class MainAppRouteTests: XCTestCase {
         XCTAssertFalse(route.allowsNavigation(to: try XCTUnwrap(URL(string: "https://example.com/"))))
         XCTAssertFalse(route.allowsNavigation(to: try XCTUnwrap(URL(fileURLWithPath: "/tmp/index.html"))))
     }
+
+    func testReloadRequestBypassesStaleDocumentCache() {
+        let route = MainAppRoute.resolve(descriptor: nil)
+        let reloadID = UUID(uuidString: "9BFBFAAF-721E-48C1-81B1-19C1A7C7565D")!
+        let request = route.request(reloadID: reloadID)
+        let components = URLComponents(url: request.url!, resolvingAgainstBaseURL: false)
+
+        XCTAssertEqual(request.cachePolicy, .reloadIgnoringLocalAndRemoteCacheData)
+        XCTAssertEqual(request.value(forHTTPHeaderField: "Cache-Control"), "no-cache")
+        XCTAssertEqual(
+            components?.queryItems?.first(where: { $0.name == "desktopReload" })?.value,
+            reloadID.uuidString
+        )
+    }
 }

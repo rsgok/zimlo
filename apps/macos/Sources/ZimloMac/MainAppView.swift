@@ -37,6 +37,19 @@ struct MainAppRoute: Equatable {
         }
         return candidate.port == url.port
     }
+
+    func request(reloadID: UUID) -> URLRequest {
+        var components = URLComponents(url: url, resolvingAgainstBaseURL: false)!
+        components.queryItems = (components.queryItems ?? []) + [
+            URLQueryItem(name: "desktopReload", value: reloadID.uuidString),
+        ]
+        var request = URLRequest(
+            url: components.url!,
+            cachePolicy: .reloadIgnoringLocalAndRemoteCacheData
+        )
+        request.setValue("no-cache", forHTTPHeaderField: "Cache-Control")
+        return request
+    }
 }
 
 enum MainAppLoadPhase: Equatable {
@@ -47,6 +60,7 @@ enum MainAppLoadPhase: Equatable {
 
 struct MainAppView: View {
     let route: MainAppRoute
+    @ObservedObject var service: ServiceController
 
     @State private var phase: MainAppLoadPhase = .loading
     @State private var reloadID = UUID()
@@ -71,6 +85,11 @@ struct MainAppView: View {
         }
         .frame(minWidth: 860, minHeight: 600)
         .preferredColorScheme(.dark)
+        .onChange(of: service.state) { previous, current in
+            guard previous != .ready, current == .ready else { return }
+            phase = .loading
+            reloadID = UUID()
+        }
     }
 
     private var loadingView: some View {
@@ -170,7 +189,7 @@ private struct MainAppWebView: NSViewRepresentable {
             alpha: 1
         )
         context.coordinator.lastReloadID = reloadID
-        webView.load(URLRequest(url: route.url, cachePolicy: .reloadRevalidatingCacheData))
+        webView.load(route.request(reloadID: reloadID))
         return webView
     }
 
@@ -179,7 +198,7 @@ private struct MainAppWebView: NSViewRepresentable {
         context.coordinator.phase = $phase
         guard context.coordinator.lastReloadID != reloadID else { return }
         context.coordinator.lastReloadID = reloadID
-        webView.load(URLRequest(url: route.url, cachePolicy: .reloadRevalidatingCacheData))
+        webView.load(route.request(reloadID: reloadID))
     }
 
     @MainActor

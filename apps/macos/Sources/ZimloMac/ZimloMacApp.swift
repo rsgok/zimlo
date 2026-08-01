@@ -141,7 +141,10 @@ final class WindowCoordinator: NSObject, NSWindowDelegate {
 
         if let mainAppWindow {
             if mainAppRoute != route {
-                mainAppWindow.contentView = NSHostingView(rootView: MainAppView(route: route))
+                mainAppWindow.contentView = NSHostingView(rootView: MainAppView(
+                    route: route,
+                    service: AppModel.shared.service
+                ))
                 mainAppRoute = route
             }
             mainAppWindow.makeKeyAndOrderFront(nil)
@@ -149,7 +152,7 @@ final class WindowCoordinator: NSObject, NSWindowDelegate {
             return
         }
 
-        let content = MainAppView(route: route)
+        let content = MainAppView(route: route, service: AppModel.shared.service)
         let window = NSWindow(
             contentRect: NSRect(origin: .zero, size: MainWindowLayout.initialContentSize),
             styleMask: [.titled, .closable, .miniaturizable, .resizable],
