@@ -198,35 +198,68 @@ final class WindowCoordinator: NSObject, NSWindowDelegate {
         window.title = "Zimlo"
         window.titleVisibility = .hidden
         window.titlebarAppearsTransparent = false
-        window.miniwindowImage = NSApplication.shared.applicationIconImage
+        window.miniwindowImage = WindowBrandAssets.icon
 
         let accessory = NSTitlebarAccessoryViewController()
         accessory.layoutAttribute = .left
-        let brand = NSHostingView(rootView: WindowBrandView())
-        let fittingSize = brand.fittingSize
-        brand.frame = NSRect(x: 0, y: 0, width: max(92, fittingSize.width), height: 28)
-        accessory.view = brand
+        accessory.view = makeWindowBrandView()
         window.addTitlebarAccessoryViewController(accessory)
+    }
+
+    private func makeWindowBrandView() -> NSView {
+        let brand = NSView(frame: NSRect(x: 0, y: 0, width: 94, height: 28))
+
+        let icon = NSImageView(image: WindowBrandAssets.icon)
+        icon.translatesAutoresizingMaskIntoConstraints = false
+        icon.imageScaling = .scaleProportionallyUpOrDown
+        icon.imageAlignment = .alignCenter
+
+        let title = NSTextField(labelWithString: "Zimlo")
+        title.translatesAutoresizingMaskIntoConstraints = false
+        title.font = .systemFont(ofSize: 12, weight: .semibold)
+        title.textColor = .labelColor
+        title.lineBreakMode = .byClipping
+
+        brand.addSubview(icon)
+        brand.addSubview(title)
+        brand.setAccessibilityElement(true)
+        brand.setAccessibilityLabel("Zimlo")
+
+        NSLayoutConstraint.activate([
+            brand.widthAnchor.constraint(equalToConstant: 94),
+            brand.heightAnchor.constraint(equalToConstant: 28),
+            icon.leadingAnchor.constraint(equalTo: brand.leadingAnchor, constant: 5),
+            icon.centerYAnchor.constraint(equalTo: brand.centerYAnchor),
+            icon.widthAnchor.constraint(equalToConstant: 22),
+            icon.heightAnchor.constraint(equalToConstant: 22),
+            title.leadingAnchor.constraint(equalTo: icon.trailingAnchor, constant: 7),
+            title.trailingAnchor.constraint(lessThanOrEqualTo: brand.trailingAnchor, constant: -4),
+            title.centerYAnchor.constraint(equalTo: brand.centerYAnchor),
+        ])
+
+        return brand
     }
 }
 
-private struct WindowBrandView: View {
-    var body: some View {
-        HStack(spacing: 7) {
-            Image(nsImage: NSApplication.shared.applicationIconImage)
-                .resizable()
-                .interpolation(.high)
-                .scaledToFit()
-                .frame(width: 18, height: 18)
-            Text("Zimlo")
-                .font(.system(size: 12, weight: .semibold))
-                .foregroundStyle(.primary)
+@MainActor
+private enum WindowBrandAssets {
+    static let icon: NSImage = {
+        for resource in [("AppIcon-1024", "png"), ("AppIcon", "icns")] {
+            guard let url = Bundle.main.url(forResource: resource.0, withExtension: resource.1),
+                  let image = NSImage(contentsOf: url) else {
+                continue
+            }
+            image.isTemplate = false
+            return image
         }
-        .padding(.horizontal, 6)
-        .frame(height: 28)
-        .accessibilityElement(children: .combine)
-        .accessibilityLabel("Zimlo")
-    }
+
+        if let fallback = (NSApplication.shared.applicationIconImage.copy() as? NSImage)
+            ?? NSApplication.shared.applicationIconImage {
+            fallback.isTemplate = false
+            return fallback
+        }
+        return NSImage(size: NSSize(width: 22, height: 22))
+    }()
 }
 
 private struct MenuBarStatusMark: View {

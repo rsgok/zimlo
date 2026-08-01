@@ -61,7 +61,7 @@ code, pre { font-family: var(--font-mono); }
 .app-top-bar-side { display: flex; min-width: 0; align-items: center; }
 .app-top-bar-right { justify-content: flex-end; }
 .app-top-bar-title { overflow: hidden; font-size: 14px; letter-spacing: -.015em; text-overflow: ellipsis; white-space: nowrap; }
-.app-top-bar-mark { width: 30px; height: 30px; object-fit: cover; border: 1px solid rgba(213,255,76,.28); border-radius: 50%; }
+.app-top-bar-mark { width: 30px; height: 30px; object-fit: contain; border: 0; border-radius: 7px; }
 .app-top-bar-status { display: flex; align-items: center; gap: 6px; color: #b8bbb2; font-size: var(--text-caption); font-weight: 700; }
 .app-top-bar-status i { width: 6px; height: 6px; background: #777b72; border-radius: 50%; }
 .app-top-bar-status.is-connected i { background: var(--lime); box-shadow: 0 0 0 3px rgba(213,255,76,.1); }

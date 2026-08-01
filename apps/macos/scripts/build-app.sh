@@ -86,6 +86,7 @@ for size in 16 32 128 256 512; do
   sips -z "${double}" "${double}" "${icon_source}" --out "${iconset}/icon_${size}x${size}@2x.png" >/dev/null
 done
 iconutil -c icns "${iconset}" -o "${app_path}/Contents/Resources/AppIcon.icns"
+cp "${icon_source}" "${app_path}/Contents/Resources/AppIcon-1024.png"
 
 typeset -a sign_options
 sign_options=(--force --options runtime --sign "${sign_identity}")

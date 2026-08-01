@@ -27,5 +27,5 @@ export function AgentAvatar({ avatar, className = "", alt = "Agent 头像" }: { 
 }
 
 export function ZimloAvatar({ className = "", alt = "Zimlo" }: Omit<UserAvatarProps, "avatarId">) {
-  return <img className={`zimlo-avatar-image ${className}`.trim()} src="/avatars/zimlo.png" alt={alt} />;
+  return <img className={`zimlo-avatar-image ${className}`.trim()} src="/zimlo-icon.svg?brand=2" alt={alt} />;
 }

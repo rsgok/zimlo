@@ -1,4 +1,4 @@
-const CACHE_NAME = "zimlo-shell-v1";
+const CACHE_NAME = "zimlo-shell-v2";
 const SHELL = ["/", "/manifest.webmanifest", "/zimlo-icon.svg", "/zimlo-icon-512.png", "/apple-touch-icon.png"];
 
 self.addEventListener("install", (event) => {

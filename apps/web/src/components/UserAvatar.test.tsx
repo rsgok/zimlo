@@ -1,6 +1,6 @@
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
-import { AgentAvatar } from "./UserAvatar";
+import { AgentAvatar, ZimloAvatar } from "./UserAvatar";
 
 describe("AgentAvatar", () => {
   it("uses bundled images for preset ids", () => {
@@ -13,5 +13,10 @@ describe("AgentAvatar", () => {
     const markup = renderToStaticMarkup(<AgentAvatar avatar="📈" className="timeline-avatar" alt="" />);
     expect(markup).toContain("📈");
     expect(markup).not.toContain("<img");
+  });
+
+  it("uses the shared Zimlo brand mark in app headers", () => {
+    const markup = renderToStaticMarkup(<ZimloAvatar />);
+    expect(markup).toContain('src="/zimlo-icon.svg?brand=2"');
   });
 });
