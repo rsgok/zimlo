@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import type { ClientCommand, FeedPost, PendingAction, Project, Session, TaskCommand, TaskRecord, TaskReview, UnifiedEvent, UserAvatarId } from "@zimlo/protocol";
+import type { ClientCommand, FeedPost, Material, PendingAction, Project, Session, TaskCommand, TaskRecord, TaskReview, UnifiedEvent, UserAvatarId } from "@zimlo/protocol";
 import { AppTopBar } from "./AppTopBar";
 import { ActionPanel } from "./ActionPanel";
 import { FormattedText } from "./FormattedText";
@@ -17,6 +17,7 @@ interface SessionDetailProps {
   actions: PendingAction[];
   posts: FeedPost[];
   commands: TaskCommand[];
+  materials?: Material[] | undefined;
   task?: TaskRecord | undefined;
   reviews?: TaskReview[] | undefined;
   timelineCursor?: string | undefined;
@@ -253,7 +254,7 @@ function TimelineEventDetails({ events }: { events: UnifiedEvent[] }) {
   );
 }
 
-export function SessionDetail({ session, project, events, actions, posts, commands, task, reviews = [], timelineCursor, userAvatarId, send, onClose, onRetryLocal }: SessionDetailProps) {
+export function SessionDetail({ session, project, events, actions, posts, commands, materials = [], task, reviews = [], timelineCursor, userAvatarId, send, onClose, onRetryLocal }: SessionDetailProps) {
   const panelRef = useRef<HTMLElement>(null);
   useModalFocus(panelRef);
   const draftKey = `zimlo:task-draft:${session.id}`;
@@ -342,7 +343,7 @@ export function SessionDetail({ session, project, events, actions, posts, comman
   const submitMessage = () => {
     const text = message.trim();
     if (!canContinue || !text || duplicateActive) return;
-    const accepted = send({ type: "task.follow_up", sessionId: session.id, text, idempotencyKey: crypto.randomUUID() });
+    const accepted = send({ type: "task.follow_up", sessionId: session.id, text, materialIds: [], idempotencyKey: crypto.randomUUID() });
     if (!accepted) return;
     setMessage("");
   };
@@ -454,6 +455,15 @@ export function SessionDetail({ session, project, events, actions, posts, comman
                 <div className="timeline-content">
                   <div className="timeline-meta"><strong>你</strong><span>{item.command.kind === "create" ? "创建任务" : "追加指令"}</span><time>· {readableDate(item.at)}</time></div>
                   <div className="timeline-command-text"><FormattedText text={conciseInstruction(item.command.text)} /></div><span className="timeline-state-pill">{COMMAND_LABELS[item.command.state]}</span>
+                  {(item.command.materialIds ?? []).length > 0 && <div className="timeline-materials">
+                    {(item.command.materialIds ?? []).flatMap((id) => {
+                      const material = materials.find((candidate) => candidate.id === id);
+                      return material ? [<a key={id} href={`/api/materials/${encodeURIComponent(id)}/content`} target="_blank" rel="noreferrer">
+                        <span>{material.kind === "image" ? "IMG" : material.kind === "video" ? "VIDEO" : material.kind === "pdf" ? "PDF" : "FILE"}</span>
+                        <strong>{material.name}</strong>
+                      </a>] : [];
+                    })}
+                  </div>}
                   {item.command.error && <div className="timeline-command-error"><FormattedText text={item.command.error} compact /></div>}
                   {item.command.state === "failed" && <button className="timeline-retry" onClick={() => {
                     if (item.command.id.startsWith("local:")) onRetryLocal?.(item.command.id);

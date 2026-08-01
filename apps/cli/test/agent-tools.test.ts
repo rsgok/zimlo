@@ -1,4 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { EMPTY_CAPABILITIES, type Session, type UnifiedEvent } from "@zimlo/protocol";
 import { AgentToolService, type AgentToolRequest } from "../src/agent-tools.js";
 import { finalizeStopFeedDecision, hookClientTimeoutMs, ingestUserInstruction } from "../src/hook-server.js";
@@ -124,6 +127,40 @@ describe("agent-authored feed protocol", () => {
     runtime.ingestEvent(event);
     expect(store.listFeedPosts()).toHaveLength(0);
     expect(runtime.snapshot().cards).toEqual([]);
+  });
+
+  it("publishes a generated workspace file before referencing it from a media card", () => {
+    const root = mkdtempSync(join(tmpdir(), "zimlo-material-tool-"));
+    const localStore = new ZimloStore(join(root, "zimlo.db"));
+    try {
+      const file = join(root, "result.png");
+      writeFileSync(file, Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Wl6kZkAAAAASUVORK5CYII=", "base64"));
+      const localRuntime = new RuntimeHub(localStore);
+      localRuntime.upsertSession({ ...session, cwd: root });
+      localStore.beginFeedCheckpoint({ agentId: "codex", runId: "run-a", taskId: "task-a", sessionId: session.id, startedAt: "2026-07-21T00:00:00.000Z" });
+      const localTools = new AgentToolService(localRuntime);
+      const published = localTools.handle({ ...request("material.publish", { path: "result.png" }), cwd: root });
+      expect(published.ok).toBe(true);
+      const materialId = (published.data as { material_id: string }).material_id;
+      expect(localStore.getMaterial(materialId)).toMatchObject({ kind: "image", status: "ready", origin: "agent" });
+
+      const posted = localTools.handle({ ...request("feed.post", {
+        task_id: "task-a", kind: "result", template: "paper", headline: "效果图已生成",
+        takeaway: "可以直接查看最终画面。", highlights: [], action_required: false, actions: [],
+        content: { type: "image_album", materialIds: [materialId] }, dedupe_key: "task-a:image-result",
+      }), cwd: root });
+      expect(posted.ok).toBe(true);
+      expect(localStore.listFeedPosts()[0]?.content).toEqual({ type: "image_album", materialIds: [materialId] });
+
+      const disguised = join(root, "disguised.png");
+      writeFileSync(disguised, Buffer.from("not actually an image"));
+      const rejected = localTools.handle({ ...request("material.publish", { path: "disguised.png" }), cwd: root });
+      expect(rejected.ok).toBe(false);
+      expect(rejected.message).toContain("图片内容与声明格式不一致");
+    } finally {
+      localStore.close();
+      rmSync(root, { recursive: true, force: true });
+    }
   });
 });
 

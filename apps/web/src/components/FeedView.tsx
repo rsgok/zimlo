@@ -1,5 +1,5 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import type { ClientCommand, FeedPost, PendingAction, Project, Session, TaskCommand, TaskRecord, TaskReview } from "@zimlo/protocol";
+import type { ClientCommand, FeedPost, Material, PendingAction, Project, Session, TaskCommand, TaskRecord, TaskReview } from "@zimlo/protocol";
 import { FeedPostView } from "./FeedPostView";
 import { ActionFeedCard } from "./ActionFeedCard";
 import { buildFeedItems, feedItemId, type FeedItem } from "./feedItems";
@@ -21,6 +21,7 @@ import { TaskCommandFailureCard } from "./TaskCommandFailureCard";
 interface FeedViewProps {
   projects: Project[];
   posts: FeedPost[];
+  materials?: Material[] | undefined;
   sessions: Session[];
   actions: PendingAction[];
   commands: TaskCommand[];
@@ -76,7 +77,7 @@ function SeenFeedPage({ children, postId, seen, onSeen, pageRef, feedKey, histor
   >{children}</section>;
 }
 
-export function FeedView({ projects, posts, sessions, actions, commands, tasks, reviews = [], seenPostIds, dismissedFeedItemIds, send, onOpen, onOpenProject, onNewTask, onRequestUndo, interactionMode = "swipe" }: FeedViewProps) {
+export function FeedView({ projects, posts, materials = [], sessions, actions, commands, tasks, reviews = [], seenPostIds, dismissedFeedItemIds, send, onOpen, onOpenProject, onNewTask, onRequestUndo, interactionMode = "swipe" }: FeedViewProps) {
   const sessionById = useMemo(() => new Map(sessions.map((session) => [session.id, session])), [sessions]);
   const projectById = useMemo(() => new Map(projects.map((project) => [project.id, project])), [projects]);
 
@@ -227,6 +228,7 @@ export function FeedView({ projects, posts, sessions, actions, commands, tasks, 
           {historical && <span className="history-label">历史</span>}
           {item.type === "post" ? <FeedPostView
             post={item.post}
+            materials={materials}
             session={item.post.sessionId ? sessionById.get(item.post.sessionId) : undefined}
             project={item.post.projectId ? projectById.get(item.post.projectId) : undefined}
             actions={actions.filter((action) => item.post.pendingActionIds.includes(action.actionId))}

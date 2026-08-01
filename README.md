@@ -30,6 +30,7 @@ Zimlo 是 Codex 与 Claude Code 的隐私优先移动状态层。它自动发现
 - 闲置 Codex session 通过 app-server 的 `thread/read`、`thread/resume` 和 `turn/start` 安全继续；闲置 Claude session 使用 stream-json runner。
 - 活跃外部终端 session 禁止 TTY 注入；精确 hook 审批仍可按原请求闭环。
 - SQLite WAL 分开保存 Project/位置/Agent Profile、Session、规范事件、任务状态、任务指令队列、Agent 帖子、每设备已读与移除状态、设备和操作审计；Project、Task Input 与任务目录长期保留，详细活动默认保留 7 天，原始 transcript 不复制入库。
+- 新任务可附带图片、短视频、PDF 与常用文档；字节走独立 HTTPS 而非 WebSocket，远程上传在设备端加密后只把临时密文放进 Cloudflare R2。Feed 用独立图片组、视频和文档卡展示，iOS 可用系统 Quick Look 打开 PDF。
 - Session 额外保存最近一次可靠运行界面：`GUI / CLI / Zimlo managed / unknown`；切换界面不会拆成新的 Task Detail。
 - 本机 loopback 管理页与 X25519 配对；后续 WebSocket 帧使用 XChaCha20-Poly1305、单调计数器与防重放校验。
 

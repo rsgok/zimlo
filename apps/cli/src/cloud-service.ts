@@ -209,6 +209,28 @@ export class CloudService {
     return this.signedHeaders("GET", "/v1/sync/mac", "");
   }
 
+  async downloadMaterial(deviceId: string, materialId: string): Promise<Buffer | null> {
+    if (!await this.ensureReady() || !this.baseURL) return null;
+    const pathname = `/v1/materials/${encodeURIComponent(deviceId)}/${encodeURIComponent(materialId)}`;
+    const response = await fetch(`${this.baseURL}${pathname}`, {
+      headers: this.signedHeaders("GET", pathname, ""),
+      signal: AbortSignal.timeout(60_000),
+    });
+    if (response.status === 404) return null;
+    if (!response.ok) throw new Error(`Cloud material download failed (${response.status})`);
+    return Buffer.from(await response.arrayBuffer());
+  }
+
+  async deleteMaterial(deviceId: string, materialId: string): Promise<void> {
+    if (!await this.ensureReady() || !this.baseURL) return;
+    const pathname = `/v1/materials/${encodeURIComponent(deviceId)}/${encodeURIComponent(materialId)}`;
+    await fetch(`${this.baseURL}${pathname}`, {
+      method: "DELETE",
+      headers: this.signedHeaders("DELETE", pathname, ""),
+      signal: AbortSignal.timeout(10_000),
+    }).catch(() => undefined);
+  }
+
   private async registerInstallation(): Promise<boolean> {
     if (!this.baseURL) return false;
     if (!await this.refreshHealth()) return false;

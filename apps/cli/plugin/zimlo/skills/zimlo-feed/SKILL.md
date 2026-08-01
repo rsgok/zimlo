@@ -10,6 +10,7 @@ Zimlo is the user's attention feed for this coding task. It is not a transcript,
 - `signal.transition` records reliable machine state.
 - `feed.post` publishes one Agent-edited reading card.
 - `feed.skip` records that a managed checkpoint has nothing worth publishing.
+- `material.publish` registers a generated workspace file and returns the `material_id` used by a media card.
 
 ## Lifecycle
 
@@ -68,6 +69,21 @@ Choose exactly one visual template. Do not request colors, fonts, or CSS.
 - `sticky`: Discoveries, decisions, and changes of direction.
 - `marker`: Risks, approvals, input requests, and urgent attention.
 - `poster`: A major result that stands on one short statement.
+
+## Media cards
+
+Keep editorial copy and the visual carrier separate. For an output image, video,
+PDF, or document:
+
+1. Save the final file inside the current workspace.
+2. Call `material.publish` with its path.
+3. Put the returned id in `feed.post.content` as `image_album`, `video`, or
+   `document`.
+
+Do not paste binary data, base64, local paths, or raw file contents into Feed
+copy. Image lists and video are standalone TikTok-style cards; PDFs and other
+documents use a dedicated document card and native preview. Use a text card when
+the file itself is not the main result.
 
 ## Examples
 

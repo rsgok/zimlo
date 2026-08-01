@@ -42,6 +42,7 @@ const EMPTY_SNAPSHOT: Snapshot = {
   sessions: [],
   cards: [],
   posts: [],
+  materials: [],
   tasks: [],
   commands: [],
   workspaces: [],
@@ -310,6 +311,8 @@ export function useBridge() {
             if (command.type === "task.command.retry") return message.command.id === command.commandId;
             return (command.type === "task.create" || command.type === "task.follow_up" || command.type === "session.message")
               && (message.command.idempotencyKey === command.idempotencyKey || message.command.idempotencyKey.endsWith(`:${command.idempotencyKey}`));
+          case "material.updated":
+            return command.type === "material.register" && command.material.id === message.material.id;
           case "task.command.cancel.result":
             return command.type === "task.command.cancel"
               && ((message.commandId !== undefined && command.commandId === message.commandId)
@@ -417,7 +420,7 @@ export function useBridge() {
             };
           case "card.upsert":
             return { ...current, snapshot: { ...current.snapshot, cards: upsertById(current.snapshot.cards, message.card) } };
-          case "feed.posted": {
+        case "feed.posted": {
             const post = normalizeFeedPost(message.post);
             return post
               ? { ...current, snapshot: { ...current.snapshot, posts: upsertById(current.snapshot.posts, post) } }
@@ -427,6 +430,8 @@ export function useBridge() {
             return { ...current, snapshot: { ...current.snapshot, tasks: upsertById(current.snapshot.tasks, message.task) } };
           case "task.command.updated":
             return { ...current, snapshot: { ...current.snapshot, commands: upsertById(current.snapshot.commands, message.command) } };
+          case "material.updated":
+            return { ...current, snapshot: { ...current.snapshot, materials: upsertById(current.snapshot.materials, message.material) } };
           case "feed.seen.updated":
             return current.snapshot.seenPostIds.includes(message.postId)
               ? current

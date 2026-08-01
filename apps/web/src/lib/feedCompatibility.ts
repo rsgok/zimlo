@@ -1,5 +1,5 @@
 import { EMPTY_FEATURE_CAPABILITIES, USER_AVATAR_IDS } from "@zimlo/protocol";
-import type { FeedAction, FeedPost, FeedPostKind, FeedTemplate, Project, Snapshot, UserAvatarId } from "@zimlo/protocol";
+import type { FeedAction, FeedContent, FeedPost, FeedPostKind, FeedTemplate, Project, Snapshot, UserAvatarId } from "@zimlo/protocol";
 
 const KINDS = new Set<FeedPostKind>(["progress", "decision", "attention", "result", "failure"]);
 const TEMPLATES = new Set<FeedTemplate>(["paper", "grid", "sticky", "marker", "poster"]);
@@ -15,6 +15,18 @@ const DEFAULT_TEMPLATE: Record<FeedPostKind, FeedTemplate> = {
 
 function text(value: unknown, fallback = ""): string {
   return typeof value === "string" && value.length > 0 ? value : fallback;
+}
+
+function feedContent(value: unknown): FeedContent {
+  if (!value || typeof value !== "object") return { type: "text" };
+  const content = value as Record<string, unknown>;
+  if (content.type === "image_album" && Array.isArray(content.materialIds)) {
+    const materialIds = content.materialIds.filter((id): id is string => typeof id === "string").slice(0, 10);
+    if (materialIds.length) return { type: "image_album", materialIds, ...(typeof content.caption === "string" ? { caption: content.caption } : {}) };
+  }
+  if (content.type === "video" && typeof content.materialId === "string") return { type: "video", materialId: content.materialId, ...(typeof content.posterMaterialId === "string" ? { posterMaterialId: content.posterMaterialId } : {}), ...(typeof content.caption === "string" ? { caption: content.caption } : {}) };
+  if (content.type === "document" && typeof content.materialId === "string") return { type: "document", materialId: content.materialId, ...(typeof content.coverMaterialId === "string" ? { coverMaterialId: content.coverMaterialId } : {}), ...(typeof content.summary === "string" ? { summary: content.summary } : {}) };
+  return { type: "text" };
 }
 
 export function isInternalZimloAction(value: unknown): boolean {
@@ -63,6 +75,7 @@ export function normalizeFeedPost(value: unknown): FeedPost | null {
     actionRequired,
     ...(actionRequired && typeof post.actionPrompt === "string" && post.actionPrompt ? { actionPrompt: post.actionPrompt } : {}),
     actions,
+    content: feedContent(post.content),
     pendingActionIds,
     dedupeKey: text(post.dedupeKey, id),
     source: "agent",
@@ -97,8 +110,9 @@ export function normalizeSnapshot(value: Snapshot): Snapshot {
     posts: Array.isArray(snapshot.posts)
       ? snapshot.posts.map(normalizeFeedPost).filter((post): post is FeedPost => post !== null)
       : [],
+    materials: Array.isArray(snapshot.materials) ? snapshot.materials : [],
     tasks: Array.isArray(snapshot.tasks) ? snapshot.tasks : [],
-    commands: Array.isArray(snapshot.commands) ? snapshot.commands : [],
+    commands: Array.isArray(snapshot.commands) ? snapshot.commands.map((command) => ({ ...command, materialIds: command.materialIds ?? [] })) : [],
     workspaces: Array.isArray(snapshot.workspaces) ? snapshot.workspaces : [],
     seenPostIds: Array.isArray(snapshot.seenPostIds) ? snapshot.seenPostIds : [],
     dismissedFeedItemIds: Array.isArray(snapshot.dismissedFeedItemIds) ? snapshot.dismissedFeedItemIds : [],

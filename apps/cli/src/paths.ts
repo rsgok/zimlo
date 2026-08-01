@@ -14,5 +14,7 @@ export const ZIMLO_PATHS = {
   startupDiagnostics: join(root, "run", "startup-diagnostics.json"),
   manualStop: join(root, "run", "manual-stop"),
   logs: join(root, "logs"),
+  materials: join(root, "materials"),
+  materialStaging: join(root, "materials", ".staging"),
   autostartLog: join(root, "logs", "autostart.log"),
 } as const;

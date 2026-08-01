@@ -149,7 +149,7 @@ export function App() {
 
       <main className={`main-content ${tab === "feed" ? "feed-main" : ""}`}>
         <div className={tab === "feed" ? "tab-panel" : "tab-panel tab-panel-hidden"}>
-          {mountedTabs.has("feed") && <FeedView projects={bridge.snapshot.projects} posts={bridge.snapshot.posts} sessions={bridge.snapshot.sessions} actions={bridge.snapshot.actions} commands={commands} tasks={bridge.snapshot.tasks} reviews={bridge.snapshot.features.taskReview ? bridge.snapshot.reviews : []} seenPostIds={bridge.snapshot.seenPostIds} dismissedFeedItemIds={bridge.snapshot.dismissedFeedItemIds} send={send} onOpen={openSession} onOpenProject={openAgent} onNewTask={() => openNewTask()} onRequestUndo={showUndo} interactionMode={macosShell ? "desktop" : "swipe"} />}
+          {mountedTabs.has("feed") && <FeedView projects={bridge.snapshot.projects} posts={bridge.snapshot.posts} materials={bridge.snapshot.materials} sessions={bridge.snapshot.sessions} actions={bridge.snapshot.actions} commands={commands} tasks={bridge.snapshot.tasks} reviews={bridge.snapshot.features.taskReview ? bridge.snapshot.reviews : []} seenPostIds={bridge.snapshot.seenPostIds} dismissedFeedItemIds={bridge.snapshot.dismissedFeedItemIds} send={send} onOpen={openSession} onOpenProject={openAgent} onNewTask={() => openNewTask()} onRequestUndo={showUndo} interactionMode={macosShell ? "desktop" : "swipe"} />}
         </div>
         <div className={tab === "tasks" ? "tab-panel" : "tab-panel tab-panel-hidden"}>
           {mountedTabs.has("tasks") && <TasksView projects={bridge.snapshot.projects} sessions={bridge.snapshot.sessions} tasks={bridge.snapshot.tasks} posts={bridge.snapshot.posts} preferences={bridge.snapshot.taskPreferences} send={send} onOpen={openSession} onRequestUndo={showUndo} />}
@@ -254,6 +254,7 @@ export function App() {
           actions={bridge.snapshot.actions.filter((action) => action.sessionId === selectedSession.id)}
           posts={bridge.snapshot.posts.filter((post) => post.sessionId === selectedSession.id)}
           commands={commands.filter((command) => command.sessionId === selectedSession.id)}
+          materials={bridge.snapshot.materials}
           task={[...bridge.snapshot.tasks].filter((task) => task.sessionId === selectedSession.id).sort((left, right) => right.updatedAt.localeCompare(left.updatedAt))[0]}
           reviews={bridge.snapshot.features.taskReview ? bridge.snapshot.reviews.filter((review) => review.sessionId === selectedSession.id) : []}
           userAvatarId={bridge.snapshot.userProfile.avatarId}

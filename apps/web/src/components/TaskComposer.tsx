@@ -5,6 +5,7 @@ import { ProviderBadge } from "./ProviderBadge";
 import { AgentAvatar } from "./UserAvatar";
 import { useModalFocus } from "./useModalFocus";
 import { VoiceInput } from "./VoiceInput";
+import { formatMaterialSize, labelForKind, uploadMaterial, validateFile, type PreparedMaterial } from "../lib/materials";
 
 interface TaskComposerProps {
   workspaces: TrustedWorkspace[];
@@ -37,6 +38,15 @@ export function TaskComposer({ workspaces, projects, initialProjectId = null, se
   const [text, setText] = useState(savedDraft);
   const [projectQuery, setProjectQuery] = useState("");
   const [choosingAgent, setChoosingAgent] = useState(false);
+  const [materials, setMaterials] = useState<Array<{
+    id: string;
+    file: File;
+    state: "uploading" | "ready" | "failed";
+    prepared?: PreparedMaterial;
+    error?: string;
+  }>>([]);
+  const attachmentInput = useRef<HTMLInputElement | null>(null);
+  const materialURLs = useRef(new Set<string>());
   const sending = useRef(false);
   const sheetRef = useRef<HTMLElement | null>(null);
   useModalFocus(sheetRef);
@@ -61,6 +71,55 @@ export function TaskComposer({ workspaces, projects, initialProjectId = null, se
     localStorage.setItem("zimlo:new-task-draft", text);
   }, [text]);
 
+  useEffect(() => () => {
+    for (const url of materialURLs.current) URL.revokeObjectURL(url);
+    materialURLs.current.clear();
+  }, []);
+
+  const uploadOne = async (id: string, file: File) => {
+    setMaterials((current) => current.map((item) => {
+      if (item.id !== id) return item;
+      const { error: _error, ...rest } = item;
+      return { ...rest, state: "uploading" };
+    }));
+    try {
+      const prepared = await uploadMaterial(file);
+      materialURLs.current.add(prepared.localPreviewURL);
+      if (!send(prepared.registerCommand)) throw new Error("物料登记未能保存，请重试");
+      setMaterials((current) => current.map((item) => item.id === id ? { ...item, state: "ready", prepared } : item));
+    } catch (error) {
+      setMaterials((current) => current.map((item) => item.id === id ? { ...item, state: "failed", error: error instanceof Error ? error.message : String(error) } : item));
+    }
+  };
+
+  const addFiles = async (files: File[]) => {
+    const available = Math.max(0, 10 - materials.length);
+    let selectedBytes = materials.reduce((total, item) => total + item.file.size, 0);
+    for (const file of files.slice(0, available)) {
+      const validation = validateFile(file);
+      const id = crypto.randomUUID();
+      if ("error" in validation) {
+        setMaterials((current) => [...current, { id, file, state: "failed", error: validation.error }]);
+        continue;
+      }
+      if (selectedBytes + file.size > 80 * 1024 * 1024) {
+        setMaterials((current) => [...current, { id, file, state: "failed", error: "单个任务的物料总大小不能超过 80MB" }]);
+        continue;
+      }
+      selectedBytes += file.size;
+      setMaterials((current) => [...current, { id, file, state: "uploading" }]);
+      await uploadOne(id, file);
+    }
+  };
+
+  const removeMaterial = (id: string) => {
+    setMaterials((current) => current.filter((item) => {
+      if (item.id === id && item.prepared) URL.revokeObjectURL(item.prepared.localPreviewURL);
+      if (item.id === id && item.prepared) materialURLs.current.delete(item.prepared.localPreviewURL);
+      return item.id !== id;
+    }));
+  };
+
   const selectedWorkspace = workspaces.find((workspace) => workspace.id === workspaceId);
   const selectedAgent = selectedWorkspace ? projectByPath.get(selectedWorkspace.path) : undefined;
   const agentName = selectedAgent?.agentProfile.displayName ?? selectedWorkspace?.label ?? "选择 Agent";
@@ -81,7 +140,13 @@ export function TaskComposer({ workspaces, projects, initialProjectId = null, se
     <div className="composer-backdrop" role="presentation" onMouseDown={(event) => {
       if (event.currentTarget === event.target) onClose();
     }}>
-      <section className="new-task-sheet" role="dialog" aria-modal="true" aria-labelledby="new-task-title" ref={sheetRef}>
+      <section className="new-task-sheet" role="dialog" aria-modal="true" aria-labelledby="new-task-title" ref={sheetRef}
+        onDragOver={(event) => { event.preventDefault(); event.dataTransfer.dropEffect = "copy"; }}
+        onDrop={(event) => { event.preventDefault(); void addFiles([...event.dataTransfer.files]); }}
+        onPaste={(event) => {
+          const files = [...event.clipboardData.files];
+          if (files.length) { event.preventDefault(); void addFiles(files); }
+        }}>
         <header className="new-task-header">
           <div>
             <h2 id="new-task-title">新任务</h2>
@@ -96,6 +161,31 @@ export function TaskComposer({ workspaces, projects, initialProjectId = null, se
               <span>{text.trim() ? "草稿已保存" : "草稿自动保存"}</span>
             </div>
             <VoiceInput autoFocus rows={6} value={text} onChange={setText} ariaLabel="任务目标" placeholder="例如：检查首页白屏原因，修复后跑完测试并告诉我结果…" />
+            <div className="composer-material-toolbar">
+              <input ref={attachmentInput} type="file" multiple hidden accept="image/jpeg,image/png,image/webp,image/heic,image/heif,video/mp4,video/quicktime,video/x-m4v,application/pdf,text/plain,text/markdown,text/csv,application/json,.doc,.docx,.xls,.xlsx,.ppt,.pptx" onChange={(event) => { void addFiles([...event.target.files ?? []]); event.currentTarget.value = ""; }} />
+              <button type="button" onClick={() => attachmentInput.current?.click()} disabled={materials.length >= 10}>
+                <span aria-hidden="true">＋</span> 添加图片、视频或文件
+              </button>
+              <span>可拖入或粘贴 · 最多 10 个</span>
+            </div>
+            {materials.length > 0 && <div className="composer-material-list" aria-label="已选择物料">
+              {materials.map((item) => {
+                const kind = validateFile(item.file);
+                const label = "kind" in kind ? labelForKind(kind.kind) : "文件";
+                return <article className={`composer-material-item is-${item.state}`} key={item.id}>
+                  {item.prepared && item.prepared.material.kind === "image"
+                    ? <img src={item.prepared.localPreviewURL} alt="" />
+                    : item.prepared && item.prepared.material.kind === "video"
+                      ? <video src={item.prepared.localPreviewURL} muted preload="metadata" />
+                      : <span className="composer-material-type">{label}</span>}
+                  <span className="composer-material-copy"><strong>{item.file.name}</strong><small>{formatMaterialSize(item.file.size)} · {item.state === "uploading" ? "正在加密上传" : item.state === "ready" ? "已安全保存" : item.error}</small></span>
+                  <span className="composer-material-actions">
+                    {item.state === "failed" && <button type="button" aria-label={`重试 ${item.file.name}`} onClick={() => { void uploadOne(item.id, item.file); }}>↻</button>}
+                    <button type="button" aria-label={`移除 ${item.file.name}`} onClick={() => removeMaterial(item.id)}>×</button>
+                  </span>
+                </article>;
+              })}
+            </div>}
             <p>直接描述想要的结果；Agent 会自己拆解步骤，需要决定时再来找你。</p>
           </section>
 
@@ -171,11 +261,11 @@ export function TaskComposer({ workspaces, projects, initialProjectId = null, se
           </div>
           <button
             className="new-task-submit"
-            disabled={!workspaceId || !text.trim()}
+            disabled={!workspaceId || !text.trim() || materials.some((item) => item.state !== "ready")}
             onClick={() => {
               if (sending.current) return;
               sending.current = true;
-              const accepted = send({ type: "task.create", provider, workspaceId, text: text.trim(), idempotencyKey: crypto.randomUUID() });
+              const accepted = send({ type: "task.create", provider, workspaceId, text: text.trim(), materialIds: materials.flatMap((item) => item.prepared ? [item.prepared.material.id] : []), idempotencyKey: crypto.randomUUID() });
               if (!accepted) {
                 sending.current = false;
                 return;

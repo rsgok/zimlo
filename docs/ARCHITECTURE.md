@@ -110,6 +110,12 @@ Cloudflare Worker 负责鉴权和路由，D1 只保存 Mac 安装公钥、设备
 
 Mac 安装身份使用 P-256 签名，私钥只保存在权限为 `0600` 的本机 SQLite metadata；每台手机的随机云访问令牌只在可信配对时下发，Cloudflare 只保存 SHA-256 哈希。撤销设备会同时撤销本地 Bridge 身份和云端记录。
 
+## 图片、视频与文档
+
+物料字节不进入 WebSocket。WebSocket 只传 material id、安全元数据、任务引用和状态，因此一个视频上传不会阻塞审批、回复与实时状态。局域网设备通过带设备 HMAC 证明的 HTTP 直传 Bridge；远程设备先用每个文件独立的 AES-256-GCM 密钥加密，再把密文放入独立的 `zimlo-materials` R2 临时桶。密钥只走端到端加密的 Bridge 消息，Cloudflare 看不到文件名、MIME、任务 id 或明文。Mac 校验大小、格式特征和 SHA-256 后以 `0600` 保存，并删除成功中转对象；R2 的 24 小时生命周期负责清理断线残留。
+
+Agent 生成的本地文件先通过 `material.publish` 注册，再由 `feed.post.content` 引用。Feed 的文字编辑语义与媒体载体保持分离：图片组、视频和文档分别是独立卡片，PDF/文档在 iOS 使用 Quick Look。限制为图片 8MB、视频 50MB/3 分钟、PDF 20MB/200 页、其他受支持文档 15MB；每任务最多 10 个、合计 80MB。Codex 图片使用 app-server 的 `localImage` 输入，其余文件和 Claude 通过可信本机路径交给 runtime，但用户界面与 Agent 回复都不得泄露绝对路径。
+
 ## 客户端共享策略
 
 Feed 合并与优先级、outbox 语义键、重连退避、可撤回状态与快捷审批资格曾由 Web（TypeScript）与 iOS（Swift）各自手写并已开始漂移。现在规则集中在两处逐行对齐的实现：

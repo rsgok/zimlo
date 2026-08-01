@@ -1,5 +1,5 @@
 import { redactText, uuidV7 } from "@zimlo/adapters";
-import { isCommandCancelable, type Provider, type TaskCommand } from "@zimlo/protocol";
+import { isCommandCancelable, type Material, type Provider, type TaskCommand } from "@zimlo/protocol";
 import { ResumeService } from "./resume-service.js";
 import { RuntimeHub } from "./runtime.js";
 
@@ -9,6 +9,7 @@ interface CreateCommandInput {
   provider: Provider;
   workspaceId: string;
   text: string;
+  materialIds?: string[];
 }
 
 interface FollowUpCommandInput {
@@ -16,6 +17,7 @@ interface FollowUpCommandInput {
   idempotencyKey: string;
   sessionId: string;
   text: string;
+  materialIds?: string[];
 }
 
 export class TaskCommandService {
@@ -51,6 +53,7 @@ export class TaskCommandService {
       workspaceId: input.workspaceId,
       cwd: workspace?.path ?? "",
       text: input.text.trim(),
+      materialIds: input.materialIds ?? [],
       state: workspace ? "queued" : "failed",
       createdAt: now,
       updatedAt: now,
@@ -75,6 +78,7 @@ export class TaskCommandService {
       workspaceId: null,
       cwd: session?.cwd ?? "",
       text: input.text.trim(),
+      materialIds: input.materialIds ?? [],
       state: invalidReason ? "failed" : "queued",
       createdAt: now,
       updatedAt: now,
@@ -152,6 +156,10 @@ export class TaskCommandService {
     });
     current = this.runtime.updateTaskCommand({ ...current, state: "running", updatedAt: new Date().toISOString() });
     try {
+      const materials = await this.waitForMaterials(command.materialIds ?? []);
+      if (materials.some((value) => value === null)) throw new Error("有物料尚未上传完成，请在物料卡片中重试。");
+      const totalBytes = materials.reduce((sum, value) => sum + (value?.material.sizeBytes ?? 0), 0);
+      if (materials.length > 10 || totalBytes > 80 * 1024 * 1024) throw new Error("单个任务最多 10 个物料，总大小不能超过 80MB。");
       const result: { ok: boolean; message: string; sessionId?: string } = command.kind === "create"
         ? await this.resume.createTask(command.provider, command.cwd, command.text, (sessionId) => {
             current = this.runtime.updateTaskCommand({
@@ -159,8 +167,8 @@ export class TaskCommandService {
               sessionId,
               updatedAt: new Date().toISOString(),
             });
-          })
-        : await this.resume.sendMessage(command.sessionId!, command.text);
+          }, materials.flatMap((value) => value ? [value] : []))
+        : await this.resume.sendMessage(command.sessionId!, command.text, materials.flatMap((value) => value ? [value] : []));
       this.runtime.updateTaskCommand({
         ...current,
         ...(result.sessionId ? { sessionId: result.sessionId } : {}),
@@ -175,6 +183,20 @@ export class TaskCommandService {
         updatedAt: new Date().toISOString(),
         error: redactText(error instanceof Error ? error.message : String(error), 800),
       });
+    }
+  }
+
+  private async waitForMaterials(ids: string[]): Promise<Array<{ material: Material; path: string } | null>> {
+    const deadline = Date.now() + 30_000;
+    while (true) {
+      const values = ids.map((id) => {
+        const material = this.runtime.store.getMaterial(id);
+        const path = this.runtime.store.materialLocalPath(id);
+        return material?.status === "ready" && path ? { material, path } : null;
+      });
+      if (values.every((value) => value !== null)) return values;
+      if (ids.some((id) => this.runtime.store.getMaterial(id)?.status === "failed") || Date.now() >= deadline) return values;
+      await new Promise((resolve) => setTimeout(resolve, 100));
     }
   }
 

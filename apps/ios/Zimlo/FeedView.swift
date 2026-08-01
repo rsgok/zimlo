@@ -140,6 +140,10 @@ private struct PostCard: View {
     private var pendingActions: [PendingAction] {
         model.snapshot.actions.filter { post.pendingActionIds.contains($0.actionId) && $0.state == "pending" }
     }
+    private var mediaContent: FeedContent? {
+        guard let content = post.content, content.type != "text" else { return nil }
+        return content
+    }
     private var label: String {
         ["progress": "阶段成果", "decision": "新的判断", "attention": "需要关注", "result": "结果", "failure": "失败 / 风险"][post.kind] ?? "更新"
     }
@@ -156,23 +160,27 @@ private struct PostCard: View {
             }
             .foregroundStyle(ZColor.muted).padding(.top, 22)
 
-            Spacer(minLength: 28)
+            Spacer(minLength: mediaContent == nil ? 28 : 12)
+
+            if let mediaContent {
+                FeedMaterialCard(model: model, content: mediaContent)
+            }
 
             TimelineView(.periodic(from: .now, by: 30)) { _ in
                 Text(relative(post.createdAt))
                     .font(ZFont.footnote).foregroundStyle(ZColor.muted)
             }
             Text(post.headline)
-                .font(ZFont.hero)
+                .font(mediaContent == nil ? ZFont.hero : ZFont.title)
                 .lineSpacing(0)
-                .lineLimit(3).minimumScaleFactor(0.72)
-                .padding(.top, 12)
+                .lineLimit(mediaContent == nil ? 3 : 1).minimumScaleFactor(0.82)
+                .padding(.top, mediaContent == nil ? 12 : 10)
             Text(post.takeaway)
                 .font(ZFont.body)
                 .foregroundStyle(ZColor.ink.opacity(0.7))
-                .lineLimit(4).lineSpacing(4)
-                .padding(.top, 18)
-            if !post.highlights.isEmpty {
+                .lineLimit(mediaContent == nil ? 4 : 2).lineSpacing(mediaContent == nil ? 4 : 2)
+                .padding(.top, mediaContent == nil ? 18 : 6)
+            if mediaContent == nil, !post.highlights.isEmpty {
                 VStack(alignment: .leading, spacing: 10) {
                     ForEach(post.highlights.prefix(2), id: \.self) { fact in
                         HStack(alignment: .top, spacing: 10) {
@@ -183,9 +191,9 @@ private struct PostCard: View {
                 }.padding(.top, 18)
             }
 
-            Spacer(minLength: 22)
+            Spacer(minLength: mediaContent == nil ? 22 : 8)
 
-            VStack(alignment: .leading, spacing: 5) {
+            if mediaContent == nil || needsAction { VStack(alignment: .leading, spacing: 5) {
                 Text("下一步").font(ZFont.caption2).foregroundStyle(ZColor.sageText)
                 Text(nextAction).font(ZFont.subheadline.weight(.bold)).lineLimit(2)
             }
@@ -194,6 +202,7 @@ private struct PostCard: View {
             .background(ZColor.sage.opacity(0.09))
             .overlay(alignment: .leading) { Rectangle().fill(ZColor.sage).frame(width: 4) }
             .clipShape(RoundedRectangle(cornerRadius: ZRadius.control, style: .continuous))
+            }
 
             if !pendingActions.isEmpty {
                 ForEach(pendingActions) { action in

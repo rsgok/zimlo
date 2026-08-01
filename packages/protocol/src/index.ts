@@ -137,6 +137,62 @@ export type FeedTemplate = z.infer<typeof FeedTemplateSchema>;
 export const FeedActionSchema = z.enum(["approve", "reject", "reply", "open_diff"]);
 export type FeedAction = z.infer<typeof FeedActionSchema>;
 
+export const MaterialKindSchema = z.enum(["image", "video", "pdf", "document"]);
+export type MaterialKind = z.infer<typeof MaterialKindSchema>;
+
+export const MaterialStatusSchema = z.enum(["ready", "failed"]);
+export type MaterialStatus = z.infer<typeof MaterialStatusSchema>;
+
+// Material bytes never travel in snapshots or WebSocket messages. This safe
+// descriptor is all a paired client needs to render an attachment. Encryption
+// keys and temporary transport locations are accepted only by material.register
+// and are persisted separately on the Mac.
+export const MaterialSchema = z.object({
+  id: z.string().min(12).max(160),
+  kind: MaterialKindSchema,
+  name: z.string().min(1).max(180),
+  mimeType: z.string().min(1).max(120),
+  sizeBytes: z.number().int().positive().max(50 * 1024 * 1024),
+  sha256: z.string().regex(/^[a-f0-9]{64}$/u),
+  width: z.number().int().positive().max(20_000).optional(),
+  height: z.number().int().positive().max(20_000).optional(),
+  durationMs: z.number().int().positive().max(180_000).optional(),
+  previewMaterialId: z.string().min(12).max(160).optional(),
+  origin: z.enum(["user", "agent"]),
+  status: MaterialStatusSchema,
+  createdAt: z.string(),
+  error: z.string().max(500).optional(),
+});
+export type Material = z.infer<typeof MaterialSchema>;
+
+export const MaterialPublishInputSchema = z.object({
+  path: z.string().min(1).max(2_000),
+  name: z.string().min(1).max(180).optional(),
+});
+export type MaterialPublishInput = z.infer<typeof MaterialPublishInputSchema>;
+
+export const FeedContentSchema = z.discriminatedUnion("type", [
+  z.object({ type: z.literal("text") }),
+  z.object({
+    type: z.literal("image_album"),
+    materialIds: z.array(z.string()).min(1).max(10),
+    caption: z.string().max(240).optional(),
+  }),
+  z.object({
+    type: z.literal("video"),
+    materialId: z.string(),
+    posterMaterialId: z.string().optional(),
+    caption: z.string().max(240).optional(),
+  }),
+  z.object({
+    type: z.literal("document"),
+    materialId: z.string(),
+    coverMaterialId: z.string().optional(),
+    summary: z.string().max(320).optional(),
+  }),
+]);
+export type FeedContent = z.infer<typeof FeedContentSchema>;
+
 export const FeedPostInputSchema = z.object({
   task_id: z.string().min(1).max(160),
   kind: FeedPostKindSchema,
@@ -148,6 +204,7 @@ export const FeedPostInputSchema = z.object({
   action_required: z.boolean().default(false),
   action_prompt: z.string().min(1).max(240).optional(),
   actions: z.array(FeedActionSchema).max(4).default([]),
+  content: FeedContentSchema.optional(),
   dedupe_key: z.string().min(1).max(240),
 }).superRefine((post, context) => {
   if (post.action_required && !post.action_prompt) {
@@ -201,6 +258,7 @@ export const FeedPostSchema = z.object({
   actionRequired: z.boolean(),
   actionPrompt: z.string().optional(),
   actions: z.array(FeedActionSchema),
+  content: FeedContentSchema.optional(),
   pendingActionIds: z.array(z.string()),
   dedupeKey: z.string(),
   source: z.literal("agent"),
@@ -287,6 +345,7 @@ export const TaskCommandSchema = z.object({
   workspaceId: z.string().nullable(),
   cwd: z.string(),
   text: z.string(),
+  materialIds: z.array(z.string()).max(10).optional(),
   state: TaskCommandStateSchema,
   createdAt: z.string(),
   updatedAt: z.string(),
@@ -482,6 +541,7 @@ export const SnapshotSchema = z.object({
   sessions: z.array(SessionSchema),
   cards: z.array(FeedCardSchema),
   posts: z.array(FeedPostSchema),
+  materials: z.array(MaterialSchema).default([]),
   tasks: z.array(TaskRecordSchema),
   commands: z.array(TaskCommandSchema),
   workspaces: z.array(TrustedWorkspaceSchema),
@@ -516,6 +576,7 @@ export const ClientCommandSchema = z.discriminatedUnion("type", [
     type: z.literal("session.message"),
     sessionId: z.string(),
     text: z.string().min(1).max(20_000),
+    materialIds: z.array(z.string()).max(10).optional(),
     idempotencyKey: z.string(),
   }),
   z.object({
@@ -523,12 +584,21 @@ export const ClientCommandSchema = z.discriminatedUnion("type", [
     provider: ProviderSchema,
     workspaceId: z.string(),
     text: z.string().min(1).max(20_000),
+    materialIds: z.array(z.string()).max(10).optional(),
     idempotencyKey: z.string(),
   }),
   z.object({
     type: z.literal("task.follow_up"),
     sessionId: z.string(),
     text: z.string().min(1).max(20_000),
+    materialIds: z.array(z.string()).max(10).optional(),
+    idempotencyKey: z.string(),
+  }),
+  z.object({
+    type: z.literal("material.register"),
+    material: MaterialSchema.omit({ status: true, error: true }),
+    transport: z.enum(["local", "cloud"]),
+    encryptionKey: z.string().min(40).max(80),
     idempotencyKey: z.string(),
   }),
   z.object({
@@ -622,6 +692,7 @@ export type ServerMessage =
   | { type: "event.upsert"; event: UnifiedEvent }
   | { type: "card.upsert"; card: FeedCard }
   | { type: "feed.posted"; post: FeedPost }
+  | { type: "material.updated"; material: Material }
   | { type: "task.updated"; task: TaskRecord }
   | { type: "task.command.updated"; command: TaskCommand }
   | { type: "task.command.cancel.result"; commandId?: string; idempotencyKey?: string; ok: boolean; message: string }

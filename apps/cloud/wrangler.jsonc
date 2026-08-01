@@ -40,6 +40,10 @@
     {
       "binding": "RELEASES",
       "bucket_name": "zimlo-releases"
+    },
+    {
+      "binding": "MATERIALS",
+      "bucket_name": "zimlo-materials"
     }
   ],
   "durable_objects": {

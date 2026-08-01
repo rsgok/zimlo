@@ -20,6 +20,7 @@ import { SecureSocket } from "./secure-socket.js";
 import { TaskCommandService } from "./task-command-service.js";
 import { setTaskArchivedIdempotent, setTaskPinnedIdempotent } from "./task-preferences.js";
 import { ZIMLO_PROTOCOL_VERSION, ZIMLO_VERSION } from "./version.js";
+import { MATERIAL_LIMITS, MaterialService } from "./material-service.js";
 
 interface PairBody {
   pairingId?: string;
@@ -43,6 +44,7 @@ export class BridgeServer {
   private readonly devices: DeviceManager;
   private readonly taskCommands: TaskCommandService;
   private readonly cloud: CloudService;
+  private readonly materials: MaterialService;
   private readonly options: BridgeOptions;
   private readonly entrypoint: string;
   private readonly connections = new Set<SecureSocket>();
@@ -64,6 +66,7 @@ export class BridgeServer {
     this.devices = input.devices;
     this.taskCommands = input.taskCommands;
     this.cloud = input.cloud;
+    this.materials = new MaterialService(input.runtime, input.cloud);
     this.entrypoint = input.entrypoint;
     this.options = input.options;
   }
@@ -73,10 +76,11 @@ export class BridgeServer {
       if (process.env.ZIMLO_STARTUP_TRACE === "1") console.error(`[zimlo:bridge] ${phase}`);
     };
     trace("create-fastify");
-    const app = Fastify({ logger: false });
+    const app = Fastify({ logger: false, bodyLimit: MATERIAL_LIMITS.video + 64 });
     this.app = app;
     trace("register-websocket");
     await app.register(fastifyWebsocket);
+    app.addContentTypeParser("application/octet-stream", { parseAs: "buffer" }, (_request, body, done) => done(null, body));
 
     // Last-resort stable error shape: an unforeseen route failure must never
     // surface Fastify's default "Internal Server Error" to the macOS app.
@@ -100,6 +104,66 @@ export class BridgeServer {
     });
 
     app.get("/healthz", async () => ({ ok: true, version: ZIMLO_VERSION, protocolVersion: ZIMLO_PROTOCOL_VERSION, features: this.runtime.features() }));
+    app.put("/api/materials/:materialId/blob", async (request, reply) => {
+      const materialId = (request.params as { materialId?: string }).materialId ?? "";
+      const body = request.body;
+      if (!Buffer.isBuffer(body)) return reply.code(400).send({ code: "material_body_required", message: "物料内容为空。" });
+      const deviceId = String(request.headers["x-zimlo-device-id"] ?? "");
+      if (!isLoopbackAddress(request.ip)) {
+        const timestamp = String(request.headers["x-zimlo-timestamp"] ?? "");
+        const proof = String(request.headers["x-zimlo-proof"] ?? "");
+        if (!this.materials.verifyLocalProof(deviceId, materialId, timestamp, body.length, proof)) {
+          return reply.code(401).send({ code: "material_upload_unauthorized", message: "物料上传认证失败。" });
+        }
+      }
+      const owner = deviceId || this.devices.localAdmin().id;
+      try {
+        this.materials.receiveLocalBlob(owner, materialId, body);
+        return reply.code(201).send({ ok: true, materialId });
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        return reply.code(message === "material_too_large" ? 413 : 400).send({ code: message, message: "物料上传失败。" });
+      }
+    });
+    app.get("/api/materials/:materialId/content", async (request, reply) => {
+      const materialId = (request.params as { materialId?: string }).materialId ?? "";
+      if (!isLoopbackAddress(request.ip)) {
+        const deviceId = String(request.headers["x-zimlo-device-id"] ?? "");
+        const timestamp = String(request.headers["x-zimlo-timestamp"] ?? "");
+        const proof = String(request.headers["x-zimlo-proof"] ?? "");
+        if (!this.materials.verifyContentProof(deviceId, materialId, timestamp, proof)) {
+          return reply.code(401).send({ code: "material_download_unauthorized", message: "物料读取认证失败。" });
+        }
+      }
+      const result = this.materials.content(materialId);
+      if (!result) return reply.code(404).send({ code: "material_not_found", message: "物料尚不可用。" });
+      const range = String(request.headers.range ?? "");
+      const match = /^bytes=(\d+)-(\d*)$/u.exec(range);
+      if (match) {
+        const start = Number(match[1]);
+        const requestedEnd = match[2] ? Number(match[2]) : result.data.length - 1;
+        const end = Math.min(requestedEnd, result.data.length - 1);
+        if (!Number.isSafeInteger(start) || !Number.isSafeInteger(end) || start < 0 || start > end || start >= result.data.length) {
+          return reply.code(416).header("content-range", `bytes */${result.data.length}`).send();
+        }
+        return reply.code(206)
+          .header("content-type", result.material.mimeType)
+          .header("content-range", `bytes ${start}-${end}/${result.data.length}`)
+          .header("content-length", String(end - start + 1))
+          .header("accept-ranges", "bytes")
+          .header("cache-control", "private, max-age=300")
+          .header("x-content-type-options", "nosniff")
+          .send(result.data.subarray(start, end + 1));
+      }
+      return reply
+        .header("content-type", result.material.mimeType)
+        .header("content-length", String(result.data.length))
+        .header("accept-ranges", "bytes")
+        .header("content-disposition", `inline; filename*=UTF-8''${encodeURIComponent(result.material.name)}`)
+        .header("cache-control", "private, max-age=300")
+        .header("x-content-type-options", "nosniff")
+        .send(result.data);
+    });
     app.get("/api/local-bootstrap", async (request, reply) => {
       if (!isLoopbackAddress(request.ip)) return reply.code(403).send(loopbackOnly());
       try {
@@ -364,6 +428,7 @@ export class BridgeServer {
           deviceId,
           sessionId: command.sessionId,
           text: command.text,
+          materialIds: command.materialIds ?? [],
           idempotencyKey: command.idempotencyKey,
         });
         connection.send({
@@ -380,6 +445,7 @@ export class BridgeServer {
           provider: command.provider,
           workspaceId: command.workspaceId,
           text: command.text,
+          materialIds: command.materialIds ?? [],
           idempotencyKey: command.idempotencyKey,
         });
         return;
@@ -389,8 +455,13 @@ export class BridgeServer {
           deviceId,
           sessionId: command.sessionId,
           text: command.text,
+          materialIds: command.materialIds ?? [],
           idempotencyKey: command.idempotencyKey,
         });
+        return;
+      }
+      case "material.register": {
+        await this.materials.register(deviceId, command);
         return;
       }
       case "task.command.retry": {
@@ -502,6 +573,7 @@ export class BridgeServer {
             deviceId,
             sessionId: current.sessionId,
             text: command.note!.trim(),
+            materialIds: [],
             idempotencyKey: `review:${command.idempotencyKey}`,
           });
           if (queued.state === "failed") {

@@ -5,6 +5,7 @@ import { EMPTY_CAPABILITIES, type Decision, type Session, type UnifiedEvent } fr
 import { ActionBroker } from "./action-broker.js";
 import { RuntimeHub } from "./runtime.js";
 import { approvalContextForCommand, approvalContextForFile } from "./trust-policy.js";
+import type { ResolvedMaterial } from "./resume-service.js";
 
 type JsonRecord = Record<string, unknown>;
 type RequestId = string | number;
@@ -203,7 +204,7 @@ export class CodexAppServer {
     return record(result.thread);
   }
 
-  async runTurn(text: string): Promise<JsonRecord> {
+  async runTurn(text: string, materials: ResolvedMaterial[] = []): Promise<JsonRecord> {
     const thread = await this.inspectThread();
     if (record(thread.status).type === "active") {
       throw new Error("Codex app-server 报告该 Session 仍处于活跃状态，Zimlo 不会并发恢复。" );
@@ -214,7 +215,7 @@ export class CodexAppServer {
     });
     const response = record(await this.request("turn/start", {
       threadId: this.session.providerSessionId,
-      input: [{ type: "text", text }],
+      input: turnInput(text, materials),
       ...(this.session.cwd ? { cwd: this.session.cwd } : {}),
     }));
     const turn = record(response.turn);
@@ -224,7 +225,7 @@ export class CodexAppServer {
     return this.waitForTurn(turnId);
   }
 
-  async runNewThread(text: string, onSession?: (sessionId: string) => void): Promise<{ session: Session; turn: JsonRecord }> {
+  async runNewThread(text: string, onSession?: (sessionId: string) => void, materials: ResolvedMaterial[] = []): Promise<{ session: Session; turn: JsonRecord }> {
     await this.start();
     const response = record(await this.request("thread/start", {
       model: null,
@@ -275,7 +276,7 @@ export class CodexAppServer {
     onSession?.(this.session.id);
     const turnResponse = record(await this.request("turn/start", {
       threadId,
-      input: [{ type: "text", text }],
+      input: turnInput(text, materials),
       ...(this.session.cwd ? { cwd: this.session.cwd } : {}),
     }));
     const turn = record(turnResponse.turn);
@@ -596,4 +597,13 @@ export class CodexAppServer {
     for (const actionId of this.serverActions.values()) this.broker.expire(actionId);
     this.serverActions.clear();
   }
+}
+
+function turnInput(text: string, materials: ResolvedMaterial[]): JsonRecord[] {
+  const other = materials.filter(({ material }) => material.kind !== "image");
+  const materialText = other.length === 0 ? text : `${text}\n\nZimlo 已将用户物料保存到以下本机路径，请按需读取且不要在回复中泄露绝对路径：\n${other.map(({ material, path }) => `- ${material.name} (${material.mimeType}): ${path}`).join("\n")}`;
+  return [
+    { type: "text", text: materialText },
+    ...materials.filter(({ material }) => material.kind === "image").map(({ path }) => ({ type: "localImage", path })),
+  ];
 }

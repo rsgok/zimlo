@@ -1,6 +1,6 @@
 import { randomInt, randomUUID } from "node:crypto";
 import { chmodSync, existsSync, mkdirSync } from "node:fs";
-import { dirname } from "node:path";
+import { dirname, join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { redactText, redactUnknown } from "@zimlo/adapters";
 import { FEATURE_CAPABILITIES, USER_AVATAR_IDS } from "@zimlo/protocol";
@@ -10,6 +10,8 @@ import type {
   FeedPost,
   FeedPostKind,
   FeedTemplate,
+  FeedContent,
+  Material,
   NotificationSettings,
   PendingAction,
   Project,
@@ -65,6 +67,7 @@ interface StoredFeedContentV2 {
   highlights: string[];
   proof?: string;
   actionPrompt?: string;
+  content?: FeedContent;
 }
 
 function defaultTemplate(kind: string): FeedTemplate {
@@ -97,8 +100,10 @@ export function isForeignKeyConstraintFailure(error: unknown): boolean {
 
 export class ZimloStore {
   readonly database: DatabaseSync;
+  readonly rootPath: string;
 
   constructor(path: string) {
+    this.rootPath = dirname(path);
     mkdirSync(dirname(path), { recursive: true, mode: 0o700 });
     this.database = new DatabaseSync(path);
     this.database.exec("PRAGMA journal_mode=WAL; PRAGMA foreign_keys=ON; PRAGMA synchronous=NORMAL;");
@@ -108,6 +113,11 @@ export class ZimloStore {
 
   close(): void {
     this.database.close();
+  }
+
+  materialStoragePaths(): { materials: string; staging: string } {
+    const materials = join(this.rootPath, "materials");
+    return { materials, staging: join(materials, ".staging") };
   }
 
   getMetadata(key: string): string | null {
@@ -218,6 +228,25 @@ export class ZimloStore {
       );
       CREATE INDEX IF NOT EXISTS feed_posts_timeline_idx ON feed_posts(action_required DESC, created_at DESC);
 
+      CREATE TABLE IF NOT EXISTS materials (
+        id TEXT PRIMARY KEY,
+        kind TEXT NOT NULL,
+        name TEXT NOT NULL,
+        mime_type TEXT NOT NULL,
+        size_bytes INTEGER NOT NULL,
+        sha256 TEXT NOT NULL,
+        width INTEGER,
+        height INTEGER,
+        duration_ms INTEGER,
+        preview_material_id TEXT,
+        origin TEXT NOT NULL,
+        status TEXT NOT NULL,
+        local_path TEXT,
+        created_at TEXT NOT NULL,
+        error TEXT
+      );
+      CREATE INDEX IF NOT EXISTS materials_created_idx ON materials(created_at DESC);
+
       CREATE TABLE IF NOT EXISTS tasks (
         id TEXT PRIMARY KEY,
         run_id TEXT NOT NULL,
@@ -238,6 +267,7 @@ export class ZimloStore {
         workspace_id TEXT,
         cwd TEXT NOT NULL,
         text TEXT NOT NULL,
+        material_ids_json TEXT NOT NULL DEFAULT '[]',
         state TEXT NOT NULL,
         created_at TEXT NOT NULL,
         updated_at TEXT NOT NULL,
@@ -400,6 +430,10 @@ export class ZimloStore {
     }
     if (!feedColumns.some((column) => column.name === "project_id")) {
       this.database.exec("ALTER TABLE feed_posts ADD COLUMN project_id TEXT REFERENCES projects(id) ON DELETE SET NULL");
+    }
+    const taskCommandColumns = this.database.prepare("PRAGMA table_info(task_commands)").all() as Array<{ name: string }>;
+    if (!taskCommandColumns.some((column) => column.name === "material_ids_json")) {
+      this.database.exec("ALTER TABLE task_commands ADD COLUMN material_ids_json TEXT NOT NULL DEFAULT '[]'");
     }
     const projectColumns = this.database.prepare("PRAGMA table_info(projects)").all() as Array<{ name: string }>;
     if (!projectColumns.some((column) => column.name === "identity_key")) this.database.exec("ALTER TABLE projects ADD COLUMN identity_key TEXT");
@@ -683,6 +717,7 @@ export class ZimloStore {
             highlights: (content.highlights ?? []).slice(0, 3).map((highlight) => redactText(highlight, 100)),
             ...(content.proof ? { proof: redactText(content.proof, 160) } : {}),
             ...(content.actionPrompt ? { actionPrompt: redactText(content.actionPrompt, 240) } : {}),
+            ...(content.content ? { content: content.content } : {}),
           };
           updatePost.run(JSON.stringify(sanitized), sanitized.headline, sanitized.takeaway, post.id);
         } catch {
@@ -969,6 +1004,7 @@ export class ZimloStore {
         highlights: post.highlights,
         ...(post.proof ? { proof: post.proof } : {}),
         ...(post.actionPrompt ? { actionPrompt: post.actionPrompt } : {}),
+        ...(post.content ? { content: post.content } : {}),
       } satisfies StoredFeedContentV2),
     );
     if (result.changes > 0) {
@@ -993,6 +1029,42 @@ export class ZimloStore {
       ORDER BY action_required DESC, created_at DESC
       LIMIT 200
     `).all() as Record<string, unknown>[]).map((row) => this.feedPostFromRow(row));
+  }
+
+  upsertMaterial(material: Material, localPath: string | null): Material {
+    this.database.prepare(`
+      INSERT INTO materials (
+        id, kind, name, mime_type, size_bytes, sha256, width, height, duration_ms,
+        preview_material_id, origin, status, local_path, created_at, error
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(id) DO UPDATE SET
+        kind = excluded.kind, name = excluded.name, mime_type = excluded.mime_type,
+        size_bytes = excluded.size_bytes, sha256 = excluded.sha256,
+        width = excluded.width, height = excluded.height, duration_ms = excluded.duration_ms,
+        preview_material_id = excluded.preview_material_id, origin = excluded.origin,
+        status = excluded.status, local_path = excluded.local_path, error = excluded.error
+    `).run(
+      material.id, material.kind, material.name, material.mimeType, material.sizeBytes, material.sha256,
+      material.width ?? null, material.height ?? null, material.durationMs ?? null,
+      material.previewMaterialId ?? null, material.origin, material.status, localPath,
+      material.createdAt, material.error ?? null,
+    );
+    return this.getMaterial(material.id) ?? material;
+  }
+
+  getMaterial(id: string): Material | null {
+    const row = this.database.prepare("SELECT * FROM materials WHERE id = ?").get(id) as Record<string, unknown> | undefined;
+    return row ? this.materialFromRow(row) : null;
+  }
+
+  materialLocalPath(id: string): string | null {
+    const row = this.database.prepare("SELECT local_path FROM materials WHERE id = ?").get(id) as { local_path: string | null } | undefined;
+    return row?.local_path ?? null;
+  }
+
+  listMaterials(): Material[] {
+    return (this.database.prepare("SELECT * FROM materials ORDER BY created_at DESC LIMIT 500").all() as Record<string, unknown>[])
+      .map((row) => this.materialFromRow(row));
   }
 
   latestFeedPost(agentId: string, runId: string, since: string): FeedPost | null {
@@ -1069,8 +1141,8 @@ export class ZimloStore {
     const result = this.database.prepare(`
       INSERT OR IGNORE INTO task_commands (
         id, idempotency_key, kind, provider, session_id, workspace_id, cwd,
-        text, state, created_at, updated_at, error
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        text, material_ids_json, state, created_at, updated_at, error
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
       command.id,
       command.idempotencyKey,
@@ -1080,6 +1152,7 @@ export class ZimloStore {
       command.workspaceId,
       command.cwd,
       command.text,
+      JSON.stringify(command.materialIds ?? []),
       command.state,
       command.createdAt,
       command.updatedAt,
@@ -1093,7 +1166,7 @@ export class ZimloStore {
   updateTaskCommand(command: TaskCommand): TaskCommand {
     this.database.prepare(`
       UPDATE task_commands SET
-        session_id = ?, workspace_id = ?, cwd = ?, text = ?, state = ?,
+        session_id = ?, workspace_id = ?, cwd = ?, text = ?, material_ids_json = ?, state = ?,
         updated_at = ?, error = ?
       WHERE id = ?
     `).run(
@@ -1101,6 +1174,7 @@ export class ZimloStore {
       command.workspaceId,
       command.cwd,
       command.text,
+      JSON.stringify(command.materialIds ?? []),
       command.state,
       command.updatedAt,
       command.error ?? null,
@@ -1673,6 +1747,7 @@ export class ZimloStore {
       sessions: this.listSessions(),
       cards: [],
       posts: this.listFeedPosts(),
+      materials: this.listMaterials(),
       tasks: this.listTasks(),
       commands: this.listTaskCommands(),
       workspaces,
@@ -1822,6 +1897,7 @@ export class ZimloStore {
       actionRequired: Number(row.action_required) === 1,
       ...(Number(row.action_required) === 1 && content.actionPrompt ? { actionPrompt: content.actionPrompt } : {}),
       actions: json<FeedPost["actions"]>(String(row.actions_json)),
+      content: content.content ?? { type: "text" },
       pendingActionIds: json<string[]>(String(row.pending_action_ids_json)),
       dedupeKey: String(row.dedupe_key),
       source: "agent",
@@ -1851,10 +1927,30 @@ export class ZimloStore {
       workspaceId: row.workspace_id === null ? null : String(row.workspace_id),
       cwd: String(row.cwd),
       text: String(row.text),
+      materialIds: row.material_ids_json ? json<string[]>(String(row.material_ids_json)) : [],
       state: row.state as TaskCommand["state"],
       createdAt: String(row.created_at),
       updatedAt: String(row.updated_at),
       ...(row.error === null ? {} : { error: String(row.error) }),
+    };
+  }
+
+  private materialFromRow(row: Record<string, unknown>): Material {
+    return {
+      id: String(row.id),
+      kind: row.kind as Material["kind"],
+      name: String(row.name),
+      mimeType: String(row.mime_type),
+      sizeBytes: Number(row.size_bytes),
+      sha256: String(row.sha256),
+      ...(row.width === null || row.width === undefined ? {} : { width: Number(row.width) }),
+      ...(row.height === null || row.height === undefined ? {} : { height: Number(row.height) }),
+      ...(row.duration_ms === null || row.duration_ms === undefined ? {} : { durationMs: Number(row.duration_ms) }),
+      ...(row.preview_material_id ? { previewMaterialId: String(row.preview_material_id) } : {}),
+      origin: row.origin as Material["origin"],
+      status: row.status as Material["status"],
+      createdAt: String(row.created_at),
+      ...(row.error ? { error: String(row.error) } : {}),
     };
   }
 

@@ -116,10 +116,12 @@ export type SemanticCommandFields = { type: string } & Record<string, unknown>;
 export function semanticCommandKey(command: SemanticCommandFields): string {
   switch (command.type) {
     case "task.create":
-      return `${command.type}:${textField(command, "provider")}:${textField(command, "workspaceId")}:${textField(command, "text")}`;
+      return withMaterialIds(`${command.type}:${textField(command, "provider")}:${textField(command, "workspaceId")}:${textField(command, "text")}`, command.materialIds);
     case "task.follow_up":
     case "session.message":
-      return `${command.type}:${textField(command, "sessionId")}:${textField(command, "text")}`;
+      return withMaterialIds(`${command.type}:${textField(command, "sessionId")}:${textField(command, "text")}`, command.materialIds);
+    case "material.register":
+      return `${command.type}:${textField(recordField(command, "material"), "id")}`;
     case "task.command.retry":
       return `${command.type}:${textField(command, "commandId")}`;
     case "task.command.cancel":
@@ -148,6 +150,15 @@ export function semanticCommandKey(command: SemanticCommandFields): string {
       return `${command.type}:${stableStringify(fields)}`;
     }
   }
+}
+
+function withMaterialIds(base: string, value: unknown): string {
+  return Array.isArray(value) && value.length > 0 ? `${base}:${stableStringify(value)}` : base;
+}
+
+function recordField(command: Record<string, unknown>, key: string): Record<string, unknown> {
+  const value = command[key];
+  return value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : {};
 }
 
 function textField(command: Record<string, unknown>, key: string): string {

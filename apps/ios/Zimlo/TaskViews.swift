@@ -1,4 +1,6 @@
+import PhotosUI
 import SwiftUI
+import UniformTypeIdentifiers
 
 struct TaskDetailView: View {
     @ObservedObject var model: AppModel
@@ -403,6 +405,13 @@ private struct TimelineRow: View {
     let project: Project?
     let userAvatar: String
     let details: [String]
+    @State private var previewURL: URL?
+    @State private var materialMessage: String?
+
+    private var commandMaterials: [Material] {
+        guard case .command(let command) = item else { return [] }
+        return (command.materialIds ?? []).compactMap { id in model.snapshot.materials.first { $0.id == id } }
+    }
 
     var body: some View {
         HStack(alignment: .top, spacing: 11) {
@@ -417,6 +426,30 @@ private struct TimelineRow: View {
                 }
                 if !title.isEmpty { Text(title).font(ZFont.headline) }
                 Text(summary).font(ZFont.subheadline).lineSpacing(3).lineLimit(6)
+                if !commandMaterials.isEmpty {
+                    ScrollView(.horizontal) {
+                        HStack(spacing: 8) {
+                            ForEach(commandMaterials) { material in
+                                Button {
+                                    Task {
+                                        do { previewURL = try await model.localURL(for: material) }
+                                        catch { materialMessage = error.localizedDescription }
+                                    }
+                                } label: {
+                                    HStack(spacing: 7) {
+                                        MaterialThumbnail(material: material, url: MaterialCache.url(for: material))
+                                        Text(material.name).font(ZFont.caption).lineLimit(1)
+                                    }
+                                    .padding(6).padding(.trailing, 7).foregroundStyle(ZColor.ink).background(ZColor.raised)
+                                    .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+                                }
+                                .buttonStyle(.plain)
+                            }
+                        }
+                    }
+                    .scrollIndicators(.hidden)
+                }
+                if let materialMessage { Text(materialMessage).font(ZFont.caption2).foregroundStyle(ZColor.muted) }
                 if case .command(let command) = item, command.state == "failed" {
                     Button("重试") { model.retry(commandId: command.id) }
                         .font(ZFont.caption)
@@ -435,6 +468,9 @@ private struct TimelineRow: View {
         }
         .padding(.horizontal, 16).padding(.vertical, 14)
         .overlay(alignment: .bottom) { Rectangle().fill(ZColor.line).frame(height: 1) }
+        .sheet(isPresented: Binding(get: { previewURL != nil }, set: { if !$0 { previewURL = nil } })) {
+            if let previewURL { QuickLookSheet(url: previewURL).ignoresSafeArea() }
+        }
     }
 
     @ViewBuilder private var avatar: some View {
@@ -479,6 +515,14 @@ struct NewTaskView: View {
     @State private var search = ""
     @State private var choosingAgent = false
     @State private var submitting = false
+    @State private var selectedPhotos: [PhotosPickerItem] = []
+    @State private var showingFileImporter = false
+    @State private var preparedMaterials: [PreparedMobileMaterial] = []
+    @State private var failedMaterials: [PreparedMobileMaterial] = []
+    @State private var uploadsInFlight = 0
+    @State private var materialError: String?
+
+    private var materialCount: Int { preparedMaterials.count + failedMaterials.count }
 
     private var selectedWorkspace: TrustedWorkspace? {
         model.snapshot.workspaces.first { $0.id == lastWorkspace }
@@ -520,6 +564,75 @@ struct NewTaskView: View {
                                 placeholder: "例如：检查首页白屏原因，修复后跑完测试并告诉我结果…",
                                 minHeight: 150
                             )
+                            HStack(spacing: 10) {
+                                PhotosPicker(
+                                    selection: $selectedPhotos,
+                                    maxSelectionCount: max(0, MaterialPolicy.maxCount - materialCount),
+                                    matching: .any(of: [.images, .videos])
+                                ) {
+                                    Label("照片或视频", systemImage: "photo.on.rectangle")
+                                }
+                                Button { showingFileImporter = true } label: {
+                                    Label("文件", systemImage: "paperclip")
+                                }
+                                Spacer()
+                                if uploadsInFlight > 0 { ProgressView().controlSize(.small) }
+                                Text("\(materialCount)/\(MaterialPolicy.maxCount)")
+                                    .font(ZFont.caption2).foregroundStyle(ZColor.muted)
+                            }
+                            .font(ZFont.caption.weight(.bold))
+                            .buttonStyle(.bordered)
+
+                            if !preparedMaterials.isEmpty {
+                                LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: 8) {
+                                    ForEach(preparedMaterials) { prepared in
+                                        HStack(spacing: 8) {
+                                            MaterialThumbnail(material: prepared.material, url: prepared.localURL)
+                                            VStack(alignment: .leading, spacing: 3) {
+                                                Text(prepared.material.name).font(ZFont.caption).lineLimit(1)
+                                                Text(formatBytes(prepared.material.sizeBytes)).font(ZFont.caption2).foregroundStyle(ZColor.muted)
+                                            }
+                                            Spacer(minLength: 0)
+                                            Button {
+                                                preparedMaterials.removeAll { $0.id == prepared.id }
+                                            } label: { Image(systemName: "xmark.circle.fill") }
+                                            .buttonStyle(.plain).foregroundStyle(ZColor.muted)
+                                        }
+                                        .padding(7).background(ZColor.raised)
+                                        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+                                    }
+                                }
+                            }
+                            if !failedMaterials.isEmpty {
+                                LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: 8) {
+                                    ForEach(failedMaterials) { prepared in
+                                        VStack(alignment: .leading, spacing: 7) {
+                                            HStack(spacing: 8) {
+                                                MaterialThumbnail(material: prepared.material, url: prepared.localURL)
+                                                VStack(alignment: .leading, spacing: 3) {
+                                                    Text(prepared.material.name).font(ZFont.caption).lineLimit(1)
+                                                    Text("上传未完成").font(ZFont.caption2).foregroundStyle(ZColor.coralText)
+                                                }
+                                                Spacer(minLength: 0)
+                                                Button {
+                                                    failedMaterials.removeAll { $0.id == prepared.id }
+                                                } label: { Image(systemName: "xmark.circle.fill") }
+                                                .buttonStyle(.plain).foregroundStyle(ZColor.muted)
+                                            }
+                                            Button("重试上传") { Task { await retryMaterial(prepared) } }
+                                                .font(ZFont.caption.weight(.bold))
+                                                .buttonStyle(.bordered)
+                                                .disabled(uploadsInFlight > 0)
+                                        }
+                                        .padding(7).background(ZColor.coral.opacity(0.07))
+                                        .overlay(RoundedRectangle(cornerRadius: 12, style: .continuous).stroke(ZColor.coral.opacity(0.28)))
+                                        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+                                    }
+                                }
+                            }
+                            if let materialError {
+                                Text(materialError).font(ZFont.caption2).foregroundStyle(ZColor.coralText)
+                            }
                             Text("直接描述想要的结果；Agent 会自己拆解步骤，需要决定时再来找你。")
                                 .font(ZFont.caption2).foregroundStyle(ZColor.muted)
                         }
@@ -640,7 +753,8 @@ struct NewTaskView: View {
                         let didPersist = model.createTask(
                             provider: selectedProvider,
                             workspaceId: lastWorkspace,
-                            text: text.trimmingCharacters(in: .whitespacesAndNewlines)
+                            text: text.trimmingCharacters(in: .whitespacesAndNewlines),
+                            materialIds: preparedMaterials.map(\.id)
                         )
                         if didPersist {
                             text = ""
@@ -654,7 +768,7 @@ struct NewTaskView: View {
                     }
                     .buttonStyle(ActionButtonStyle(primary: true))
                     .frame(width: 142)
-                    .disabled(submitting || lastWorkspace.isEmpty || text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                    .disabled(submitting || uploadsInFlight > 0 || !failedMaterials.isEmpty || lastWorkspace.isEmpty || text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
                 }
                 .padding(.horizontal, 20).padding(.vertical, 13)
                 .background(ZColor.paper)
@@ -665,6 +779,29 @@ struct NewTaskView: View {
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) { Button("取消") { dismiss() }.foregroundStyle(ZColor.ink) }
+            }
+            .fileImporter(
+                isPresented: $showingFileImporter,
+                allowedContentTypes: [.pdf, .plainText, .commaSeparatedText, .json, .image, .movie, .data],
+                allowsMultipleSelection: true
+            ) { result in
+                guard case .success(let urls) = result else { return }
+                Task { await addFiles(urls) }
+            }
+            .onChange(of: selectedPhotos) { _, items in
+                guard !items.isEmpty else { return }
+                Task {
+                    for item in items {
+                        guard let data = try? await item.loadTransferable(type: Data.self) else {
+                            materialError = "无法读取所选照片或视频"
+                            continue
+                        }
+                        let type = item.supportedContentTypes.first ?? .jpeg
+                        let ext = type.preferredFilenameExtension ?? (type.conforms(to: .movie) ? "mov" : "jpg")
+                        await addMaterial(data: data, name: "素材.\(ext)", mimeType: type.preferredMIMEType ?? "application/octet-stream")
+                    }
+                    selectedPhotos = []
+                }
             }
             .onAppear {
                 if let projectId = model.newTaskProjectId,
@@ -705,5 +842,70 @@ struct NewTaskView: View {
     private func persistTaskDraft() {
         if text.isEmpty { UserDefaults.standard.removeObject(forKey: "zimlo.newTaskDraft") }
         else { UserDefaults.standard.set(text, forKey: "zimlo.newTaskDraft") }
+    }
+
+    private func addFiles(_ urls: [URL]) async {
+        for url in urls {
+            let scoped = url.startAccessingSecurityScopedResource()
+            defer { if scoped { url.stopAccessingSecurityScopedResource() } }
+            do {
+                let values = try url.resourceValues(forKeys: [.contentTypeKey])
+                let data = try Data(contentsOf: url, options: .mappedIfSafe)
+                await addMaterial(
+                    data: data, name: url.lastPathComponent,
+                    mimeType: values.contentType?.preferredMIMEType ?? "application/octet-stream"
+                )
+            } catch {
+                materialError = "无法读取 \(url.lastPathComponent)"
+            }
+        }
+    }
+
+    private func addMaterial(data: Data, name: String, mimeType: String) async {
+        guard materialCount + uploadsInFlight < MaterialPolicy.maxCount else {
+            materialError = "每个任务最多添加 \(MaterialPolicy.maxCount) 个物料"
+            return
+        }
+        let currentBytes = (preparedMaterials + failedMaterials).reduce(0) { $0 + $1.material.sizeBytes }
+        guard currentBytes + data.count <= MaterialPolicy.maxTotalBytes else {
+            materialError = "单个任务的物料总大小不能超过 80MB"
+            return
+        }
+        uploadsInFlight += 1
+        materialError = nil
+        defer { uploadsInFlight -= 1 }
+        var prepared: PreparedMobileMaterial?
+        do {
+            let value = try await MaterialPolicy.prepare(data: data, name: name, mimeType: mimeType)
+            prepared = value
+            _ = try await model.uploadAndRegister(value)
+            preparedMaterials.append(value)
+        } catch {
+            if let prepared, !failedMaterials.contains(where: { $0.id == prepared.id }) {
+                failedMaterials.append(prepared)
+            }
+            materialError = error.localizedDescription
+        }
+    }
+
+    private func retryMaterial(_ prepared: PreparedMobileMaterial) async {
+        guard uploadsInFlight == 0 else { return }
+        uploadsInFlight += 1
+        materialError = nil
+        defer { uploadsInFlight -= 1 }
+        do {
+            _ = try await model.uploadAndRegister(prepared)
+            failedMaterials.removeAll { $0.id == prepared.id }
+            if !preparedMaterials.contains(where: { $0.id == prepared.id }) {
+                preparedMaterials.append(prepared)
+            }
+        } catch {
+            materialError = error.localizedDescription
+        }
+    }
+
+    private func formatBytes(_ bytes: Int) -> String {
+        if bytes >= 1_024 * 1_024 { return String(format: "%.1fMB", Double(bytes) / 1_024 / 1_024) }
+        return "\(max(1, bytes / 1_024))KB"
     }
 }

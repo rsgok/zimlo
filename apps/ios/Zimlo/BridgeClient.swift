@@ -174,6 +174,88 @@ final class BridgeClient: ObservableObject {
         }
     }
 
+    /// Material bytes deliberately bypass the WebSocket. The socket only carries
+    /// small encrypted control messages; uploads use HTTPS so back-pressure,
+    /// retries and Cloudflare limits cannot stall approvals or live task updates.
+    func uploadMaterial(_ prepared: PreparedMobileMaterial) async throws -> String {
+        guard let credentials else { throw MaterialError.message("请先连接 Mac") }
+        let remote = usingRemoteRelay
+        let baseURL: URL
+        if remote {
+            guard let relay = credentials.remoteRelayURL, credentials.remoteAccessToken != nil else {
+                throw MaterialError.message("远程物料中转尚不可用，请连接 Mac 后重试")
+            }
+            baseURL = relay
+        } else {
+            baseURL = credentials.bridgeURL
+        }
+        var components = URLComponents(url: baseURL, resolvingAgainstBaseURL: false)
+        components?.path = remote
+            ? "/v1/materials/\(prepared.id)"
+            : "/api/materials/\(prepared.id)/blob"
+        guard let url = components?.url else { throw MaterialError.message("物料上传地址无效") }
+        var request = URLRequest(url: url)
+        request.httpMethod = "PUT"
+        request.setValue("application/octet-stream", forHTTPHeaderField: "Content-Type")
+        if remote {
+            request.setValue("Bearer \(credentials.remoteAccessToken ?? "")", forHTTPHeaderField: "Authorization")
+        } else {
+            let timestamp = ISO8601DateFormatter().string(from: Date())
+            guard let deviceKey = ZimloCrypto.fromBase64URL(credentials.deviceKey) else {
+                throw MaterialError.message("设备密钥无效，请重新配对")
+            }
+            request.setValue(credentials.deviceId, forHTTPHeaderField: "X-Zimlo-Device-Id")
+            request.setValue(timestamp, forHTTPHeaderField: "X-Zimlo-Timestamp")
+            request.setValue(
+                ZimloCrypto.proof(key: deviceKey, message: "material-upload:\(prepared.id):\(timestamp):\(prepared.encryptedData.count)"),
+                forHTTPHeaderField: "X-Zimlo-Proof"
+            )
+        }
+        let (data, response) = try await URLSession.shared.upload(for: request, from: prepared.encryptedData)
+        guard let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode) else {
+            let status = (response as? HTTPURLResponse)?.statusCode
+            if status == 413 { throw MaterialError.message("文件超过上传限制") }
+            if remote, status == 404 {
+                throw MaterialError.message("云端物料服务尚未启用，请连接 Mac 本地重试")
+            }
+            if status == 401 || status == 403 {
+                throw MaterialError.message("物料上传认证已失效，请重新连接 Mac")
+            }
+            if let payload = try? JSONDecoder().decode(MaterialUploadErrorPayload.self, from: data),
+               !payload.message.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                throw MaterialError.message(payload.message)
+            }
+            throw MaterialError.message(status.map { "物料上传失败（HTTP \($0)），请重试" } ?? "物料上传失败，请重试")
+        }
+        return remote ? "cloud" : "local"
+    }
+
+    func downloadMaterial(_ material: Material) async throws -> URL {
+        if let cached = MaterialCache.url(for: material) { return cached }
+        guard !usingRemoteRelay, let credentials,
+              let deviceKey = ZimloCrypto.fromBase64URL(credentials.deviceKey) else {
+            throw MaterialError.message("连接到 Mac 后即可查看这个物料")
+        }
+        var components = URLComponents(url: credentials.bridgeURL, resolvingAgainstBaseURL: false)
+        components?.path = "/api/materials/\(material.id)/content"
+        guard let url = components?.url else { throw MaterialError.message("物料地址无效") }
+        let timestamp = ISO8601DateFormatter().string(from: Date())
+        var request = URLRequest(url: url)
+        request.setValue(credentials.deviceId, forHTTPHeaderField: "X-Zimlo-Device-Id")
+        request.setValue(timestamp, forHTTPHeaderField: "X-Zimlo-Timestamp")
+        request.setValue(
+            ZimloCrypto.proof(key: deviceKey, message: "material-download:\(material.id):\(timestamp)"),
+            forHTTPHeaderField: "X-Zimlo-Proof"
+        )
+        let (data, response) = try await URLSession.shared.data(for: request)
+        guard let http = response as? HTTPURLResponse, http.statusCode == 200 else {
+            throw MaterialError.message("物料尚未同步到这台手机")
+        }
+        let digest = SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
+        guard digest == material.sha256 else { throw MaterialError.message("物料完整性校验失败") }
+        return try MaterialCache.save(data: data, id: material.id, name: material.name)
+    }
+
     private func connect(remote: Bool, expectedGeneration: UInt64? = nil) {
         if let expectedGeneration, !accepts(generation: expectedGeneration) { return }
         guard !intentionallyStopped, let credentials else { return }
@@ -521,6 +603,10 @@ final class BridgeClient: ObservableObject {
         @unknown default: throw PairingError.invalidResponse
         }
     }
+}
+
+private struct MaterialUploadErrorPayload: Decodable {
+    let message: String
 }
 
 private enum PairingError: LocalizedError {

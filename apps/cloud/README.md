@@ -28,6 +28,18 @@ and keeps new commands in the device outbox until the Mac reconnects.
 - One disposable Durable Object per in-progress pairing
 - Worker secrets for the Apple APNs provider key
 - Worker Rate Limiting bindings for installation creation and relay authentication
+- One `zimlo-materials` R2 bucket for encrypted, short-lived material relay objects
+
+Task materials are encrypted on iOS/Web before upload. The Worker never receives
+the material key, original name, MIME type, task id, or plaintext. The Mac verifies
+and stores the plaintext locally, then deletes the relay object. Configure an R2
+lifecycle rule that deletes anything older than 24 hours as a crash/offline safety
+net; successful transfers are deleted immediately. Do not reuse `zimlo-releases`,
+because public releases and private ciphertext require different retention rules.
+
+Limits are enforced before upload and again by the Bridge: images 8MB; videos 50MB
+and 3 minutes; PDF 20MB and 200 pages on iOS; other supported documents 15MB; at
+most 10 materials and 80MB total per task.
 
 The design fits Cloudflare's free tier for an early public beta because idle
 WebSockets use Durable Object hibernation and do not continuously consume Worker
@@ -40,6 +52,7 @@ and account onboarding before opening anonymous registration at meaningful scale
 cd apps/cloud
 pnpm exec wrangler login
 pnpm exec wrangler d1 create zimlo-cloud
+pnpm exec wrangler r2 bucket create zimlo-materials
 ```
 
 Copy the returned `database_id` into `wrangler.jsonc`, then:

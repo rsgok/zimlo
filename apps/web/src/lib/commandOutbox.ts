@@ -8,6 +8,7 @@ const DURABLE_COMMAND_TYPES = new Set<ClientCommand["type"]>([
   "session.message",
   "task.create",
   "task.follow_up",
+  "material.register",
   "task.command.retry",
   "task.command.cancel",
   "feed.dismiss",

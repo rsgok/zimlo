@@ -1,16 +1,22 @@
 import { createConnection } from "node:net";
+import { createHash } from "node:crypto";
+import { chmodSync, copyFileSync, mkdirSync, readFileSync, realpathSync, statSync } from "node:fs";
+import { basename, extname, isAbsolute, join, relative, resolve } from "node:path";
 import { redactText, stableSessionId, uuidV7 } from "@zimlo/adapters";
 import {
   EMPTY_CAPABILITIES,
   FeedPostInputSchema,
   FeedSkipInputSchema,
+  MaterialPublishInputSchema,
   SignalTransitionInputSchema,
   type FeedPost,
+  type Material,
   type Provider,
   type Session,
 } from "@zimlo/protocol";
 import { detectHookSurface } from "./hook-surface.js";
 import { RuntimeHub } from "./runtime.js";
+import { MATERIAL_LIMITS, validateMaterialContent } from "./material-service.js";
 
 export interface AgentToolRequest {
   type: "agent_tool";
@@ -18,7 +24,7 @@ export interface AgentToolRequest {
   provider: Provider;
   parentPid: number;
   cwd: string;
-  name: "feed.post" | "feed.skip" | "signal.transition";
+  name: "feed.post" | "feed.skip" | "signal.transition" | "material.publish";
   arguments: unknown;
 }
 
@@ -30,6 +36,29 @@ export interface AgentToolResult {
 }
 
 const EDITORIAL_POLICY = `只在信息会改变用户判断、行动或信心时发布。每帖按“结论 → 用户影响 → 关键事实 → 证据 → 下一步”编辑；不要发布普通工具调用、文件读取、编译过程、原始日志、心跳或重复状态。`;
+
+const MATERIAL_FORMATS: Record<string, { kind: Material["kind"]; mimeType: string; label: string }> = {
+  ".jpg": { kind: "image", mimeType: "image/jpeg", label: "图片" },
+  ".jpeg": { kind: "image", mimeType: "image/jpeg", label: "图片" },
+  ".png": { kind: "image", mimeType: "image/png", label: "图片" },
+  ".webp": { kind: "image", mimeType: "image/webp", label: "图片" },
+  ".heic": { kind: "image", mimeType: "image/heic", label: "图片" },
+  ".heif": { kind: "image", mimeType: "image/heif", label: "图片" },
+  ".mp4": { kind: "video", mimeType: "video/mp4", label: "视频" },
+  ".mov": { kind: "video", mimeType: "video/quicktime", label: "视频" },
+  ".m4v": { kind: "video", mimeType: "video/x-m4v", label: "视频" },
+  ".pdf": { kind: "pdf", mimeType: "application/pdf", label: "PDF" },
+  ".txt": { kind: "document", mimeType: "text/plain", label: "文件" },
+  ".md": { kind: "document", mimeType: "text/markdown", label: "文件" },
+  ".csv": { kind: "document", mimeType: "text/csv", label: "文件" },
+  ".json": { kind: "document", mimeType: "application/json", label: "文件" },
+  ".doc": { kind: "document", mimeType: "application/msword", label: "文件" },
+  ".docx": { kind: "document", mimeType: "application/vnd.openxmlformats-officedocument.wordprocessingml.document", label: "文件" },
+  ".xls": { kind: "document", mimeType: "application/vnd.ms-excel", label: "文件" },
+  ".xlsx": { kind: "document", mimeType: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", label: "文件" },
+  ".ppt": { kind: "document", mimeType: "application/vnd.ms-powerpoint", label: "文件" },
+  ".pptx": { kind: "document", mimeType: "application/vnd.openxmlformats-officedocument.presentationml.presentation", label: "文件" },
+};
 
 function toolDefinitions() {
   return [
@@ -51,7 +80,29 @@ function toolDefinitions() {
           action_required: { type: "boolean" },
           action_prompt: { type: "string", minLength: 1, maxLength: 240, description: "仅在需要用户处理时提供，直接说明用户要决定或输入什么。" },
           actions: { type: "array", maxItems: 4, items: { type: "string", enum: ["approve", "reject", "reply", "open_diff"] } },
+          content: {
+            description: "可选的独立媒体卡。文本卡省略或传 {type:'text'}；图片组、视频、文档只引用已注册 material id。",
+            oneOf: [
+              { type: "object", required: ["type"], properties: { type: { const: "text" } }, additionalProperties: false },
+              { type: "object", required: ["type", "materialIds"], properties: { type: { const: "image_album" }, materialIds: { type: "array", minItems: 1, maxItems: 10, items: { type: "string" } }, caption: { type: "string", maxLength: 240 } }, additionalProperties: false },
+              { type: "object", required: ["type", "materialId"], properties: { type: { const: "video" }, materialId: { type: "string" }, posterMaterialId: { type: "string" }, caption: { type: "string", maxLength: 240 } }, additionalProperties: false },
+              { type: "object", required: ["type", "materialId"], properties: { type: { const: "document" }, materialId: { type: "string" }, coverMaterialId: { type: "string" }, summary: { type: "string", maxLength: 320 } }, additionalProperties: false },
+            ],
+          },
           dedupe_key: { type: "string", minLength: 1, maxLength: 240, description: "同一语义帖重试时保持不变，避免重复发布。" },
+        },
+      },
+    },
+    {
+      name: "material.publish",
+      description: "把当前可信 workspace 中已生成的图片、视频、PDF 或文档注册为 Zimlo 物料。先调用本工具取得 material_id，再让 feed.post 的 content 引用它。不要把文件内容塞进 Feed 文本或 WebSocket。",
+      inputSchema: {
+        type: "object",
+        additionalProperties: false,
+        required: ["path"],
+        properties: {
+          path: { type: "string", minLength: 1, maxLength: 2000, description: "物料文件路径；必须位于当前 workspace 内。" },
+          name: { type: "string", minLength: 1, maxLength: 180, description: "可选展示文件名。" },
         },
       },
     },
@@ -91,6 +142,7 @@ export class AgentToolService {
   handle(request: AgentToolRequest): AgentToolResult {
     try {
       if (request.name === "feed.post") return this.post(request);
+      if (request.name === "material.publish") return this.publishMaterial(request);
       if (request.name === "feed.skip") return this.skip(request);
       return this.transition(request);
     } catch (error) {
@@ -102,6 +154,29 @@ export class AgentToolService {
     const parsed = FeedPostInputSchema.safeParse(request.arguments);
     if (!parsed.success) throw new Error(`feed.post 字段无效：${parsed.error.issues.map((issue) => issue.message).join("；")}`);
     const input = parsed.data;
+    const referenced = input.content?.type === "image_album"
+      ? input.content.materialIds
+      : input.content?.type === "video" || input.content?.type === "document"
+        ? [input.content.materialId]
+        : [];
+    for (const id of referenced) {
+      const material = this.runtime.store.getMaterial(id);
+      if (!material || material.status !== "ready") throw new Error(`Feed 引用了尚未就绪的物料：${id}`);
+      if (input.content?.type === "image_album" && material.kind !== "image") throw new Error("图片组只能引用图片物料。");
+      if (input.content?.type === "video" && material.kind !== "video") throw new Error("视频卡只能引用视频物料。");
+      if (input.content?.type === "document" && !["pdf", "document"].includes(material.kind)) throw new Error("文档卡只能引用 PDF 或文档物料。");
+    }
+    const coverIds = input.content?.type === "video"
+      ? [input.content.posterMaterialId].filter((id): id is string => Boolean(id))
+      : input.content?.type === "document"
+        ? [input.content.coverMaterialId].filter((id): id is string => Boolean(id))
+        : [];
+    for (const id of coverIds) {
+      const cover = this.runtime.store.getMaterial(id);
+      if (!cover || cover.status !== "ready" || cover.kind !== "image") {
+        throw new Error(`封面引用了尚未就绪的图片物料：${id}`);
+      }
+    }
     const session = this.resolveSession(request, input.task_id);
     const now = new Date().toISOString();
     const post: FeedPost = {
@@ -120,6 +195,7 @@ export class AgentToolService {
       actionRequired: input.action_required,
       ...(input.action_prompt ? { actionPrompt: redactText(input.action_prompt, 240) } : {}),
       actions: input.actions,
+      ...(input.content ? { content: input.content } : {}),
       pendingActionIds: [],
       dedupeKey: input.dedupe_key,
       source: "agent" as const,
@@ -156,6 +232,43 @@ export class AgentToolService {
       ref: redactText(parsed.data.reason, 500),
     });
     return { id: request.id, ok: true, message: "本轮已记录为不发帖，可以结束。" };
+  }
+
+  private publishMaterial(request: AgentToolRequest): AgentToolResult {
+    const parsed = MaterialPublishInputSchema.safeParse(request.arguments);
+    if (!parsed.success) throw new Error(`material.publish 字段无效：${parsed.error.issues.map((issue) => issue.message).join("；")}`);
+    const workspace = realpathSync(request.cwd);
+    const source = realpathSync(resolve(workspace, parsed.data.path));
+    const contained = relative(workspace, source);
+    if (!contained || contained.startsWith("..") || isAbsolute(contained)) throw new Error("物料必须位于当前可信 workspace 内。");
+    const stats = statSync(source);
+    if (!stats.isFile() || stats.size <= 0) throw new Error("物料文件为空或不是普通文件。");
+    const extension = extname(source).toLowerCase();
+    const format = MATERIAL_FORMATS[extension];
+    if (!format) throw new Error("暂不支持这种物料格式。");
+    if (stats.size > MATERIAL_LIMITS[format.kind]) throw new Error(`${format.label}不能超过 ${MATERIAL_LIMITS[format.kind] / 1024 / 1024}MB。`);
+    const data = readFileSync(source);
+    if (format.kind === "pdf") {
+      const detectedPages = data.toString("latin1").match(/\/Type\s*\/Page\b/gu)?.length ?? 0;
+      if (detectedPages > 200) throw new Error("PDF 不能超过 200 页。");
+    }
+    const id = `material_${uuidV7().replaceAll("-", "")}`;
+    const material: Material = {
+      id, kind: format.kind, name: parsed.data.name ?? basename(source),
+      mimeType: format.mimeType, sizeBytes: stats.size,
+      sha256: createHash("sha256").update(data).digest("hex"), origin: "agent", status: "ready",
+      createdAt: new Date().toISOString(),
+    };
+    const invalidContent = validateMaterialContent(data, material);
+    if (invalidContent) throw new Error(invalidContent);
+    const materialsPath = this.runtime.store.materialStoragePaths().materials;
+    mkdirSync(materialsPath, { recursive: true, mode: 0o700 });
+    const destination = join(materialsPath, `${id}${extension}`);
+    copyFileSync(source, destination);
+    chmodSync(destination, 0o600);
+    const stored = this.runtime.store.upsertMaterial(material, destination);
+    this.runtime.send({ type: "material.updated", material: stored });
+    return { id: request.id, ok: true, message: "物料已注册，可以在 Feed 媒体卡中引用。", data: { material_id: stored.id, kind: stored.kind, name: stored.name } };
   }
 
   private transition(request: AgentToolRequest): AgentToolResult {
@@ -274,7 +387,7 @@ export async function runMcpServer(provider: Provider, socketPath: string): Prom
     if (method === "tools/call") {
       const params = message.params && typeof message.params === "object" ? message.params as Record<string, unknown> : {};
       const name = String(params.name ?? "") as AgentToolRequest["name"];
-      if (!(["feed.post", "feed.skip", "signal.transition"] as string[]).includes(name)) {
+      if (!(["feed.post", "feed.skip", "signal.transition", "material.publish"] as string[]).includes(name)) {
         respond({ jsonrpc: "2.0", id, result: { isError: true, content: [{ type: "text", text: "未知的 Zimlo 工具。" }] } });
         return;
       }

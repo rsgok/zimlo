@@ -138,10 +138,38 @@ struct FeedPost: Codable, Hashable, Identifiable {
     var actionRequired: Bool
     var actionPrompt: String?
     var actions: [String]
+    var content: FeedContent?
     var pendingActionIds: [String]
     var dedupeKey: String
     var source: String
     var createdAt: String
+}
+
+struct FeedContent: Codable, Hashable {
+    var type: String
+    var materialIds: [String]?
+    var materialId: String?
+    var posterMaterialId: String?
+    var coverMaterialId: String?
+    var caption: String?
+    var summary: String?
+}
+
+struct Material: Codable, Hashable, Identifiable {
+    var id: String
+    var kind: String
+    var name: String
+    var mimeType: String
+    var sizeBytes: Int
+    var sha256: String
+    var width: Int?
+    var height: Int?
+    var durationMs: Int?
+    var previewMaterialId: String?
+    var origin: String
+    var status: String
+    var createdAt: String
+    var error: String?
 }
 
 struct Decision: Codable, Hashable, Identifiable {
@@ -301,6 +329,7 @@ struct TaskCommand: Codable, Hashable, Identifiable {
     var workspaceId: String?
     var cwd: String
     var text: String
+    var materialIds: [String]?
     var state: String
     var createdAt: String
     var updatedAt: String
@@ -344,6 +373,7 @@ struct Snapshot: Codable, Hashable {
     var posts: [FeedPost]
     var tasks: [TaskRecord]
     var commands: [TaskCommand]
+    var materials: [Material]
     var workspaces: [TrustedWorkspace]
     var seenPostIds: [String]
     var dismissedFeedItemIds: [String]
@@ -361,7 +391,7 @@ struct Snapshot: Codable, Hashable {
 
     static let empty = Snapshot(
         userProfile: UserProfile(avatarId: "user-01", updatedAt: ""),
-        projects: [], sessions: [], posts: [], tasks: [], commands: [], workspaces: [],
+        projects: [], sessions: [], posts: [], tasks: [], commands: [], materials: [], workspaces: [],
         seenPostIds: [], dismissedFeedItemIds: [], taskTimelineCursors: [:],
         taskPreferences: [], actions: [], reviews: [], trustPolicies: [], trustAudit: [],
         notificationSettings: NotificationSettings(enabled: false, approvals: true, failures: true, reviews: true, showTaskTitle: false, updatedAt: ""),
@@ -373,7 +403,7 @@ struct Snapshot: Codable, Hashable {
     )
 
     enum CodingKeys: String, CodingKey {
-        case userProfile, projects, sessions, posts, tasks, commands, workspaces
+        case userProfile, projects, sessions, posts, tasks, commands, materials, workspaces
         case seenPostIds, dismissedFeedItemIds, taskTimelineCursors, taskPreferences
         case actions, reviews, trustPolicies, trustAudit, notificationSettings, pushDevices, features
         case sequence, lanApprovalsEnabled
@@ -381,7 +411,7 @@ struct Snapshot: Codable, Hashable {
 
     init(
         userProfile: UserProfile, projects: [Project], sessions: [AgentSession],
-        posts: [FeedPost], tasks: [TaskRecord], commands: [TaskCommand],
+        posts: [FeedPost], tasks: [TaskRecord], commands: [TaskCommand], materials: [Material],
         workspaces: [TrustedWorkspace], seenPostIds: [String],
         dismissedFeedItemIds: [String], taskTimelineCursors: [String: String],
         taskPreferences: [TaskPreference], actions: [PendingAction],
@@ -396,6 +426,7 @@ struct Snapshot: Codable, Hashable {
         self.posts = posts
         self.tasks = tasks
         self.commands = commands
+        self.materials = materials
         self.workspaces = workspaces
         self.seenPostIds = seenPostIds
         self.dismissedFeedItemIds = dismissedFeedItemIds
@@ -420,6 +451,7 @@ struct Snapshot: Codable, Hashable {
         posts = try c.decodeIfPresent([FeedPost].self, forKey: .posts) ?? []
         tasks = try c.decodeIfPresent([TaskRecord].self, forKey: .tasks) ?? []
         commands = try c.decodeIfPresent([TaskCommand].self, forKey: .commands) ?? []
+        materials = try c.decodeIfPresent([Material].self, forKey: .materials) ?? []
         workspaces = try c.decodeIfPresent([TrustedWorkspace].self, forKey: .workspaces) ?? []
         seenPostIds = try c.decodeIfPresent([String].self, forKey: .seenPostIds) ?? []
         dismissedFeedItemIds = try c.decodeIfPresent([String].self, forKey: .dismissedFeedItemIds) ?? []
@@ -447,6 +479,7 @@ struct ServerEnvelope: Codable {
     var post: FeedPost?
     var task: TaskRecord?
     var command: TaskCommand?
+    var material: Material?
     var commandId: String?
     var idempotencyKey: String?
     var postId: String?

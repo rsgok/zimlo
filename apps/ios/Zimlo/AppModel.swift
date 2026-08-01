@@ -372,11 +372,12 @@ final class AppModel: ObservableObject {
     }
 
     @discardableResult
-    func createTask(provider: Provider, workspaceId: String, text: String) -> Bool {
+    func createTask(provider: Provider, workspaceId: String, text: String, materialIds: [String] = []) -> Bool {
         let command = ClientCommand(type: "task.create", [
             "provider": .string(provider.rawValue),
             "workspaceId": .string(workspaceId),
             "text": .string(text),
+            "materialIds": .array(materialIds.map(JSONValue.string)),
             "idempotencyKey": .string(UUID().uuidString),
         ])
         guard sendDurable(command) else { return false }
@@ -389,10 +390,11 @@ final class AppModel: ObservableObject {
     // 本地 pending 展示由 localFollowUps / feedEntries 的 local: 条目立即给出；
     // 失败时返回 false，调用方保留原文。
     @discardableResult
-    func followUp(sessionId: String, text: String) -> Bool {
+    func followUp(sessionId: String, text: String, materialIds: [String] = []) -> Bool {
         sendDurable(ClientCommand(type: "task.follow_up", [
             "sessionId": .string(sessionId),
             "text": .string(text),
+            "materialIds": .array(materialIds.map(JSONValue.string)),
             "idempotencyKey": .string(UUID().uuidString),
         ]))
     }
@@ -775,6 +777,29 @@ final class AppModel: ObservableObject {
         "task.create", "task.follow_up", "session.message", "action.decide", "review.respond",
     ]
 
+    func uploadAndRegister(_ prepared: PreparedMobileMaterial) async throws -> Material {
+        let transport = try await bridge.uploadMaterial(prepared)
+        var material: [String: JSONValue] = [
+            "id": .string(prepared.material.id), "kind": .string(prepared.material.kind),
+            "name": .string(prepared.material.name), "mimeType": .string(prepared.material.mimeType),
+            "sizeBytes": .number(Double(prepared.material.sizeBytes)), "sha256": .string(prepared.material.sha256),
+            "origin": .string(prepared.material.origin), "createdAt": .string(prepared.material.createdAt),
+        ]
+        if let width = prepared.material.width { material["width"] = .number(Double(width)) }
+        if let height = prepared.material.height { material["height"] = .number(Double(height)) }
+        if let duration = prepared.material.durationMs { material["durationMs"] = .number(Double(duration)) }
+        let persisted = sendDurable(ClientCommand(type: "material.register", [
+            "material": .object(material), "transport": .string(transport),
+            "encryptionKey": .string(prepared.encryptionKey), "idempotencyKey": .string(UUID().uuidString),
+        ]))
+        guard persisted else { throw MaterialError.message("无法保存物料队列，请重试") }
+        return prepared.material
+    }
+
+    func localURL(for material: Material) async throws -> URL {
+        try await bridge.downloadMaterial(material)
+    }
+
     @discardableResult
     private func persistOutbox() -> Bool {
         guard let data = try? JSONEncoder().encode(outbox) else { return false }
@@ -802,6 +827,11 @@ final class AppModel: ObservableObject {
                 }
                 return entry.command.idempotencyKey == command.idempotencyKey
                     || command.idempotencyKey.hasSuffix(":\(entry.command.idempotencyKey ?? "")")
+            case "material.updated":
+                guard entry.command.type == "material.register", let material = message.material,
+                      case .object(let value) = entry.command.values["material"],
+                      case .string(let id) = value["id"] else { return false }
+                return id == material.id
             case "task.command.cancel.result":
                 guard entry.command.type == "task.command.cancel" else { return false }
                 if case .string(let commandId) = entry.command.values["commandId"] {
@@ -901,6 +931,8 @@ final class AppModel: ObservableObject {
             if let task = message.task { upsert(&snapshot.tasks, task); snapshotChanged = true }
         case "task.command.updated":
             if let command = message.command { upsert(&snapshot.commands, command); snapshotChanged = true }
+        case "material.updated":
+            if let material = message.material { upsert(&snapshot.materials, material); snapshotChanged = true }
         case "task.command.cancel.result":
             showNotice(message.message ?? (message.ok == false ? "指令无法撤回" : "指令已撤回"))
         case "feed.seen.updated":

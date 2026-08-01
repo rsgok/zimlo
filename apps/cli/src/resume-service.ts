@@ -1,7 +1,7 @@
 import { spawn } from "node:child_process";
 import { createInterface } from "node:readline";
 import { parseClaudeLine, redactText, stableSessionId, uuidV7, type ParserState } from "@zimlo/adapters";
-import { EMPTY_CAPABILITIES, type Provider, type Session, type UnifiedEvent } from "@zimlo/protocol";
+import { EMPTY_CAPABILITIES, type Material, type Provider, type Session, type UnifiedEvent } from "@zimlo/protocol";
 import { ActionBroker } from "./action-broker.js";
 import { CodexAppServer } from "./codex-app-server.js";
 import { RuntimeHub } from "./runtime.js";
@@ -16,7 +16,7 @@ export class ResumeService {
     this.broker = broker;
   }
 
-  async sendMessage(sessionId: string, text: string): Promise<{ ok: boolean; message: string }> {
+  async sendMessage(sessionId: string, text: string, materials: ResolvedMaterial[] = []): Promise<{ ok: boolean; message: string }> {
     const session = this.runtime.store.getSession(sessionId);
     if (!session) return { ok: false, message: "找不到 Session。" };
     if (session.activePid !== null) return { ok: false, message: "该 Session 正在其他终端运行，Zimlo 不会注入 TTY。" };
@@ -26,8 +26,8 @@ export class ResumeService {
     this.leases.add(sessionId);
     try {
       return session.provider === "codex"
-        ? await this.runCodex(session, text)
-        : await this.runClaude(session, text);
+        ? await this.runCodex(session, text, materials)
+        : await this.runClaude(session, text, materials);
     } catch (error) {
       this.finishSession(session, false);
       return { ok: false, message: redactText(error instanceof Error ? error.message : String(error), 800) };
@@ -41,13 +41,14 @@ export class ResumeService {
     cwd: string,
     text: string,
     onSession?: (sessionId: string) => void,
+    materials: ResolvedMaterial[] = [],
   ): Promise<{ ok: boolean; message: string; sessionId?: string }> {
     return provider === "codex"
-      ? this.createCodexTask(cwd, text, onSession)
-      : this.createClaudeTask(cwd, text, onSession);
+      ? this.createCodexTask(cwd, text, materials, onSession)
+      : this.createClaudeTask(cwd, text, materials, onSession);
   }
 
-  private async createCodexTask(cwd: string, text: string, onSession?: (sessionId: string) => void): Promise<{ ok: boolean; message: string; sessionId?: string }> {
+  private async createCodexTask(cwd: string, text: string, materials: ResolvedMaterial[], onSession?: (sessionId: string) => void): Promise<{ ok: boolean; message: string; sessionId?: string }> {
     const now = new Date().toISOString();
     const provisional: Session = {
       id: `pending:${uuidV7()}`,
@@ -68,7 +69,7 @@ export class ResumeService {
     };
     const appServer = new CodexAppServer(this.runtime, this.broker, provisional);
     try {
-      const result = await appServer.runNewThread(text, onSession);
+      const result = await appServer.runNewThread(text, onSession, materials);
       const ok = result.turn.status === "completed";
       this.finishSession(result.session, ok);
       return {
@@ -83,8 +84,8 @@ export class ResumeService {
     }
   }
 
-  private async createClaudeTask(cwd: string, text: string, onSession?: (sessionId: string) => void): Promise<{ ok: boolean; message: string; sessionId?: string }> {
-    const args = ["-p", text, "--output-format", "stream-json", "--verbose", "--include-hook-events"];
+  private async createClaudeTask(cwd: string, text: string, materials: ResolvedMaterial[], onSession?: (sessionId: string) => void): Promise<{ ok: boolean; message: string; sessionId?: string }> {
+    const args = ["-p", promptWithMaterials(text, materials), "--output-format", "stream-json", "--verbose", "--include-hook-events"];
     const child = spawn("claude", args, { cwd, stdio: ["ignore", "pipe", "pipe"], env: process.env });
     const parser: ParserState = { provider: "claude", providerSessionId: `pending:${uuidV7()}`, toolCalls: new Map() };
     let session: Session | null = null;
@@ -162,11 +163,11 @@ export class ResumeService {
     };
   }
 
-  private async runCodex(session: Session, text: string): Promise<{ ok: boolean; message: string }> {
+  private async runCodex(session: Session, text: string, materials: ResolvedMaterial[]): Promise<{ ok: boolean; message: string }> {
     const appServer = new CodexAppServer(this.runtime, this.broker, session);
     this.beginSession(session, null);
     try {
-      const turn = await appServer.runTurn(text);
+      const turn = await appServer.runTurn(text, materials);
       const ok = turn.status === "completed";
       this.finishSession(session, ok);
       if (ok) return { ok: true, message: "消息已通过 Codex app-server 发送，本轮执行已完成。" };
@@ -177,8 +178,8 @@ export class ResumeService {
     }
   }
 
-  private async runClaude(session: Session, text: string): Promise<{ ok: boolean; message: string }> {
-    const args = ["-p", text, "--resume", session.providerSessionId, "--output-format", "stream-json", "--verbose", "--include-hook-events"];
+  private async runClaude(session: Session, text: string, materials: ResolvedMaterial[]): Promise<{ ok: boolean; message: string }> {
+    const args = ["-p", promptWithMaterials(text, materials), "--resume", session.providerSessionId, "--output-format", "stream-json", "--verbose", "--include-hook-events"];
     const child = spawn("claude", args, { cwd: session.cwd!, stdio: ["ignore", "pipe", "pipe"], env: process.env });
     const parser: ParserState = { provider: "claude", providerSessionId: session.providerSessionId, toolCalls: new Map() };
     this.beginSession(session, child.pid ?? null);
@@ -243,4 +244,15 @@ export class ResumeService {
       this.runtime.ingestEvent(event);
     }
   }
+}
+
+export interface ResolvedMaterial {
+  material: Material;
+  path: string;
+}
+
+function promptWithMaterials(text: string, materials: ResolvedMaterial[]): string {
+  if (materials.length === 0) return text;
+  const lines = materials.map(({ material, path }) => `- ${material.kind}: ${material.name} (${material.mimeType})\n  path: ${path}`);
+  return `${text}\n\nZimlo 已将用户物料安全保存到以下本机路径。请按任务需要读取，回复中不要泄露绝对路径：\n${lines.join("\n")}`;
 }

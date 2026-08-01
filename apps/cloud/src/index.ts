@@ -15,6 +15,7 @@ interface Env {
   RELAY_ROOMS: DurableObjectNamespace;
   PAIRING_ROOMS: DurableObjectNamespace;
   RELEASES?: R2Bucket;
+  MATERIALS?: R2Bucket;
   REGISTRATION_RATE_LIMITER: RateLimit;
   AUTH_RATE_LIMITER: RateLimit;
   APNS_PRIVATE_KEY_P8?: string;
@@ -87,6 +88,73 @@ function validId(value: unknown, prefix: string): value is string {
 
 function actorKey(request: Request): string {
   return request.headers.get("cf-connecting-ip") ?? "unknown";
+}
+
+async function deviceForBearer(request: Request, env: Env): Promise<{ installationId: string; deviceId: string } | Response> {
+  const authorization = request.headers.get("authorization") ?? "";
+  if (!authorization.startsWith("Bearer ")) return jsonError(401, "device_token_required");
+  const tokenHash = await sha256Text(authorization.slice(7));
+  const row = await env.DB.prepare(`
+    SELECT installation_id, device_id FROM devices
+    WHERE access_token_hash = ? AND active = 1
+  `).bind(tokenHash).first<{ installation_id: string; device_id: string }>();
+  return row ? { installationId: row.installation_id, deviceId: row.device_id } : jsonError(401, "device_inactive");
+}
+
+function materialId(value: string): boolean {
+  return /^material_[a-zA-Z0-9_-]{12,140}$/u.test(value);
+}
+
+function materialKey(installationId: string, deviceId: string, id: string): string {
+  return `${installationId}/${deviceId}/${id}`;
+}
+
+async function uploadMaterial(request: Request, env: Env, id: string): Promise<Response> {
+  if (!env.MATERIALS) return jsonError(503, "material_storage_unavailable");
+  if (!materialId(id)) return jsonError(400, "material_id_invalid");
+  const device = await deviceForBearer(request, env);
+  if (device instanceof Response) return device;
+  const length = Number(request.headers.get("content-length") ?? 0);
+  if (!Number.isSafeInteger(length) || length < 29 || length > 50 * 1024 * 1024 + 28) {
+    return jsonError(413, "material_too_large");
+  }
+  if (!request.body) return jsonError(400, "material_body_required");
+  await env.MATERIALS.put(materialKey(device.installationId, device.deviceId, id), request.body, {
+    httpMetadata: { contentType: "application/octet-stream" },
+    customMetadata: { createdAt: new Date().toISOString() },
+  });
+  return Response.json({ ok: true, materialId: id }, { status: 201 });
+}
+
+async function installationMaterial(
+  request: Request,
+  env: Env,
+  deviceId: string,
+  id: string,
+): Promise<Response> {
+  if (!env.MATERIALS) return jsonError(503, "material_storage_unavailable");
+  if (!materialId(id)) return jsonError(400, "material_id_invalid");
+  const installation = await installationForSignedRequest(request, env);
+  if (installation instanceof Response) return installation;
+  const device = await env.DB.prepare(`
+    SELECT 1 AS found FROM devices WHERE installation_id = ? AND device_id = ?
+  `).bind(installation.id, deviceId).first<{ found: number }>();
+  if (!device) return jsonError(404, "material_not_found");
+  const key = materialKey(installation.id, deviceId, id);
+  if (request.method === "DELETE") {
+    await env.MATERIALS.delete(key);
+    return Response.json({ ok: true });
+  }
+  const object = await env.MATERIALS.get(key);
+  if (!object) return jsonError(404, "material_not_found");
+  return new Response(object.body, {
+    headers: {
+      "content-type": "application/octet-stream",
+      "content-length": String(object.size),
+      "cache-control": "private, no-store",
+      "x-content-type-options": "nosniff",
+    },
+  });
 }
 
 async function installationForSignedRequest(
@@ -462,6 +530,7 @@ export default {
         service: "zimlo-cloud",
         protocolVersion: 2,
         storesContent: false,
+        storesEncryptedMaterials: Boolean(env.MATERIALS),
         encryptedRemoteSync: true,
         pushConfigured: Boolean(
           env.APNS_PRIVATE_KEY_P8 && env.APNS_KEY_ID && env.APNS_TEAM_ID && env.APNS_TOPIC,
@@ -516,6 +585,15 @@ export default {
     }
     if (request.method === "POST" && url.pathname === "/v1/push") {
       return sendPush(request, env);
+    }
+    if (request.method === "PUT" && url.pathname.startsWith("/v1/materials/")) {
+      const allowed = await env.AUTH_RATE_LIMITER.limit({ key: `material:${actorKey(request)}` });
+      if (!allowed.success) return jsonError(429, "material_rate_limited");
+      return uploadMaterial(request, env, decodeURIComponent(url.pathname.slice("/v1/materials/".length)));
+    }
+    if ((request.method === "GET" || request.method === "DELETE") && /^\/v1\/materials\/[^/]+\/[^/]+$/u.test(url.pathname)) {
+      const [, , , encodedDeviceId, encodedMaterialId] = url.pathname.split("/");
+      return installationMaterial(request, env, decodeURIComponent(encodedDeviceId ?? ""), decodeURIComponent(encodedMaterialId ?? ""));
     }
     if (request.method === "GET" && url.pathname === "/v1/sync/mac") {
       const allowed = await env.AUTH_RATE_LIMITER.limit({ key: `mac:${actorKey(request)}` });

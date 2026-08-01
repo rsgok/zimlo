@@ -49,6 +49,39 @@ final class ApprovalStateTests: XCTestCase {
     }
 }
 
+final class MaterialPolicyTests: XCTestCase {
+    func testUsesTightPerTypeLimits() {
+        XCTAssertEqual(MaterialPolicy.kind(mimeType: "image/png", name: "shot.png")?.limit, 8 * 1_024 * 1_024)
+        XCTAssertEqual(MaterialPolicy.kind(mimeType: "video/mp4", name: "clip.mp4")?.limit, 50 * 1_024 * 1_024)
+        XCTAssertEqual(MaterialPolicy.kind(mimeType: "application/pdf", name: "report.pdf")?.limit, 20 * 1_024 * 1_024)
+        XCTAssertNil(MaterialPolicy.kind(mimeType: "application/x-mach-binary", name: "tool"))
+    }
+
+    func testRejectsOversizedImagesBeforeEncryption() async {
+        do {
+            _ = try await MaterialPolicy.prepare(
+                data: Data(repeating: 0, count: 8 * 1_024 * 1_024 + 1),
+                name: "too-large.png", mimeType: "image/png"
+            )
+            XCTFail("Expected image limit failure")
+        } catch {
+            XCTAssertTrue(error.localizedDescription.contains("8MB"))
+        }
+    }
+
+    func testNormalizesGenericOfficeMIMEBeforeRegistration() async throws {
+        let prepared = try await MaterialPolicy.prepare(
+            data: Data([0x50, 0x4b]),
+            name: "brief.docx", mimeType: "application/octet-stream"
+        )
+        defer { try? FileManager.default.removeItem(at: prepared.localURL) }
+        XCTAssertEqual(
+            prepared.material.mimeType,
+            "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+        )
+    }
+}
+
 final class PairingLinkRulesTests: XCTestCase {
     func testAcceptsOnlyCompleteHTTPPairingLinks() {
         let valid = "https://relay.example/#pairingId=p1&secret=s1&bridgeKey=k1"
