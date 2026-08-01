@@ -1,4 +1,4 @@
-import { createDecipheriv, createHash, timingSafeEqual } from "node:crypto";
+import { createCipheriv, createDecipheriv, createHash, createHmac, randomBytes, timingSafeEqual } from "node:crypto";
 import { chmodSync, existsSync, mkdirSync, readFileSync, renameSync, unlinkSync, writeFileSync } from "node:fs";
 import { extname, join } from "node:path";
 import type { Material } from "@zimlo/protocol";
@@ -158,6 +158,20 @@ export class MaterialService {
     const path = this.runtime.store.materialLocalPath(id);
     if (!material || material.status !== "ready" || !path || !existsSync(path)) return null;
     return { material, data: readFileSync(path) };
+  }
+
+  async publishRemoteCopy(deviceId: string, materialId: string): Promise<boolean> {
+    const device = this.runtime.store.getDevice(deviceId);
+    const content = this.content(materialId);
+    if (!device || device.revokedAt || !content) return false;
+    const deviceKey = Buffer.from(fromBase64Url(device.keyBase64));
+    if (deviceKey.length !== 32) return false;
+    const key = createHmac("sha256", deviceKey).update(`material-download:${materialId}`).digest();
+    const nonce = randomBytes(12);
+    const cipher = createCipheriv("aes-256-gcm", key, nonce);
+    const encrypted = Buffer.concat([nonce, cipher.update(content.data), cipher.final(), cipher.getAuthTag()]);
+    await this.cloud.uploadMaterialForDevice(deviceId, materialId, encrypted);
+    return true;
   }
 
   private readStaged(deviceId: string, materialId: string): Buffer | null {

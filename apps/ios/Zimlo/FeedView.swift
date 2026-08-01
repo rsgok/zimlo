@@ -100,7 +100,7 @@ private struct FeedPage: View {
             .saturation(historical ? 0.5 : 1)
             .padding(.horizontal, 10).padding(.vertical, 6)
             .offset(x: offset)
-            .gesture(
+            .simultaneousGesture(
                 DragGesture(minimumDistance: 16)
                     .onChanged { value in
                         guard abs(value.translation.width) > abs(value.translation.height) * 1.12 else { return }

@@ -464,6 +464,13 @@ export class BridgeServer {
         await this.materials.register(deviceId, command);
         return;
       }
+      case "material.remote.request": {
+        const published = await this.materials.publishRemoteCopy(deviceId, command.materialId);
+        if (!published) {
+          connection.send({ type: "error", code: "material_not_found", message: "这个物料已不存在，请刷新动态。" });
+        }
+        return;
+      }
       case "task.command.retry": {
         const retried = this.taskCommands.retry(command.commandId);
         if (retried) connection.send({ type: "task.command.updated", command: retried });

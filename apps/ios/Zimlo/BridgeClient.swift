@@ -232,9 +232,12 @@ final class BridgeClient: ObservableObject {
 
     func downloadMaterial(_ material: Material) async throws -> URL {
         if let cached = MaterialCache.url(for: material) { return cached }
-        guard !usingRemoteRelay, let credentials,
+        guard let credentials,
               let deviceKey = ZimloCrypto.fromBase64URL(credentials.deviceKey) else {
             throw MaterialError.message("连接到 Mac 后即可查看这个物料")
+        }
+        if usingRemoteRelay {
+            return try await downloadRemoteMaterial(material, credentials: credentials, deviceKey: deviceKey)
         }
         var components = URLComponents(url: credentials.bridgeURL, resolvingAgainstBaseURL: false)
         components?.path = "/api/materials/\(material.id)/content"
@@ -254,6 +257,62 @@ final class BridgeClient: ObservableObject {
         let digest = SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
         guard digest == material.sha256 else { throw MaterialError.message("物料完整性校验失败") }
         return try MaterialCache.save(data: data, id: material.id, name: material.name)
+    }
+
+    private func downloadRemoteMaterial(
+        _ material: Material,
+        credentials: DeviceCredentials,
+        deviceKey: Data
+    ) async throws -> URL {
+        guard let relayURL = credentials.remoteRelayURL,
+              let accessToken = credentials.remoteAccessToken,
+              send(ClientCommand(type: "material.remote.request", ["materialId": .string(material.id)])) else {
+            throw MaterialError.message("请先重新连接 Mac，再打开这个物料")
+        }
+        var components = URLComponents(url: relayURL, resolvingAgainstBaseURL: false)
+        components?.path = "/v1/materials/\(material.id)"
+        components?.query = nil
+        components?.fragment = nil
+        guard let url = components?.url else { throw MaterialError.message("云端物料地址无效") }
+
+        let deadline = Date().addingTimeInterval(25)
+        while Date() < deadline {
+            try Task.checkCancellation()
+            var request = URLRequest(url: url)
+            request.timeoutInterval = 8
+            request.setValue("Bearer \(accessToken)", forHTTPHeaderField: "Authorization")
+            let (encrypted, response) = try await URLSession.shared.data(for: request)
+            guard let http = response as? HTTPURLResponse else {
+                throw MaterialError.message("云端物料服务没有响应")
+            }
+            if http.statusCode == 404 {
+                try await Task.sleep(for: .milliseconds(450))
+                continue
+            }
+            guard http.statusCode == 200 else {
+                if http.statusCode == 401 || http.statusCode == 403 {
+                    throw MaterialError.message("连接凭据已失效，请在设置中重新连接 Mac")
+                }
+                throw MaterialError.message("物料下载失败（HTTP \(http.statusCode)）")
+            }
+
+            let keyCode = HMAC<SHA256>.authenticationCode(
+                for: Data("material-download:\(material.id)".utf8),
+                using: SymmetricKey(data: deviceKey)
+            )
+            let sealedBox = try AES.GCM.SealedBox(combined: encrypted)
+            let plaintext = try AES.GCM.open(sealedBox, using: SymmetricKey(data: Data(keyCode)))
+            let digest = SHA256.hash(data: plaintext).map { String(format: "%02x", $0) }.joined()
+            guard digest == material.sha256 else { throw MaterialError.message("物料完整性校验失败") }
+            let localURL = try MaterialCache.save(data: plaintext, id: material.id, name: material.name)
+
+            var deleteRequest = URLRequest(url: url)
+            deleteRequest.httpMethod = "DELETE"
+            deleteRequest.setValue("Bearer \(accessToken)", forHTTPHeaderField: "Authorization")
+            Task { _ = try? await URLSession.shared.data(for: deleteRequest) }
+            return localURL
+        }
+        throw MaterialError.message("Mac 暂时没有回传这个物料，请确认 Zimlo 正在运行后重试")
     }
 
     private func connect(remote: Bool, expectedGeneration: UInt64? = nil) {

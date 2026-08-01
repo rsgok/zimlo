@@ -2,6 +2,7 @@ import {
   createAPNsJWT,
   freshTimestamp,
   installationRegistrationMessage,
+  sha256Bytes,
   sha256Text,
   signedRequestMessage,
   verifyInstallationSignature,
@@ -105,8 +106,12 @@ function materialId(value: string): boolean {
   return /^material_[a-zA-Z0-9_-]{12,140}$/u.test(value);
 }
 
-function materialKey(installationId: string, deviceId: string, id: string): string {
-  return `${installationId}/${deviceId}/${id}`;
+function materialUploadKey(installationId: string, deviceId: string, id: string): string {
+  return `uploads/${installationId}/${deviceId}/${id}`;
+}
+
+function materialDownloadKey(installationId: string, deviceId: string, id: string): string {
+  return `downloads/${installationId}/${deviceId}/${id}`;
 }
 
 async function uploadMaterial(request: Request, env: Env, id: string): Promise<Response> {
@@ -119,7 +124,7 @@ async function uploadMaterial(request: Request, env: Env, id: string): Promise<R
     return jsonError(413, "material_too_large");
   }
   if (!request.body) return jsonError(400, "material_body_required");
-  await env.MATERIALS.put(materialKey(device.installationId, device.deviceId, id), request.body, {
+  await env.MATERIALS.put(materialUploadKey(device.installationId, device.deviceId, id), request.body, {
     httpMetadata: { contentType: "application/octet-stream" },
     customMetadata: { createdAt: new Date().toISOString() },
   });
@@ -140,7 +145,46 @@ async function installationMaterial(
     SELECT 1 AS found FROM devices WHERE installation_id = ? AND device_id = ?
   `).bind(installation.id, deviceId).first<{ found: number }>();
   if (!device) return jsonError(404, "material_not_found");
-  const key = materialKey(installation.id, deviceId, id);
+  const key = request.method === "PUT"
+    ? materialDownloadKey(installation.id, deviceId, id)
+    : materialUploadKey(installation.id, deviceId, id);
+  if (request.method === "PUT") {
+    const length = Number(request.headers.get("content-length") ?? 0);
+    if (!Number.isSafeInteger(length) || length < 29 || length > 50 * 1024 * 1024 + 28) {
+      return jsonError(413, "material_too_large");
+    }
+    const declaredHash = request.headers.get("x-zimlo-content-sha256") ?? "";
+    if (!/^[a-zA-Z0-9_-]{43}$/u.test(declaredHash)) return jsonError(400, "material_hash_required");
+    const data = await request.arrayBuffer();
+    if (await sha256Bytes(data) !== declaredHash) return jsonError(400, "material_hash_mismatch");
+    await env.MATERIALS.put(key, data, {
+      httpMetadata: { contentType: "application/octet-stream" },
+      customMetadata: { createdAt: new Date().toISOString() },
+    });
+    return Response.json({ ok: true, materialId: id }, { status: 201 });
+  }
+  if (request.method === "DELETE") {
+    await env.MATERIALS.delete(key);
+    return Response.json({ ok: true });
+  }
+  const object = await env.MATERIALS.get(key);
+  if (!object) return jsonError(404, "material_not_found");
+  return new Response(object.body, {
+    headers: {
+      "content-type": "application/octet-stream",
+      "content-length": String(object.size),
+      "cache-control": "private, no-store",
+      "x-content-type-options": "nosniff",
+    },
+  });
+}
+
+async function deviceMaterial(request: Request, env: Env, id: string): Promise<Response> {
+  if (!env.MATERIALS) return jsonError(503, "material_storage_unavailable");
+  if (!materialId(id)) return jsonError(400, "material_id_invalid");
+  const device = await deviceForBearer(request, env);
+  if (device instanceof Response) return device;
+  const key = materialDownloadKey(device.installationId, device.deviceId, id);
   if (request.method === "DELETE") {
     await env.MATERIALS.delete(key);
     return Response.json({ ok: true });
@@ -172,7 +216,10 @@ async function installationForSignedRequest(
     "SELECT id, public_key_spki, disabled_at FROM installations WHERE id = ?",
   ).bind(installationId).first<InstallationRow>();
   if (!row || row.disabled_at) return jsonError(401, "installation_inactive");
-  const message = await signedRequestMessage(timestamp, request.method, new URL(request.url).pathname, rawBody);
+  const declaredBodyHash = request.headers.get("x-zimlo-content-sha256");
+  const message = declaredBodyHash
+    ? `${timestamp}.${request.method.toUpperCase()}.${new URL(request.url).pathname}.${declaredBodyHash}`
+    : await signedRequestMessage(timestamp, request.method, new URL(request.url).pathname, rawBody);
   if (!await verifyInstallationSignature(row.public_key_spki, message, signature)) {
     return jsonError(401, "invalid_signature");
   }
@@ -586,12 +633,15 @@ export default {
     if (request.method === "POST" && url.pathname === "/v1/push") {
       return sendPush(request, env);
     }
-    if (request.method === "PUT" && url.pathname.startsWith("/v1/materials/")) {
+    if (request.method === "PUT" && /^\/v1\/materials\/[^/]+$/u.test(url.pathname)) {
       const allowed = await env.AUTH_RATE_LIMITER.limit({ key: `material:${actorKey(request)}` });
       if (!allowed.success) return jsonError(429, "material_rate_limited");
       return uploadMaterial(request, env, decodeURIComponent(url.pathname.slice("/v1/materials/".length)));
     }
-    if ((request.method === "GET" || request.method === "DELETE") && /^\/v1\/materials\/[^/]+\/[^/]+$/u.test(url.pathname)) {
+    if ((request.method === "GET" || request.method === "DELETE") && /^\/v1\/materials\/[^/]+$/u.test(url.pathname)) {
+      return deviceMaterial(request, env, decodeURIComponent(url.pathname.slice("/v1/materials/".length)));
+    }
+    if ((request.method === "GET" || request.method === "DELETE" || request.method === "PUT") && /^\/v1\/materials\/[^/]+\/[^/]+$/u.test(url.pathname)) {
       const [, , , encodedDeviceId, encodedMaterialId] = url.pathname.split("/");
       return installationMaterial(request, env, decodeURIComponent(encodedDeviceId ?? ""), decodeURIComponent(encodedMaterialId ?? ""));
     }

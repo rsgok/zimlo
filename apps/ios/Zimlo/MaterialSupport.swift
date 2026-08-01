@@ -159,6 +159,7 @@ struct FeedMaterialCard: View {
     @State private var urls: [String: URL] = [:]
     @State private var previewURL: URL?
     @State private var loadError: String?
+    @State private var isLoading = false
 
     private var referencedIDs: [String] {
         switch content.type {
@@ -188,6 +189,7 @@ struct FeedMaterialCard: View {
             } else if content.type == "document", let material = materials.first(where: { $0.id == content.materialId }) {
                 Button {
                     if let url = urls[material.id] { previewURL = url }
+                    else { Task { await load() } }
                 } label: {
                     HStack(spacing: 14) {
                         MaterialThumbnail(material: material, url: urls[material.id])
@@ -196,12 +198,17 @@ struct FeedMaterialCard: View {
                             Text(content.summary ?? "点按预览").font(ZFont.caption2).foregroundStyle(ZColor.muted).lineLimit(2)
                         }
                         Spacer()
-                        Image(systemName: "arrow.up.right").foregroundStyle(ZColor.muted)
+                        if isLoading {
+                            ProgressView().tint(ZColor.muted)
+                        } else {
+                            Image(systemName: urls[material.id] == nil ? "arrow.clockwise" : "arrow.up.right")
+                                .foregroundStyle(ZColor.muted)
+                        }
                     }
                     .padding(14).foregroundStyle(ZColor.ink).background(ZColor.raised)
                     .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
                 }
-                .buttonStyle(.plain).disabled(urls[material.id] == nil)
+                .buttonStyle(.plain)
             } else {
                 unavailable
             }
@@ -209,24 +216,32 @@ struct FeedMaterialCard: View {
         .frame(maxWidth: .infinity, minHeight: content.type == "document" ? 106 : 220, maxHeight: content.type == "document" ? 130 : 330)
         .background(Color.black.opacity(0.34))
         .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
-        .task(id: referencedIDs.joined(separator: ":")) { await load() }
+        .task(id: "\(referencedIDs.joined(separator: ":")):\(model.bridge.connected)") { await load() }
         .sheet(isPresented: Binding(get: { previewURL != nil }, set: { if !$0 { previewURL = nil } })) {
             if let previewURL { QuickLookSheet(url: previewURL).ignoresSafeArea() }
         }
     }
 
     private var unavailable: some View {
-        VStack(spacing: 9) {
-            Image(systemName: "arrow.triangle.2.circlepath").font(.title2)
-            Text(loadError ?? "物料同步中").font(ZFont.caption)
-            if loadError != nil { Text("连接 Mac 后会自动重试").font(ZFont.caption2).foregroundStyle(ZColor.muted) }
+        Button { Task { await load() } } label: {
+            VStack(spacing: 9) {
+                if isLoading { ProgressView().tint(ZColor.muted) }
+                else { Image(systemName: "arrow.triangle.2.circlepath").font(.title2) }
+                Text(loadError ?? "物料同步中").font(ZFont.caption)
+                if loadError != nil { Text("点按重试；连接恢复后也会自动继续").font(ZFont.caption2).foregroundStyle(ZColor.muted) }
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .foregroundStyle(ZColor.muted)
         }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .foregroundStyle(ZColor.muted)
+        .buttonStyle(.plain)
+        .disabled(isLoading)
     }
 
     @MainActor
     private func load() async {
+        guard !isLoading else { return }
+        isLoading = true
+        defer { isLoading = false }
         loadError = nil
         for material in materials where urls[material.id] == nil {
             do { urls[material.id] = try await model.localURL(for: material) }

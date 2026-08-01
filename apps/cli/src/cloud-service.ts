@@ -221,6 +221,24 @@ export class CloudService {
     return Buffer.from(await response.arrayBuffer());
   }
 
+  async uploadMaterialForDevice(deviceId: string, materialId: string, encrypted: Buffer): Promise<void> {
+    if (!await this.ensureReady() || !this.baseURL) throw new Error("Cloud material service is unavailable");
+    const pathname = `/v1/materials/${encodeURIComponent(deviceId)}/${encodeURIComponent(materialId)}`;
+    const contentHash = createHash("sha256").update(encrypted).digest("base64url");
+    const response = await fetch(`${this.baseURL}${pathname}`, {
+      method: "PUT",
+      headers: {
+        "content-type": "application/octet-stream",
+        "content-length": String(encrypted.length),
+        "x-zimlo-content-sha256": contentHash,
+        ...this.signedBinaryHeaders("PUT", pathname, contentHash),
+      },
+      body: encrypted,
+      signal: AbortSignal.timeout(60_000),
+    });
+    if (!response.ok) throw new Error(`Cloud material upload failed (${response.status})`);
+  }
+
   async deleteMaterial(deviceId: string, materialId: string): Promise<void> {
     if (!await this.ensureReady() || !this.baseURL) return;
     const pathname = `/v1/materials/${encodeURIComponent(deviceId)}/${encodeURIComponent(materialId)}`;
@@ -309,6 +327,17 @@ export class CloudService {
     if (!this.identity) throw new Error("Cloud identity is unavailable");
     const timestamp = new Date().toISOString();
     const bodyHash = sha256URL(body);
+    const message = `${timestamp}.${method.toUpperCase()}.${pathname}.${bodyHash}`;
+    return {
+      "x-zimlo-installation": this.identity.installationId,
+      "x-zimlo-timestamp": timestamp,
+      "x-zimlo-signature": this.sign(message),
+    };
+  }
+
+  private signedBinaryHeaders(method: string, pathname: string, bodyHash: string): Record<string, string> {
+    if (!this.identity) throw new Error("Cloud identity is unavailable");
+    const timestamp = new Date().toISOString();
     const message = `${timestamp}.${method.toUpperCase()}.${pathname}.${bodyHash}`;
     return {
       "x-zimlo-installation": this.identity.installationId,

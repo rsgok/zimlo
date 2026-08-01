@@ -21,6 +21,10 @@ export async function sha256Text(value: string): Promise<string> {
   return base64URL(await crypto.subtle.digest("SHA-256", encoder.encode(value)));
 }
 
+export async function sha256Bytes(value: ArrayBuffer): Promise<string> {
+  return base64URL(await crypto.subtle.digest("SHA-256", value));
+}
+
 async function importInstallationKey(publicKeySPKI: string): Promise<CryptoKey> {
   return crypto.subtle.importKey(
     "spki",

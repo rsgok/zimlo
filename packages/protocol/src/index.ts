@@ -602,6 +602,10 @@ export const ClientCommandSchema = z.discriminatedUnion("type", [
     idempotencyKey: z.string(),
   }),
   z.object({
+    type: z.literal("material.remote.request"),
+    materialId: z.string().regex(/^material_[a-zA-Z0-9_-]{12,140}$/u),
+  }),
+  z.object({
     type: z.literal("task.command.retry"),
     commandId: z.string(),
     idempotencyKey: z.string(),

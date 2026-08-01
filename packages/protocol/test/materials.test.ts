@@ -40,6 +40,17 @@ describe("material protocol", () => {
     expect(ClientCommandSchema.safeParse({ ...command, materialIds: Array.from({ length: 11 }, (_, index) => `material_${index}`) }).success).toBe(false);
   });
 
+  it("allows a paired device to request an existing material without putting bytes on the socket", () => {
+    expect(ClientCommandSchema.safeParse({
+      type: "material.remote.request",
+      materialId: image.id,
+    }).success).toBe(true);
+    expect(ClientCommandSchema.safeParse({
+      type: "material.remote.request",
+      materialId: "../../secret",
+    }).success).toBe(false);
+  });
+
   it("decodes older snapshots without a materials array", () => {
     expect(SnapshotSchema.shape.materials.parse(undefined)).toEqual([]);
   });
