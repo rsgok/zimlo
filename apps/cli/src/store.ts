@@ -88,6 +88,13 @@ function json<T>(value: string): T {
   return JSON.parse(value) as T;
 }
 
+export function isForeignKeyConstraintFailure(error: unknown): boolean {
+  return typeof error === "object"
+    && error !== null
+    && "errcode" in error
+    && (error as { errcode?: unknown }).errcode === 787;
+}
+
 export class ZimloStore {
   readonly database: DatabaseSync;
 
@@ -1123,21 +1130,29 @@ export class ZimloStore {
   }
 
   markFeedSeen(deviceId: string, postId: string): boolean {
-    return this.database.prepare(`
-      INSERT OR IGNORE INTO feed_seen(device_id, post_id, seen_at)
-      SELECT ?, ?, ?
-      WHERE EXISTS (
-        SELECT 1 FROM devices WHERE id = ? AND revoked_at IS NULL
-      ) AND EXISTS (
-        SELECT 1 FROM feed_posts WHERE id = ?
-      )
-    `).run(
-      deviceId,
-      postId,
-      new Date().toISOString(),
-      deviceId,
-      postId,
-    ).changes > 0;
+    try {
+      return this.database.prepare(`
+        INSERT OR IGNORE INTO feed_seen(device_id, post_id, seen_at)
+        SELECT ?, ?, ?
+        WHERE EXISTS (
+          SELECT 1 FROM devices WHERE id = ? AND revoked_at IS NULL
+        ) AND EXISTS (
+          SELECT 1 FROM feed_posts WHERE id = ?
+        )
+      `).run(
+        deviceId,
+        postId,
+        new Date().toISOString(),
+        deviceId,
+        postId,
+      ).changes > 0;
+    } catch (error) {
+      // A stale mobile receipt can race another Zimlo process pruning its
+      // device or post during app replacement. The receipt is advisory, so a
+      // missing parent is a safe no-op and must never take down the Bridge.
+      if (isForeignKeyConstraintFailure(error)) return false;
+      throw error;
+    }
   }
 
   listSeenPostIds(deviceId: string): string[] {

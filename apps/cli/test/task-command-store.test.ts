@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { EMPTY_CAPABILITIES, type FeedPost, type TaskCommand } from "@zimlo/protocol";
 import { RuntimeHub } from "../src/runtime.js";
-import { ZimloStore } from "../src/store.js";
+import { isForeignKeyConstraintFailure, ZimloStore } from "../src/store.js";
 
 const roots: string[] = [];
 
@@ -19,6 +19,12 @@ afterEach(() => {
 });
 
 describe("task command and per-device feed state", () => {
+  it("classifies only SQLite foreign-key failures as stale receipt races", () => {
+    expect(isForeignKeyConstraintFailure({ code: "ERR_SQLITE_ERROR", errcode: 787 })).toBe(true);
+    expect(isForeignKeyConstraintFailure({ code: "ERR_SQLITE_ERROR", errcode: 5 })).toBe(false);
+    expect(isForeignKeyConstraintFailure(new Error("foreign key"))).toBe(false);
+  });
+
   it("persists queued work, recovers in-flight work, and deduplicates by device key", () => {
     const { root, store } = createStore();
     const command: TaskCommand = {

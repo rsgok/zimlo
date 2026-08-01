@@ -15,7 +15,7 @@ struct ZimloMacApp: App {
         MenuBarExtra {
             MenuPanel(model: AppModel.shared)
         } label: {
-            MenuBarStatusMark(state: service.state)
+            Image(nsImage: MenuBarAssets.icon(for: service.state))
                 .accessibilityLabel("Zimlo")
                 .accessibilityValue(service.state.label)
         }
@@ -267,67 +267,93 @@ private enum WindowBrandAssets {
     }()
 }
 
-private struct MenuBarStatusMark: View {
-    let state: ServiceState
+/// `MenuBarExtra` does not automatically treat a custom SwiftUI drawing as a
+/// template image. On a selected menu-bar item that left the dark drawing on a
+/// dark highlight, making the mark appear empty. Supplying a real template
+/// `NSImage` lets AppKit apply the correct tint for every wallpaper, appearance,
+/// accessibility contrast, and pressed state.
+@MainActor
+enum MenuBarAssets {
+    static let size = NSSize(width: 18, height: 16)
+    private static let readyIcon = makeIcon(for: .ready)
+    private static let busyIcon = makeIcon(for: .starting)
+    private static let stoppedIcon = makeIcon(for: .manualStopped)
+    private static let degradedIcon = makeIcon(for: .degraded(""))
+    private static let unavailableIcon = makeIcon(for: .unavailable(""))
 
-    var body: some View {
-        ZStack {
-            GatewayMenuEnd(side: .mac)
-                .stroke(.primary, style: StrokeStyle(lineWidth: 2, lineCap: .round, lineJoin: .round))
-                .frame(width: 16, height: 13)
-            GatewayMenuEnd(side: .phone)
-                .stroke(.primary, style: StrokeStyle(lineWidth: 1.55, lineCap: .round, lineJoin: .round))
-                .frame(width: 16, height: 13)
-            statusIndicator
+    static func icon(for state: ServiceState) -> NSImage {
+        switch state {
+        case .ready: readyIcon
+        case .starting, .stopping: busyIcon
+        case .manualStopped: stoppedIcon
+        case .degraded: degradedIcon
+        case .unavailable: unavailableIcon
         }
-        .frame(width: 18, height: 16)
     }
 
-    @ViewBuilder
-    private var statusIndicator: some View {
+    private static func makeIcon(for state: ServiceState) -> NSImage {
+        let image = NSImage(size: size, flipped: false) { rect in
+            NSColor.black.setStroke()
+            NSColor.black.setFill()
+
+            drawGateway(in: rect)
+            drawStatus(state, in: rect)
+            return true
+        }
+        image.isTemplate = true
+        image.accessibilityDescription = "Zimlo"
+        return image
+    }
+
+    private static func drawGateway(in rect: NSRect) {
+        let mac = NSBezierPath()
+        mac.lineWidth = 2
+        mac.lineCapStyle = .round
+        mac.lineJoinStyle = .round
+        mac.move(to: NSPoint(x: rect.minX + 5, y: rect.maxY - 2))
+        mac.line(to: NSPoint(x: rect.minX + 2, y: rect.maxY - 2))
+        mac.line(to: NSPoint(x: rect.minX + 2, y: rect.minY + 2))
+        mac.line(to: NSPoint(x: rect.minX + 5, y: rect.minY + 2))
+        mac.stroke()
+
+        let phone = NSBezierPath()
+        phone.lineWidth = 1.6
+        phone.lineCapStyle = .round
+        phone.lineJoinStyle = .round
+        phone.move(to: NSPoint(x: rect.maxX - 4, y: rect.maxY - 3))
+        phone.line(to: NSPoint(x: rect.maxX - 2, y: rect.maxY - 3))
+        phone.line(to: NSPoint(x: rect.maxX - 2, y: rect.minY + 3))
+        phone.line(to: NSPoint(x: rect.maxX - 4, y: rect.minY + 3))
+        phone.stroke()
+    }
+
+    private static func drawStatus(_ state: ServiceState, in rect: NSRect) {
+        let center = NSPoint(x: rect.midX, y: rect.midY)
         switch state {
         case .ready:
-            Circle().fill(.primary).frame(width: 4.5, height: 4.5)
+            NSBezierPath(ovalIn: NSRect(x: center.x - 2.2, y: center.y - 2.2, width: 4.4, height: 4.4)).fill()
         case .starting, .stopping:
-            Circle().stroke(.primary, lineWidth: 1.4).frame(width: 5, height: 5)
+            let ring = NSBezierPath(ovalIn: NSRect(x: center.x - 2.5, y: center.y - 2.5, width: 5, height: 5))
+            ring.lineWidth = 1.4
+            ring.stroke()
         case .manualStopped:
-            Capsule().fill(.primary).frame(width: 5, height: 1.7)
+            NSBezierPath(roundedRect: NSRect(x: center.x - 2.6, y: center.y - 0.8, width: 5.2, height: 1.6), xRadius: 0.8, yRadius: 0.8).fill()
         case .degraded:
-            Text("!").font(.system(size: 6, weight: .black, design: .rounded))
-                .foregroundStyle(.primary)
+            drawGlyph("!", at: center)
         case .unavailable:
-            Image(systemName: "xmark")
-                .font(.system(size: 5.5, weight: .black))
-                .foregroundStyle(.primary)
+            drawGlyph("×", at: center)
         }
     }
-}
 
-/// The wider Mac terminal and slimmer phone terminal remain distinguishable at
-/// 16 px without using color, so the menu mark follows macOS template behavior.
-private struct GatewayMenuEnd: Shape {
-    enum Side { case mac, phone }
-    let side: Side
-
-    func path(in rect: CGRect) -> Path {
-        var path = Path()
-        switch side {
-        case .mac:
-            let inset: CGFloat = 1.1
-            let arm: CGFloat = 5
-            path.move(to: CGPoint(x: rect.minX + arm, y: rect.minY + inset))
-            path.addLine(to: CGPoint(x: rect.minX + inset, y: rect.minY + inset))
-            path.addLine(to: CGPoint(x: rect.minX + inset, y: rect.maxY - inset))
-            path.addLine(to: CGPoint(x: rect.minX + arm, y: rect.maxY - inset))
-        case .phone:
-            let edge: CGFloat = 1.1
-            let verticalInset: CGFloat = 2
-            let arm: CGFloat = 3.6
-            path.move(to: CGPoint(x: rect.maxX - arm, y: rect.minY + verticalInset))
-            path.addLine(to: CGPoint(x: rect.maxX - edge, y: rect.minY + verticalInset))
-            path.addLine(to: CGPoint(x: rect.maxX - edge, y: rect.maxY - verticalInset))
-            path.addLine(to: CGPoint(x: rect.maxX - arm, y: rect.maxY - verticalInset))
-        }
-        return path
+    private static func drawGlyph(_ value: String, at center: NSPoint) {
+        let attributes: [NSAttributedString.Key: Any] = [
+            .font: NSFont.systemFont(ofSize: 7, weight: .black),
+            .foregroundColor: NSColor.black,
+        ]
+        let size = value.size(withAttributes: attributes)
+        value.draw(
+            at: NSPoint(x: center.x - size.width / 2, y: center.y - size.height / 2),
+            withAttributes: attributes
+        )
     }
 }
