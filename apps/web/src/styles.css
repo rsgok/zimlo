@@ -164,6 +164,21 @@ code, pre { font-family: var(--font-mono); }
 .swipe-task-content { position: relative; z-index: 1; height: 100%; transition: transform .2s ease; will-change: transform; }
 .swipe-task.is-dragging .swipe-task-content { transition: none; }
 .swipe-task .feed-post { width: 100%; height: 100%; min-height: 0; }
+.desktop-feed-item {
+  position: relative;
+  display: block;
+  width: min(100%, 520px);
+  height: min(680px, calc(100dvh - 142px));
+  min-height: min(500px, calc(100dvh - 142px));
+  outline: none;
+}
+.desktop-feed-item:focus-visible { border-radius: 24px; box-shadow: 0 0 0 3px rgba(115, 159, 100, .32); }
+.desktop-feed-content { position: relative; min-width: 0; height: 100%; }
+.desktop-feed-content .feed-post { width: 100%; height: 100%; min-height: 0; }
+.desktop-feed-actions { position: absolute; left: calc(100% + 14px); bottom: 2px; display: flex; width: 112px; flex-direction: column; gap: 8px; }
+.desktop-feed-actions button { min-height: 42px; padding: 9px 12px; color: var(--muted); background: transparent; border: 1px solid var(--line); border-radius: 11px; cursor: pointer; font-size: var(--text-caption); font-weight: 800; }
+.desktop-feed-actions button:hover { color: var(--ink); background: rgba(255, 255, 255, .05); }
+.desktop-feed-actions .desktop-feed-primary { color: #0b100c; background: var(--lime); border-color: rgba(7, 12, 8, .35); }
 .feed-post {
   --post-accent: #477b9f;
   position: relative;
@@ -757,6 +772,54 @@ code, pre { font-family: var(--font-mono); }
 .codex-plugin-detail small { color: var(--muted); font-size: var(--text-body-sm); line-height: 1.45; }
 .security-note { padding: 10px 12px; color: #4c5543 !important; background: #edf5d8; border-radius: 10px; }
 .phone-permission-card { grid-template-columns: 1fr auto; align-items: center; }
+.settings-dashboard { display: grid; gap: 18px; padding-bottom: 18px; }
+.settings-profile-card { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; gap: 14px; padding: 16px; border: 1px solid var(--line); border-radius: 18px; background: var(--paper); }
+.avatar-edit-button { position: relative; display: grid; width: 62px; height: 62px; padding: 0; place-items: center; background: transparent; border: 0; border-radius: 50%; cursor: pointer; }
+.avatar-edit-button .user-avatar-current { width: 58px; height: 58px; }
+.avatar-edit-button > span { position: absolute; right: -1px; bottom: -1px; display: grid; width: 22px; height: 22px; place-items: center; color: var(--ink); background: var(--paper); border: 1px solid var(--line); border-radius: 50%; font-size: 12px; font-weight: 850; }
+.avatar-edit-button:focus-visible { outline: 3px solid rgba(76, 145, 196, .32); outline-offset: 3px; }
+.settings-profile-copy { min-width: 0; }
+.settings-profile-copy h2 { margin: 0; font-size: 23px; letter-spacing: -.035em; }
+.settings-profile-copy p { display: flex; align-items: center; gap: 7px; margin: 5px 0 0; color: var(--muted); font-size: var(--text-body-sm); }
+.settings-profile-copy p i { width: 7px; height: 7px; flex: 0 0 auto; background: var(--red); border-radius: 50%; }
+.settings-profile-copy p i.is-connected { background: #6eaa60; }
+.settings-connection-mode { padding: 6px 9px; color: var(--muted); background: rgba(128, 128, 128, .1); border: 1px solid var(--line); border-radius: 999px; font-size: var(--text-caption); font-weight: 800; }
+.settings-connection-mode.is-connected { color: #406138; }
+.settings-section { display: grid; gap: 8px; }
+.settings-section > h3, .settings-section-heading h3 { margin: 0 3px; color: var(--muted); font-size: var(--text-caption); font-weight: 850; letter-spacing: .04em; text-transform: uppercase; }
+.settings-section-heading { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.settings-section .settings-card { margin: 0; }
+.runtime-overview-card { padding: 12px; }
+.runtime-overview > div { grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; gap: 10px; padding: 11px; }
+.runtime-overview > div > span { display: grid; gap: 2px; min-width: 0; }
+.runtime-overview em { color: var(--muted); font-size: var(--text-caption); font-style: normal; font-weight: 800; white-space: nowrap; }
+.runtime-overview em.is-ready { color: #4b7541; }
+.runtime-overview .provider { min-width: 34px; min-height: 34px; padding: 5px; justify-self: auto; }
+.runtime-overview .provider-icon { width: 20px; height: 20px; }
+.runtime-overview .provider-icon-codex { width: 27px; height: 27px; transform: scale(1.04); transform-origin: center; }
+.settings-wide-action { width: 100%; min-height: 40px; }
+.settings-list-card, .notification-settings-card { padding: 0; overflow: hidden; }
+.notification-settings-card .settings-card-heading { padding: 14px 16px; border-bottom: 1px solid var(--line); }
+.settings-value-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 16px; padding: 14px 16px; }
+.settings-value-row > span { display: grid; gap: 3px; min-width: 0; }
+.settings-value-row small { color: var(--muted); font-size: var(--text-caption); }
+.settings-switch-row { display: flex; align-items: center; justify-content: space-between; gap: 16px; min-height: 50px; padding: 10px 16px; border-top: 1px solid var(--line); font-size: var(--text-body-sm); font-weight: 750; }
+.settings-switch-row:first-of-type { border-top: 0; }
+.device-card { padding: 0 16px; overflow: hidden; }
+.device-list li:first-child { border-top: 0; }
+.danger-text-button { color: #a4493e; }
+.settings-dialog { display: grid; gap: 18px; width: min(100%, 520px); max-height: min(82dvh, 680px); overflow: auto; padding: 20px; color: var(--ink); background: var(--paper); border: 1px solid var(--line); border-radius: 20px; box-shadow: 0 24px 80px rgba(0, 0, 0, .34); }
+.settings-dialog > header { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.settings-dialog > header h2 { margin: 0; font-size: 20px; letter-spacing: -.025em; }
+.settings-dialog > header button { display: grid; width: 32px; height: 32px; padding: 0; place-items: center; color: var(--muted); background: rgba(128, 128, 128, .1); border: 1px solid var(--line); border-radius: 50%; cursor: pointer; font-size: 20px; }
+.avatar-dialog .user-avatar-picker { grid-template-columns: repeat(8, minmax(0, 1fr)); }
+.pairing-dialog { width: min(100%, 420px); justify-items: center; text-align: center; }
+.pairing-dialog > header { width: 100%; }
+.pairing-dialog > img { width: min(100%, 280px); padding: 8px; background: #fff; border-radius: 14px; }
+.pairing-dialog > p { margin: 0; color: var(--muted); font-size: var(--text-body-sm); line-height: 1.5; }
+.settings-dialog-actions { display: flex; justify-content: center; gap: 9px; width: 100%; }
+.pairing-dialog-loading { display: grid; min-height: 260px; align-content: center; justify-items: center; gap: 14px; }
+.pairing-dialog-loading > span { width: 24px; height: 24px; border: 3px solid var(--line); border-top-color: var(--lime); border-radius: 50%; animation: spin .8s linear infinite; }
 .task-review-area { margin: 14px 16px 0; padding: 16px; border: 1px solid #b9b6aa; border-radius: 16px; background: #f3f0e5; }
 .task-review-area > header, .review-evidence > div { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
 .task-review-area h2 { margin: 2px 0 0; font: 800 20px/1.1 var(--serif); }
@@ -985,6 +1048,10 @@ html[data-zimlo-shell="macos"][data-theme="dark"] body {
   background: radial-gradient(circle at 88% -10%, rgba(115, 159, 100, .09), transparent 32rem), #0b0e0c;
 }
 
+html[data-zimlo-shell="macos"][data-theme="dark"] .is-macos-shell.tab-feed .feed-stage { height: 100dvh; }
+html[data-zimlo-shell="macos"][data-theme="dark"] .is-macos-shell > .system-notice-stack { top: 12px; }
+html[data-zimlo-shell="macos"][data-theme="dark"] .is-macos-shell:not(.tab-feed) > .main-content { padding-top: 22px; }
+
 html[data-zimlo-shell="macos"][data-theme="dark"] .app-shell,
 html[data-zimlo-shell="macos"][data-theme="dark"] .detail-backdrop {
   background: #0b0e0c;
@@ -1191,6 +1258,8 @@ html[data-zimlo-shell="macos"][data-theme="dark"] .profile-composer,
 html[data-zimlo-shell="macos"][data-theme="dark"] .new-task-sheet,
 html[data-zimlo-shell="macos"][data-theme="dark"] .new-task-footer,
 html[data-zimlo-shell="macos"][data-theme="dark"] .settings-card,
+html[data-zimlo-shell="macos"][data-theme="dark"] .settings-profile-card,
+html[data-zimlo-shell="macos"][data-theme="dark"] .settings-dialog,
 html[data-zimlo-shell="macos"][data-theme="dark"] .agent-directory-card,
 html[data-zimlo-shell="macos"][data-theme="dark"] .outbox-sheet,
 html[data-zimlo-shell="macos"][data-theme="dark"] .confirm-dialog,
@@ -1302,6 +1371,14 @@ html[data-zimlo-shell="macos"][data-theme="dark"] .review-actions details {
   background: #1b211c;
   border-color: var(--line);
 }
+
+html[data-zimlo-shell="macos"][data-theme="dark"] .settings-connection-mode { color: #aab2ab; background: #202621; }
+html[data-zimlo-shell="macos"][data-theme="dark"] .settings-connection-mode.is-connected,
+html[data-zimlo-shell="macos"][data-theme="dark"] .runtime-overview em.is-ready { color: #91bd84; }
+html[data-zimlo-shell="macos"][data-theme="dark"] .avatar-edit-button > span,
+html[data-zimlo-shell="macos"][data-theme="dark"] .settings-dialog > header button { color: #d9dfda; background: #252b26; }
+html[data-zimlo-shell="macos"][data-theme="dark"] .desktop-feed-actions button:hover { background: #1b211c; }
+html[data-zimlo-shell="macos"][data-theme="dark"] .desktop-feed-actions .desktop-feed-primary { color: #0b100c; background: var(--lime); }
 
 html[data-zimlo-shell="macos"][data-theme="dark"] .composer-agent-list > button,
 html[data-zimlo-shell="macos"][data-theme="dark"] .agent-workspace-row {

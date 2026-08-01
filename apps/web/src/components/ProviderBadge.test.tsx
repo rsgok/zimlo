@@ -8,6 +8,7 @@ describe("ProviderBadge", () => {
     expect(markup).toContain('aria-label="Codex · CLI"');
     expect(markup).toContain('aria-hidden="true">CLI</span>');
     expect(markup).toContain("provider-icon");
+    expect(markup).toContain("provider-icon-codex");
   });
 
   it("supports an icon-only Claude badge", () => {

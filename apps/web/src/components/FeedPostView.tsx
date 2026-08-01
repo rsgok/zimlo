@@ -20,6 +20,7 @@ interface FeedPostViewProps {
   needsAction: boolean;
   position: number | null;
   total: number;
+  interactionMode?: "swipe" | "desktop";
 }
 
 const LABELS: Record<FeedPost["kind"], string> = {
@@ -34,7 +35,7 @@ function sameActionsByIdentity(left: PendingAction[], right: PendingAction[]): b
   return left.length === right.length && left.every((action, index) => action === right[index]);
 }
 
-export const FeedPostView = memo(function FeedPostView({ post, session, project, actions, review, send, onOpenProject, needsAction, position, total }: FeedPostViewProps) {
+export const FeedPostView = memo(function FeedPostView({ post, session, project, actions, review, send, onOpenProject, needsAction, position, total, interactionMode = "swipe" }: FeedPostViewProps) {
   const now = useNow();
   const location = session ? sessionLocation(session) : null;
   const pendingActions = actions.filter((action) => action.state === "pending");
@@ -44,8 +45,10 @@ export const FeedPostView = memo(function FeedPostView({ post, session, project,
   const [reviewNote, setReviewNote] = useState("");
   const canReply = Boolean(session?.cwd && !session.correlationUncertain);
   const directReply = needsAction && pendingActions.length === 0 && post.actions.includes("reply");
+  const openTaskHint = interactionMode === "desktop" ? "打开任务查看完整结果" : "左滑查看完整结果";
+  const failureHint = interactionMode === "desktop" ? "打开任务查看原因并决定下一步" : "左滑查看原因并决定下一步";
   const nextStep = (needsAction ? post.actionPrompt : null)
-    ?? (post.kind === "failure" ? "左滑查看原因并决定下一步" : post.kind === "result" ? "左滑查看完整结果" : session?.status === "running" ? "Agent 继续执行，重要变化会再次出现" : "等待下一条重要更新");
+    ?? (post.kind === "failure" ? failureHint : post.kind === "result" ? openTaskHint : session?.status === "running" ? "Agent 继续执行，重要变化会再次出现" : "等待下一条重要更新");
 
   useEffect(() => {
     if (reply) localStorage.setItem(draftKey, reply);

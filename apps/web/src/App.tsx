@@ -23,6 +23,7 @@ const TAB_TITLES: Record<Tab, string> = { feed: "动态", tasks: "任务", agent
 export function App() {
   const bridge = useBridge();
   const { send } = bridge;
+  const macosShell = typeof document !== "undefined" && document.documentElement.dataset.zimloShell === "macos";
   const [online, setOnline] = useState(() => typeof navigator === "undefined" || navigator.onLine);
   const [tab, setTab] = useState<Tab>("feed");
   // 已挂载的 tab 保持存活：切走再切回时列表滚动位置、Feed 队列状态都不丢。
@@ -123,16 +124,18 @@ export function App() {
   if (bridge.pairingRequired) return <PairingRequired error={bridge.error} />;
 
   return (
-    <div className={`app-shell tab-${tab}`}>
-      <AppTopBar
-        title={TAB_TITLES[tab]}
-        connected={bridge.connected}
-        online={online}
-        connectionMode={bridge.connectionMode}
-        reconnectAttempt={bridge.reconnectAttempt}
-        reconnectPausedOffline={bridge.reconnectPausedOffline}
-        onRetryReconnect={bridge.retryReconnectNow}
-      />
+    <div className={`app-shell tab-${tab}${macosShell ? " is-macos-shell" : ""}`}>
+      {!macosShell && (
+        <AppTopBar
+          title={TAB_TITLES[tab]}
+          connected={bridge.connected}
+          online={online}
+          connectionMode={bridge.connectionMode}
+          reconnectAttempt={bridge.reconnectAttempt}
+          reconnectPausedOffline={bridge.reconnectPausedOffline}
+          onRetryReconnect={bridge.retryReconnectNow}
+        />
+      )}
 
       <SystemNotices
         online={online}
@@ -146,7 +149,7 @@ export function App() {
 
       <main className={`main-content ${tab === "feed" ? "feed-main" : ""}`}>
         <div className={tab === "feed" ? "tab-panel" : "tab-panel tab-panel-hidden"}>
-          {mountedTabs.has("feed") && <FeedView projects={bridge.snapshot.projects} posts={bridge.snapshot.posts} sessions={bridge.snapshot.sessions} actions={bridge.snapshot.actions} commands={commands} tasks={bridge.snapshot.tasks} reviews={bridge.snapshot.features.taskReview ? bridge.snapshot.reviews : []} seenPostIds={bridge.snapshot.seenPostIds} dismissedFeedItemIds={bridge.snapshot.dismissedFeedItemIds} send={send} onOpen={openSession} onOpenProject={openAgent} onNewTask={() => openNewTask()} onRequestUndo={showUndo} />}
+          {mountedTabs.has("feed") && <FeedView projects={bridge.snapshot.projects} posts={bridge.snapshot.posts} sessions={bridge.snapshot.sessions} actions={bridge.snapshot.actions} commands={commands} tasks={bridge.snapshot.tasks} reviews={bridge.snapshot.features.taskReview ? bridge.snapshot.reviews : []} seenPostIds={bridge.snapshot.seenPostIds} dismissedFeedItemIds={bridge.snapshot.dismissedFeedItemIds} send={send} onOpen={openSession} onOpenProject={openAgent} onNewTask={() => openNewTask()} onRequestUndo={showUndo} interactionMode={macosShell ? "desktop" : "swipe"} />}
         </div>
         <div className={tab === "tasks" ? "tab-panel" : "tab-panel tab-panel-hidden"}>
           {mountedTabs.has("tasks") && <TasksView projects={bridge.snapshot.projects} sessions={bridge.snapshot.sessions} tasks={bridge.snapshot.tasks} posts={bridge.snapshot.posts} preferences={bridge.snapshot.taskPreferences} send={send} onOpen={openSession} onRequestUndo={showUndo} />}
@@ -168,6 +171,8 @@ export function App() {
               notificationSettings={bridge.snapshot.notificationSettings}
               pushRegistered={bridge.snapshot.pushDevices.some((device) => device.active)}
               notificationEnabled={bridge.snapshot.features.pushNotifications}
+              connected={bridge.connected}
+              connectionMode={bridge.connectionMode}
               send={send}
               forgetDevice={bridge.forgetDevice}
             />

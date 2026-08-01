@@ -33,6 +33,7 @@ interface FeedViewProps {
   onOpenProject: (projectId: string) => void;
   onNewTask: () => void;
   onRequestUndo?: ((label: string, undo: () => void) => void) | undefined;
+  interactionMode?: "swipe" | "desktop";
 }
 
 const HISTORY_BATCH = 20;
@@ -75,7 +76,7 @@ function SeenFeedPage({ children, postId, seen, onSeen, pageRef, feedKey, histor
   >{children}</section>;
 }
 
-export function FeedView({ projects, posts, sessions, actions, commands, tasks, reviews = [], seenPostIds, dismissedFeedItemIds, send, onOpen, onOpenProject, onNewTask, onRequestUndo }: FeedViewProps) {
+export function FeedView({ projects, posts, sessions, actions, commands, tasks, reviews = [], seenPostIds, dismissedFeedItemIds, send, onOpen, onOpenProject, onNewTask, onRequestUndo, interactionMode = "swipe" }: FeedViewProps) {
   const sessionById = useMemo(() => new Map(sessions.map((session) => [session.id, session])), [sessions]);
   const projectById = useMemo(() => new Map(projects.map((project) => [project.id, project])), [projects]);
 
@@ -218,6 +219,7 @@ export function FeedView({ projects, posts, sessions, actions, commands, tasks, 
         historical={historical}
       >
         <SwipeToTask
+          mode={interactionMode}
           sessionId={item.type === "post" ? item.post.sessionId : item.type === "action" ? item.action.sessionId : null}
           onOpen={onOpen}
           onDismiss={() => dismissItem(item)}
@@ -234,6 +236,7 @@ export function FeedView({ projects, posts, sessions, actions, commands, tasks, 
             needsAction={item.needsAction}
             position={position}
             total={sequence.queue.length}
+            interactionMode={interactionMode}
           /> : item.type === "action" ? <ActionFeedCard
             action={item.action}
             session={sessionById.get(item.action.sessionId)}

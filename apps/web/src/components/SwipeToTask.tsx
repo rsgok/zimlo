@@ -5,6 +5,7 @@ interface SwipeToTaskProps {
   sessionId: string | null | undefined;
   onOpen: (sessionId: string) => void;
   onDismiss: () => void;
+  mode?: "swipe" | "desktop";
 }
 
 interface GestureStart {
@@ -23,7 +24,7 @@ export function shouldDismissFeedSwipe(deltaX: number, deltaY: number): boolean 
   return deltaX >= SWIPE_THRESHOLD && Math.abs(deltaX) > Math.abs(deltaY) * 1.2;
 }
 
-export function SwipeToTask({ children, sessionId, onOpen, onDismiss }: SwipeToTaskProps) {
+export function SwipeToTask({ children, sessionId, onOpen, onDismiss, mode = "swipe" }: SwipeToTaskProps) {
   const start = useRef<GestureStart | null>(null);
   const [offset, setOffset] = useState(0);
   const [dragging, setDragging] = useState(false);
@@ -76,6 +77,18 @@ export function SwipeToTask({ children, sessionId, onOpen, onDismiss }: SwipeToT
       onDismiss();
     }
   };
+
+  if (mode === "desktop") {
+    return (
+      <div className="desktop-feed-item" role="group" aria-label="Feed 卡片操作" tabIndex={0} onKeyDown={handleKeyDown}>
+        <div className="desktop-feed-content">{children}</div>
+        <div className="desktop-feed-actions">
+          {sessionId && <button type="button" className="desktop-feed-primary" onClick={() => onOpen(sessionId)}>查看任务</button>}
+          <button type="button" onClick={onDismiss}>移出 Feed</button>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div

@@ -1,6 +1,11 @@
 import AppKit
 import SwiftUI
 
+enum MainWindowLayout {
+    static let initialContentSize = NSSize(width: 1160, height: 760)
+    static let minimumContentSize = NSSize(width: 920, height: 640)
+}
+
 @main
 struct ZimloMacApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
@@ -146,7 +151,7 @@ final class WindowCoordinator: NSObject, NSWindowDelegate {
 
         let content = MainAppView(route: route)
         let window = NSWindow(
-            contentRect: NSRect(x: 0, y: 0, width: 1160, height: 760),
+            contentRect: NSRect(origin: .zero, size: MainWindowLayout.initialContentSize),
             styleMask: [.titled, .closable, .miniaturizable, .resizable],
             backing: .buffered,
             defer: false
@@ -161,7 +166,7 @@ final class WindowCoordinator: NSObject, NSWindowDelegate {
         )
         window.animationBehavior = .none
         installBrandChrome(on: window)
-        window.minSize = NSSize(width: 860, height: 600)
+        window.contentMinSize = MainWindowLayout.minimumContentSize
         window.collectionBehavior.insert(.fullScreenPrimary)
         window.center()
         window.contentView = NSHostingView(rootView: content)

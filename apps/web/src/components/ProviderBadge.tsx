@@ -12,7 +12,7 @@ interface ProviderBadgeProps {
 }
 
 export function ProviderIcon({ provider }: { provider: Provider }) {
-  return <img className="provider-icon provider-icon-image" src={provider === "codex" ? CODEX_ICON : CLAUDE_ICON} alt="" aria-hidden="true" />;
+  return <img className={`provider-icon provider-icon-image provider-icon-${provider}`} src={provider === "codex" ? CODEX_ICON : CLAUDE_ICON} alt="" aria-hidden="true" />;
 }
 
 export function ProviderBadge({ provider, surface, labelMode = "surface", className }: ProviderBadgeProps) {

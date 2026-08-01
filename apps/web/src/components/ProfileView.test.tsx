@@ -26,22 +26,52 @@ describe("ProfileView", () => {
         forgetDevice={vi.fn()}
       />,
     );
-    expect(markup).not.toContain("<h2");
+    expect(markup).toContain("<h2>Zimlo</h2>");
     expect(markup).not.toContain("SETTINGS");
-    expect(markup).toContain("Agent 状态");
+    expect(markup).toContain("Runtime");
+    expect(markup).toContain("Codex");
+    expect(markup).toContain("Claude Code");
     expect(markup).toContain("部分可用");
     expect(markup).not.toContain("管理你的头像、Agent 接入和手机设备");
-    expect(markup).toContain("会显示在你的指令和 Timeline 中");
     expect(markup).toContain("<details");
-    expect(markup).toContain("接入与安全详情");
+    expect(markup).toContain("接入与安全");
     expect(markup).toContain("Codex · GUI");
     expect(markup).toContain("Codex · CLI");
     expect(markup).toContain("Claude Code · GUI");
     expect(markup).toContain("共用配置");
-    expect(markup).toContain("只会在你点击修复或连接时修改 Agent 配置");
-    expect(markup.match(/aria-label="选择头像 /gu)).toHaveLength(24);
+    expect(markup).toContain("敏感消息使用设备密钥加密");
+    expect(markup).toContain('aria-label="更换头像"');
+    expect(markup.match(/aria-label="选择头像 /gu)).toBeNull();
     expect(markup).not.toContain("上传头像");
     expect(markup).not.toContain("Runtime 工作能力");
     expect(markup).not.toContain("WebSocket");
+    expect(markup).not.toContain("Zimlo 手机配对二维码");
+    expect(markup).toContain("显示二维码");
+  });
+
+  it("keeps revoked devices out of the primary settings list", () => {
+    const markup = renderToStaticMarkup(
+      <ProfileView
+        localAdmin
+        devices={[
+          { id: "active", name: "我的 iPhone", createdAt: "2026-07-23T00:00:00.000Z", lastSeenAt: "2026-07-23T00:00:00.000Z", revokedAt: null, isLocalAdmin: false, canApprove: true, canManageTrust: false },
+          { id: "local", name: "Local Mac browser", createdAt: "2026-07-23T00:00:00.000Z", lastSeenAt: "2026-07-23T00:00:00.000Z", revokedAt: null, isLocalAdmin: true, canApprove: true, canManageTrust: true },
+          { id: "revoked", name: "Cloud pairing smoke", createdAt: "2026-07-22T00:00:00.000Z", lastSeenAt: "2026-07-22T00:00:00.000Z", revokedAt: "2026-07-22T01:00:00.000Z", isLocalAdmin: false, canApprove: false, canManageTrust: false },
+        ]}
+        pairing={null}
+        lanApprovalsEnabled={false}
+        codexPlugin={null}
+        integrations={integrations}
+        sessions={[]}
+        userProfile={{ avatarId: "user-01", updatedAt: "2026-07-23T00:00:00.000Z" }}
+        send={vi.fn()}
+        forgetDevice={vi.fn()}
+      />,
+    );
+
+    expect(markup).toContain("我的 iPhone");
+    expect(markup).not.toContain("Local Mac browser");
+    expect(markup).not.toContain("Cloud pairing smoke");
+    expect(markup).toContain("1 条已撤销设备记录");
   });
 });

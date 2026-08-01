@@ -27,4 +27,14 @@ describe("FeedPostView", () => {
     expect(markup).toContain("说出或输入回复");
     expect(markup).toContain("需要你处理");
   });
+
+  it("uses a desktop instruction instead of a swipe instruction in the macOS shell", () => {
+    const resultPost = { ...post, kind: "result" as const, actionRequired: false, actionPrompt: undefined, actions: [], pendingActionIds: [] };
+    const markup = renderToStaticMarkup(
+      <FeedPostView post={resultPost} session={session} project={undefined} actions={[]} needsAction={false} send={vi.fn()} onOpenProject={vi.fn()} position={1} total={1} interactionMode="desktop" />,
+    );
+
+    expect(markup).toContain("打开任务查看完整结果");
+    expect(markup).not.toContain("左滑");
+  });
 });

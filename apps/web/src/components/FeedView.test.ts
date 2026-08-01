@@ -11,7 +11,7 @@ const post: FeedPost = {
   createdAt: "2026-07-23T00:00:00.000Z",
 };
 
-function renderFeed(overrides: { posts?: FeedPost[]; seenPostIds?: string[] } = {}) {
+function renderFeed(overrides: { posts?: FeedPost[]; seenPostIds?: string[]; interactionMode?: "swipe" | "desktop" } = {}) {
   return renderToStaticMarkup(createElement(FeedView, {
     projects: [],
     posts: overrides.posts ?? [post],
@@ -25,6 +25,7 @@ function renderFeed(overrides: { posts?: FeedPost[]; seenPostIds?: string[] } = 
     onOpen: vi.fn(),
     onOpenProject: vi.fn(),
     onNewTask: vi.fn(),
+    ...(overrides.interactionMode ? { interactionMode: overrides.interactionMode } : {}),
   }));
 }
 
@@ -52,6 +53,15 @@ describe("FeedView", () => {
 
   it("does not show the new-updates pill on first render", () => {
     expect(renderFeed()).not.toContain("feed-new-updates");
+  });
+
+  it("renders desktop card actions without swipe affordances in the macOS shell mode", () => {
+    const markup = renderFeed({ interactionMode: "desktop" });
+
+    expect(markup).toContain("desktop-feed-item");
+    expect(markup).toContain("查看任务");
+    expect(markup).toContain("移出 Feed");
+    expect(markup).not.toContain("左滑查看 Task Profile");
   });
 
   it("shows the empty state when every card was dismissed", () => {
