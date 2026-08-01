@@ -551,15 +551,15 @@ struct MenuPanel: View {
                     trailingIcon: nil,
                     disabled: !service.isReady
                 ) {
-                    WindowCoordinator.shared.showMainApp()
+                    WindowCoordinator.shared.showMainAppFromMenu()
                 }
                 MenuAction(icon: "qrcode", label: "连接手机") {
                     model.onboarding.step = 2
-                    WindowCoordinator.shared.showOnboarding()
+                    WindowCoordinator.shared.showOnboardingFromMenu()
                 }
                 MenuAction(icon: "wand.and.stars", label: "设置 Agent") {
                     model.onboarding.step = 1
-                    WindowCoordinator.shared.showOnboarding()
+                    WindowCoordinator.shared.showOnboardingFromMenu()
                 }
                 MenuAction(icon: "doc.text.magnifyingglass", label: "查看日志", trailingIcon: "arrow.up.right") {
                     service.openLog()

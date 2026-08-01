@@ -69,9 +69,29 @@ final class AppModel: ObservableObject {
 @MainActor
 final class WindowCoordinator: NSObject, NSWindowDelegate {
     static let shared = WindowCoordinator()
+    private static let menuDismissalDelay = Duration.milliseconds(180)
     private var onboardingWindow: NSWindow?
     private var mainAppWindow: NSWindow?
     private var mainAppRoute: MainAppRoute?
+
+    /// MenuBarExtra dismisses its AppKit panel with a transform animation. On
+    /// macOS 26, ordering another window during that same animation can crash
+    /// inside `_NSWindowTransformAnimation`. Let the panel finish first.
+    func showMainAppFromMenu() {
+        Task { @MainActor in
+            try? await Task.sleep(for: Self.menuDismissalDelay)
+            guard !Task.isCancelled else { return }
+            showMainApp()
+        }
+    }
+
+    func showOnboardingFromMenu() {
+        Task { @MainActor in
+            try? await Task.sleep(for: Self.menuDismissalDelay)
+            guard !Task.isCancelled else { return }
+            showOnboarding()
+        }
+    }
 
     func showOnboarding() {
         if let onboardingWindow {
@@ -94,6 +114,7 @@ final class WindowCoordinator: NSObject, NSWindowDelegate {
             blue: 0.049,
             alpha: 1
         )
+        window.animationBehavior = .none
         installBrandChrome(on: window)
         window.isMovableByWindowBackground = true
         window.center()
@@ -105,7 +126,7 @@ final class WindowCoordinator: NSObject, NSWindowDelegate {
     }
 
     func closeOnboarding() {
-        onboardingWindow?.close()
+        onboardingWindow?.orderOut(nil)
     }
 
     func showMainApp() {
@@ -138,6 +159,7 @@ final class WindowCoordinator: NSObject, NSWindowDelegate {
             blue: 0.049,
             alpha: 1
         )
+        window.animationBehavior = .none
         installBrandChrome(on: window)
         window.minSize = NSSize(width: 860, height: 600)
         window.collectionBehavior.insert(.fullScreenPrimary)
@@ -158,6 +180,18 @@ final class WindowCoordinator: NSObject, NSWindowDelegate {
             mainAppWindow = nil
             mainAppRoute = nil
         }
+    }
+
+    func windowShouldClose(_ sender: NSWindow) -> Bool {
+        guard sender === onboardingWindow || sender === mainAppWindow else {
+            return true
+        }
+        // Keep the SwiftUI/WKWebView hierarchy alive for the lifetime of the
+        // menu-bar app. Releasing and rebuilding it while NSStatusBarWindow is
+        // draining can crash AppKit on macOS 26; hiding is also much faster on
+        // the next open.
+        sender.orderOut(nil)
+        return false
     }
 
     private func installBrandChrome(on window: NSWindow) {
