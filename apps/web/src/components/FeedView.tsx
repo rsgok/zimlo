@@ -32,6 +32,7 @@ interface FeedViewProps {
   onOpen: (sessionId: string) => void;
   onOpenProject: (projectId: string) => void;
   onActiveSessionChange?: ((sessionId: string | null) => void) | undefined;
+  onActiveProjectChange?: ((projectId: string | null) => void) | undefined;
   onRequestUndo?: ((label: string, undo: () => void) => void) | undefined;
   interactionMode?: "swipe" | "desktop";
 }
@@ -76,7 +77,7 @@ function SeenFeedPage({ children, postId, seen, onSeen, pageRef, feedKey, histor
   >{children}</section>;
 }
 
-export function FeedView({ projects, posts, materials = [], sessions, actions, commands, tasks: _tasks, seenPostIds, dismissedFeedItemIds, send, onOpen, onOpenProject, onActiveSessionChange, onRequestUndo, interactionMode = "swipe" }: FeedViewProps) {
+export function FeedView({ projects, posts, materials = [], sessions, actions, commands, tasks: _tasks, seenPostIds, dismissedFeedItemIds, send, onOpen, onOpenProject, onActiveSessionChange, onActiveProjectChange, onRequestUndo, interactionMode = "swipe" }: FeedViewProps) {
   const sessionById = useMemo(() => new Map(sessions.map((session) => [session.id, session])), [sessions]);
   const projectById = useMemo(() => new Map(projects.map((project) => [project.id, project])), [projects]);
 
@@ -111,13 +112,23 @@ export function FeedView({ projects, posts, materials = [], sessions, actions, c
     return item ? [item] : [];
   });
   const currentItems = resolveItems(sequence.queue);
+  const contextProjectId = (item: FeedItem | undefined): string | null => {
+    if (!item) return null;
+    const sessionId = item.type === "post" ? item.post.sessionId : item.type === "action" ? item.action.sessionId : null;
+    const session = sessionId ? sessionById.get(sessionId) : undefined;
+    const directId = item.type === "post" ? item.post.projectId : session?.projectId;
+    if (directId) return directId;
+    const cwd = session?.cwd;
+    return cwd ? projects.find((project) => project.paths.some((path) => cwd === path || cwd.startsWith(`${path}/`)))?.id ?? null : null;
+  };
   const reportedInitialActiveRef = useRef(false);
   useEffect(() => {
     if (reportedInitialActiveRef.current || items.length === 0) return;
     reportedInitialActiveRef.current = true;
     const first = currentItems[0];
     onActiveSessionChange?.(first?.type === "post" ? first.post.sessionId : first?.type === "action" ? first.action.sessionId : null);
-  }, [currentItems, items.length, onActiveSessionChange]);
+    onActiveProjectChange?.(contextProjectId(first));
+  }, [currentItems, items.length, onActiveProjectChange, onActiveSessionChange]);
   const [historyLimit, setHistoryLimit] = useState(HISTORY_BATCH);
   const historyItems = resolveItems(sequence.history);
   const visibleHistoryItems = historyItems.slice(0, historyLimit);
@@ -207,7 +218,13 @@ export function FeedView({ projects, posts, materials = [], sessions, actions, c
       if (!container) return;
       anchorRef.current = captureAnchor(container.scrollTop, measurePages());
       const active = anchorRef.current ? itemByKey.get(anchorRef.current.key) : undefined;
-      onActiveSessionChange?.(active?.type === "post" ? active.post.sessionId : active?.type === "action" ? active.action.sessionId : null);
+      if (active) {
+        onActiveSessionChange?.(active.type === "post" ? active.post.sessionId : active.type === "action" ? active.action.sessionId : null);
+        onActiveProjectChange?.(contextProjectId(active));
+      } else if (anchorRef.current?.key === CAUGHT_UP_KEY) {
+        onActiveSessionChange?.(null);
+        onActiveProjectChange?.(null);
+      }
       // 历史懒渲染：接近底部时追加一批
       if (historyItems.length > visibleHistoryItems.length
         && container.scrollTop + container.clientHeight > container.scrollHeight - container.clientHeight * 1.5) {
@@ -243,7 +260,7 @@ export function FeedView({ projects, posts, materials = [], sessions, actions, c
             post={item.post}
             materials={materials}
             session={item.post.sessionId ? sessionById.get(item.post.sessionId) : undefined}
-            project={item.post.projectId ? projectById.get(item.post.projectId) : undefined}
+            project={contextProjectId(item) ? projectById.get(contextProjectId(item)!) : undefined}
             onOpenProject={onOpenProject}
             interactionMode={interactionMode}
           /> : item.type === "action" ? <ActionFeedCard

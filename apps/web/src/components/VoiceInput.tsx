@@ -30,9 +30,10 @@ interface VoiceInputProps {
   compact?: boolean;
   /** 提供后 Enter（不含 Shift）提交，并启用 enterKeyHint="send" */
   onSubmit?: (() => void) | undefined;
+  onError?: ((message: string) => void) | undefined;
 }
 
-export function VoiceInput({ value, onChange, placeholder, ariaLabel, rows = 2, disabled = false, autoFocus = false, compact = false, onSubmit }: VoiceInputProps) {
+export function VoiceInput({ value, onChange, placeholder, ariaLabel, rows = 2, disabled = false, autoFocus = false, compact = false, onSubmit, onError }: VoiceInputProps) {
   const recognition = useRef<SpeechRecognitionLike | null>(null);
   // 识别期间的基线文本：用户在识别过程中的手动编辑会成为新的基线，
   // 不会被后续的 onresult 覆盖。
@@ -70,7 +71,11 @@ export function VoiceInput({ value, onChange, placeholder, ariaLabel, rows = 2, 
       onChange([base, transcript].filter(Boolean).join(base ? " " : ""));
     };
     instance.onend = () => { recognition.current = null; setListening(false); };
-    instance.onerror = () => { recognition.current = null; setListening(false); };
+    instance.onerror = () => {
+      recognition.current = null;
+      setListening(false);
+      onError?.("语音输入失败，文字草稿仍在");
+    };
     recognition.current = instance;
     setListening(true);
     instance.start();

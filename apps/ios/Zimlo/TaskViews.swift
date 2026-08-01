@@ -412,6 +412,7 @@ struct NewTaskView: View {
     @State private var failedMaterials: [PreparedMobileMaterial] = []
     @State private var uploadsInFlight = 0
     @State private var materialError: String?
+    @State private var voiceNotice: String?
 
     init(model: AppModel, session: AgentSession? = nil) {
         self.model = model
@@ -437,6 +438,13 @@ struct NewTaskView: View {
         Provider(rawValue: lastProvider) ?? .codex
     }
 
+    private var contextProject: Project? {
+        let id = session?.projectId ?? model.newTaskProjectId
+        if let id, let project = model.snapshot.projects.first(where: { $0.id == id }) { return project }
+        guard let cwd = session?.cwd else { return nil }
+        return model.snapshot.projects.first { project in project.paths.contains(where: { cwd == $0 || cwd.hasPrefix($0 + "/") }) }
+    }
+
     private var visibleWorkspaces: [TrustedWorkspace] {
         let values = search.isEmpty ? model.snapshot.workspaces : model.snapshot.workspaces.filter { workspace in
             let project = model.snapshot.projects.first { project in project.paths.contains(workspace.path) }
@@ -451,13 +459,32 @@ struct NewTaskView: View {
         NavigationStack {
             VStack(spacing: 0) {
                 ScrollView {
-                    VStack(alignment: .leading, spacing: 24) {
+                    VStack(alignment: .leading, spacing: session == nil ? 18 : 12) {
                         VStack(alignment: .leading, spacing: 9) {
-                            HStack {
-                                Text(session == nil ? "你想完成什么？" : "继续对话").font(ZFont.headline)
-                                Spacer()
-                                Text(text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? "草稿自动保存" : "草稿已保存")
-                                    .font(ZFont.caption2).foregroundStyle(ZColor.muted)
+                            if let session {
+                                HStack(spacing: 9) {
+                                    AgentAvatar(value: contextProject?.agentProfile.avatar ?? "●", size: 30)
+                                    VStack(alignment: .leading, spacing: 2) {
+                                        Text("发送到当前会话")
+                                            .font(ZFont.caption.weight(.bold))
+                                        HStack(spacing: 5) {
+                                            Text(contextProject?.agentProfile.displayName ?? "Agent")
+                                            Text("·")
+                                            Text(session.title)
+                                            ProviderBadge(provider: session.provider, iconOnly: true)
+                                        }
+                                        .font(ZFont.caption2).foregroundStyle(ZColor.muted).lineLimit(1)
+                                    }
+                                    Spacer(minLength: 0)
+                                }
+                                .padding(.horizontal, 2)
+                            } else {
+                                HStack {
+                                    Text("任务内容").font(ZFont.headline)
+                                    Spacer()
+                                    Text(text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? "草稿自动保存" : "草稿已保存")
+                                        .font(ZFont.caption2).foregroundStyle(ZColor.muted)
+                                }
                             }
                             HStack(alignment: .bottom, spacing: 8) {
                                 Menu {
@@ -477,8 +504,11 @@ struct NewTaskView: View {
                                 .disabled(materialCount >= MaterialPolicy.maxCount)
                                 VoiceInput(
                                     text: $text,
-                                    placeholder: session == nil ? "描述目标，或点按麦克风说话…" : "输入下一步，或点按麦克风说话…",
-                                    minHeight: 112
+                                    placeholder: session == nil ? "描述目标，或点按麦克风…" : "回复当前会话…",
+                                    minHeight: session == nil ? 72 : 52,
+                                    onError: { message in
+                                        withAnimation(.easeOut(duration: 0.18)) { voiceNotice = message }
+                                    }
                                 )
                                 Button { submit() } label: {
                                     Image(systemName: "arrow.up")
@@ -492,13 +522,15 @@ struct NewTaskView: View {
                                 .accessibilityLabel(session == nil ? "开始任务" : "发送消息")
                             }
                             .buttonStyle(.plain)
-                            HStack {
-                                Text("可添加图片、视频或文件")
-                                Spacer()
-                                if uploadsInFlight > 0 { ProgressView().controlSize(.small) }
-                                Text("\(materialCount)/\(MaterialPolicy.maxCount)")
+                            if materialCount > 0 || uploadsInFlight > 0 {
+                                HStack {
+                                    Text("附件")
+                                    Spacer()
+                                    if uploadsInFlight > 0 { ProgressView().controlSize(.small) }
+                                    Text("\(materialCount)/\(MaterialPolicy.maxCount)")
+                                }
+                                .font(ZFont.caption2).foregroundStyle(ZColor.muted)
                             }
-                            .font(ZFont.caption2).foregroundStyle(ZColor.muted)
 
                             if !preparedMaterials.isEmpty {
                                 LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: 8) {
@@ -550,8 +582,6 @@ struct NewTaskView: View {
                             if let materialError {
                                 Text(materialError).font(ZFont.caption2).foregroundStyle(ZColor.coralText)
                             }
-                            Text("直接描述想要的结果；Agent 会自己拆解步骤，需要决定时再来找你。")
-                                .font(ZFont.caption2).foregroundStyle(ZColor.muted)
                         }
 
                         if session == nil { VStack(alignment: .leading, spacing: 9) {
@@ -653,15 +683,19 @@ struct NewTaskView: View {
                                 .font(ZFont.footnote).foregroundStyle(ZColor.coralText)
                         }
                     }
-                    .padding(20)
+                    .padding(session == nil ? 20 : 16)
                 }
 
             }
             .foregroundStyle(ZColor.ink).background(ZColor.paper)
-            .navigationTitle(session == nil ? "新任务" : "继续对话")
+            .navigationTitle(session == nil ? "新任务" : "回复")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
-                ToolbarItem(placement: .cancellationAction) { Button("取消") { dismiss() }.foregroundStyle(ZColor.ink) }
+                ToolbarItem(placement: .cancellationAction) {
+                    Button { dismiss() } label: { Image(systemName: "xmark") }
+                        .foregroundStyle(ZColor.ink)
+                        .accessibilityLabel("关闭")
+                }
             }
             .fileImporter(
                 isPresented: $showingFileImporter,
@@ -708,6 +742,24 @@ struct NewTaskView: View {
                 persistTaskDraft()
             }
             .onDisappear { persistTaskDraft() }
+            .overlay(alignment: .top) {
+                if let voiceNotice {
+                    Text(voiceNotice)
+                        .font(ZFont.caption.weight(.semibold))
+                        .foregroundStyle(ZColor.ink)
+                        .padding(.horizontal, 14).padding(.vertical, 10)
+                        .background(.ultraThinMaterial)
+                        .overlay(Capsule().stroke(ZColor.coral.opacity(0.45)))
+                        .clipShape(Capsule())
+                        .padding(.top, 8)
+                        .transition(.move(edge: .top).combined(with: .opacity))
+                        .task(id: voiceNotice) {
+                            try? await Task.sleep(for: .seconds(4))
+                            guard !Task.isCancelled else { return }
+                            withAnimation(.easeIn(duration: 0.16)) { self.voiceNotice = nil }
+                        }
+                }
+            }
         }
     }
 

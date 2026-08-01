@@ -41,11 +41,18 @@ struct NativeFeedView: View {
             .onAppear { updateCohort() }
             .onChange(of: FeedCohortRules.signature(entries)) { _, _ in updateCohort() }
             .task(id: visibleID) {
-                guard let id = visibleID, let entry = byID[id] else {
-                    model.activeFeedSessionId = nil
+                // scrollPosition 在布局和 sheet 转场期间可能短暂回传 nil；这不是
+                // 用户离开当前卡片，不能因此丢掉“回复当前会话”的上下文。
+                guard let id = visibleID else { return }
+                guard let entry = byID[id] else {
+                    if id == FeedCohortRules.caughtUpID {
+                        model.activeFeedSessionId = nil
+                        model.activeFeedProjectId = nil
+                    }
                     return
                 }
                 model.activeFeedSessionId = entry.sessionId
+                model.activeFeedProjectId = projectID(for: entry)
                 guard
                       case .post(let post) = entry.content, entry.unread else { return }
                 try? await Task.sleep(for: .seconds(1))
@@ -88,9 +95,26 @@ struct NativeFeedView: View {
         }
         if let target, let entry = entries.first(where: { $0.id == target }) {
             model.activeFeedSessionId = entry.sessionId
+            model.activeFeedProjectId = projectID(for: entry)
         } else if next.isEmpty {
             model.activeFeedSessionId = nil
+            model.activeFeedProjectId = nil
         }
+    }
+
+    private func projectID(for entry: FeedEntry) -> String? {
+        let direct: String?
+        switch entry.content {
+        case .post(let post): direct = post.projectId
+        case .action: direct = nil
+        case .command: direct = nil
+        }
+        if let direct { return direct }
+        guard let sessionID = entry.sessionId,
+              let session = model.snapshot.sessions.first(where: { $0.id == sessionID }) else { return nil }
+        if let projectID = session.projectId { return projectID }
+        guard let cwd = session.cwd else { return nil }
+        return model.snapshot.projects.first(where: { project in project.paths.contains(where: { cwd == $0 || cwd.hasPrefix($0 + "/") }) })?.id
     }
 }
 
@@ -157,7 +181,12 @@ private struct PostCard: View {
     let historical: Bool
 
     private var session: AgentSession? { post.sessionId.flatMap { id in model.snapshot.sessions.first { $0.id == id } } }
-    private var project: Project? { post.projectId.flatMap { id in model.snapshot.projects.first { $0.id == id } } }
+    private var project: Project? {
+        if let id = post.projectId ?? session?.projectId,
+           let project = model.snapshot.projects.first(where: { $0.id == id }) { return project }
+        guard let cwd = session?.cwd else { return nil }
+        return model.snapshot.projects.first { project in project.paths.contains(where: { cwd == $0 || cwd.hasPrefix($0 + "/") }) }
+    }
     private var mediaContent: FeedContent? {
         guard let content = post.content, content.type != "text" else { return nil }
         return content
@@ -191,12 +220,13 @@ private struct PostCard: View {
 
             Text(post.headline)
                 .font(mediaContent == nil ? ZFont.hero : isImmersiveMedia ? ZFont.title : ZFont.title)
+                .foregroundStyle(isImmersiveMedia ? Color.white.opacity(0.9) : ZColor.ink)
                 .lineSpacing(0)
                 .lineLimit(mediaContent == nil ? 3 : isImmersiveMedia ? 2 : 1).minimumScaleFactor(0.82)
                 .padding(.top, mediaContent == nil ? 12 : isImmersiveMedia ? 0 : 10)
             Text(post.takeaway)
                 .font(ZFont.body)
-                .foregroundStyle(isImmersiveMedia ? Color.white.opacity(0.82) : ZColor.ink.opacity(0.7))
+                .foregroundStyle(isImmersiveMedia ? Color.white.opacity(0.62) : ZColor.ink.opacity(0.7))
                 .lineLimit(mediaContent == nil ? 4 : isImmersiveMedia ? 3 : 2).lineSpacing(mediaContent == nil ? 4 : 2)
                 .padding(.top, mediaContent == nil ? 18 : 6)
             if mediaContent == nil, !post.highlights.isEmpty {

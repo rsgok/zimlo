@@ -92,6 +92,7 @@ final class AppModel: ObservableObject {
     @Published var newTaskProjectId: String?
     @Published var conversationSessionId: String?
     @Published var activeFeedSessionId: String?
+    @Published var activeFeedProjectId: String?
     @Published private(set) var notice: String?
     @Published private(set) var noticeAction: NoticeAction?
     @Published private(set) var noticeGeneration = 0

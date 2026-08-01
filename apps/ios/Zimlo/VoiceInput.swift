@@ -111,6 +111,7 @@ struct VoiceInput: View {
     var placeholder: String
     var axis: Axis = .vertical
     var minHeight: CGFloat? = nil
+    var onError: ((String) -> Void)? = nil
     @StateObject private var speech = SpeechCapture()
     @State private var baseText = ""
 
@@ -141,11 +142,14 @@ struct VoiceInput: View {
                 .accessibilityLabel(speech.recording ? "停止语音输入" : "开始语音输入")
             }
             // 权限拒绝 / 识别失败就地提示，不再静默。
-            if let error = speech.error {
+            if onError == nil, let error = speech.error {
                 Text(error)
                     .font(ZFont.caption2)
                     .foregroundStyle(ZColor.coralText)
             }
+        }
+        .onChange(of: speech.error) { _, error in
+            if let error { onError?(error) }
         }
         .onDisappear {
             // 离开输入页时同步停止识别并归还录音 session，避免后台残留占用麦克风。

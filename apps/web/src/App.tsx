@@ -34,6 +34,7 @@ export function App() {
   const [newTaskProjectId, setNewTaskProjectId] = useState<string | null>(null);
   const [composerSessionId, setComposerSessionId] = useState<string | null>(null);
   const [activeFeedSessionId, setActiveFeedSessionId] = useState<string | null>(null);
+  const [activeFeedProjectId, setActiveFeedProjectId] = useState<string | null>(null);
   const [outboxOpen, setOutboxOpen] = useState(false);
   const [undoToast, setUndoToast] = useState<UndoToastData | null>(null);
   const scrollPositionsRef = useRef<Partial<Record<Tab, number>>>({});
@@ -81,16 +82,18 @@ export function App() {
   }, []);
   const openConversation = useCallback(() => {
     const contextualSessionId = selectedSessionId ?? (tab === "feed" ? activeFeedSessionId : null);
-    const contextualSession = bridge.snapshot.sessions.find((session) => session.id === contextualSessionId && session.cwd && !session.correlationUncertain);
+    // Feed 卡片携带的是服务端明确写入的 sessionId，本身就是可靠关联。
+    // cwd/correlationUncertain 只约束进程探测，不能把已有会话回复降级成新任务。
+    const contextualSession = bridge.snapshot.sessions.find((session) => session.id === contextualSessionId);
     if (contextualSession) {
       setComposerSessionId(contextualSession.id);
-      setNewTaskProjectId(null);
+      setNewTaskProjectId(tab === "feed" ? activeFeedProjectId : contextualSession.projectId ?? null);
     } else {
       setComposerSessionId(null);
       setNewTaskProjectId(selectedProjectId);
     }
     setNewTaskOpen(true);
-  }, [activeFeedSessionId, bridge.snapshot.sessions, selectedProjectId, selectedSessionId, tab]);
+  }, [activeFeedProjectId, activeFeedSessionId, bridge.snapshot.sessions, selectedProjectId, selectedSessionId, tab]);
   const openSettings = useCallback(() => {
     mountTab("settings");
     if (bridge.localAdmin) send({ type: "devices.request" });
@@ -168,7 +171,7 @@ export function App() {
 
       <main className={`main-content ${tab === "feed" ? "feed-main" : ""}`}>
         <div className={tab === "feed" ? "tab-panel" : "tab-panel tab-panel-hidden"}>
-          {mountedTabs.has("feed") && <FeedView projects={bridge.snapshot.projects} posts={bridge.snapshot.posts} materials={bridge.snapshot.materials} sessions={bridge.snapshot.sessions} actions={bridge.snapshot.actions} commands={commands} tasks={bridge.snapshot.tasks} seenPostIds={bridge.snapshot.seenPostIds} dismissedFeedItemIds={bridge.snapshot.dismissedFeedItemIds} send={send} onOpen={openSession} onOpenProject={openAgent} onActiveSessionChange={setActiveFeedSessionId} onRequestUndo={showUndo} interactionMode={macosShell ? "desktop" : "swipe"} />}
+          {mountedTabs.has("feed") && <FeedView projects={bridge.snapshot.projects} posts={bridge.snapshot.posts} materials={bridge.snapshot.materials} sessions={bridge.snapshot.sessions} actions={bridge.snapshot.actions} commands={commands} tasks={bridge.snapshot.tasks} seenPostIds={bridge.snapshot.seenPostIds} dismissedFeedItemIds={bridge.snapshot.dismissedFeedItemIds} send={send} onOpen={openSession} onOpenProject={openAgent} onActiveSessionChange={setActiveFeedSessionId} onActiveProjectChange={setActiveFeedProjectId} onRequestUndo={showUndo} interactionMode={macosShell ? "desktop" : "swipe"} />}
         </div>
         <div className={tab === "tasks" ? "tab-panel" : "tab-panel tab-panel-hidden"}>
           {mountedTabs.has("tasks") && <TasksView projects={bridge.snapshot.projects} sessions={bridge.snapshot.sessions} tasks={bridge.snapshot.tasks} posts={bridge.snapshot.posts} preferences={bridge.snapshot.taskPreferences} send={send} onOpen={openSession} onRequestUndo={showUndo} />}

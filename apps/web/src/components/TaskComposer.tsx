@@ -39,6 +39,7 @@ export function TaskComposer({ workspaces, projects, initialProjectId = null, se
   const [workspaceId, setWorkspaceId] = useState(initialWorkspaceId);
   const [text, setText] = useState(savedDraft);
   const [projectQuery, setProjectQuery] = useState("");
+  const [voiceNotice, setVoiceNotice] = useState<string | null>(null);
   const [choosingAgent, setChoosingAgent] = useState(false);
   const [materials, setMaterials] = useState<Array<{
     id: string;
@@ -73,6 +74,12 @@ export function TaskComposer({ workspaces, projects, initialProjectId = null, se
     if (text) localStorage.setItem(draftKey, text);
     else localStorage.removeItem(draftKey);
   }, [draftKey, text]);
+
+  useEffect(() => {
+    if (!voiceNotice) return;
+    const timer = window.setTimeout(() => setVoiceNotice(null), 4_000);
+    return () => window.clearTimeout(timer);
+  }, [voiceNotice]);
 
   useEffect(() => () => {
     for (const url of materialURLs.current) URL.revokeObjectURL(url);
@@ -125,6 +132,7 @@ export function TaskComposer({ workspaces, projects, initialProjectId = null, se
 
   const selectedWorkspace = workspaces.find((workspace) => workspace.id === workspaceId);
   const selectedAgent = selectedWorkspace ? projectByPath.get(selectedWorkspace.path) : undefined;
+  const conversationAgent = session ? initialProject ?? selectedAgent : undefined;
   const agentName = selectedAgent?.agentProfile.displayName ?? selectedWorkspace?.label ?? "选择 Agent";
   const agentAvatar = selectedAgent?.agentProfile.avatar ?? "●";
   const availableProviders = selectedWorkspace?.providers.length ? selectedWorkspace.providers : (["codex", "claude"] satisfies Provider[]);
@@ -164,37 +172,40 @@ export function TaskComposer({ workspaces, projects, initialProjectId = null, se
     <div className="composer-backdrop" role="presentation" onMouseDown={(event) => {
       if (event.currentTarget === event.target) onClose();
     }}>
-      <section className="new-task-sheet" role="dialog" aria-modal="true" aria-labelledby="new-task-title" ref={sheetRef}
+      <section className={`new-task-sheet ${session ? "is-follow-up" : "is-new-task"}`} role="dialog" aria-modal="true" aria-labelledby="new-task-title" ref={sheetRef}
         onDragOver={(event) => { event.preventDefault(); event.dataTransfer.dropEffect = "copy"; }}
         onDrop={(event) => { event.preventDefault(); void addFiles([...event.dataTransfer.files]); }}
         onPaste={(event) => {
           const files = [...event.clipboardData.files];
           if (files.length) { event.preventDefault(); void addFiles(files); }
         }}>
+        {voiceNotice && <div className="composer-floating-notice" role="status">{voiceNotice}</div>}
         <header className="new-task-header">
+          {session && conversationAgent && <AgentAvatar avatar={conversationAgent.agentProfile.avatar} className={`composer-context-avatar ${agentAvatarStyle(conversationAgent.id)}`} alt="" />}
           <div>
-            <h2 id="new-task-title">{session ? "继续对话" : "新任务"}</h2>
-            <p>{session ? session.title : "说清目标，Agent 会在后台继续推进。"}</p>
+            <h2 id="new-task-title">{session ? "回复当前会话" : "新任务"}</h2>
+            <p>{session ? `${conversationAgent?.agentProfile.displayName ?? "Agent"} · ${session.title}` : "选择 Agent，然后直接描述目标。"}</p>
           </div>
-          <button onClick={onClose} aria-label="关闭新任务">×</button>
+          {session && <ProviderBadge provider={session.provider} labelMode="icon" />}
+          <button onClick={onClose} aria-label="关闭输入面板">×</button>
         </header>
         <div className="new-task-scroll">
           <section className="composer-brief" aria-labelledby="task-brief-label">
-            <div className="composer-field-heading">
-              <strong id="task-brief-label">你想完成什么？</strong>
+            {!session && <div className="composer-field-heading">
+              <strong id="task-brief-label">任务内容</strong>
               <span>{text.trim() ? "草稿已保存" : "草稿自动保存"}</span>
-            </div>
+            </div>}
             <div className="composer-input-row">
               <input ref={attachmentInput} type="file" multiple hidden accept="image/jpeg,image/png,image/webp,image/heic,image/heif,video/mp4,video/quicktime,video/x-m4v,application/pdf,text/plain,text/markdown,text/csv,application/json,.doc,.docx,.xls,.xlsx,.ppt,.pptx" onChange={(event) => { void addFiles([...event.target.files ?? []]); event.currentTarget.value = ""; }} />
               <button className="composer-attach-button" type="button" onClick={() => attachmentInput.current?.click()} disabled={materials.length >= 10} aria-label="添加附件" title="添加附件">
                 <span aria-hidden="true">＋</span>
               </button>
-              <VoiceInput rows={4} value={text} onChange={setText} ariaLabel={session ? "继续当前任务" : "任务目标"} placeholder={session ? "输入下一步，或点按麦克风说话…" : "描述目标，或点按麦克风说话…"} onSubmit={submit} />
+              <VoiceInput compact rows={2} value={text} onChange={setText} ariaLabel={session ? "回复当前会话" : "任务目标"} placeholder={session ? "回复当前会话…" : "描述目标，或点按麦克风…"} onSubmit={submit} onError={setVoiceNotice} />
               <button className="composer-send-button" type="button" onClick={submit} disabled={!canSubmit} aria-label={session ? "发送消息" : "开始任务"} title={session ? "发送" : "开始任务"}>
                 <span aria-hidden="true">↑</span>
               </button>
             </div>
-            <div className="composer-input-hint"><span>可拖入或粘贴附件 · 最多 10 个</span>{materials.length > 0 && <span>{materials.length}/10</span>}</div>
+            {materials.length > 0 && <div className="composer-input-hint"><span>附件</span><span>{materials.length}/10</span></div>}
             {materials.length > 0 && <div className="composer-material-list" aria-label="已选择物料">
               {materials.map((item) => {
                 const kind = validateFile(item.file);
@@ -213,7 +224,6 @@ export function TaskComposer({ workspaces, projects, initialProjectId = null, se
                 </article>;
               })}
             </div>}
-            <p>直接描述想要的结果；Agent 会自己拆解步骤，需要决定时再来找你。</p>
           </section>
 
           {!session && <section className="composer-destination" aria-labelledby="composer-destination-title">

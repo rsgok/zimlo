@@ -64,12 +64,15 @@ struct RootView: View {
                 .zIndex(10)
             }
             .sheet(isPresented: $model.showingNewTask) {
+                let session = model.conversationSessionId.flatMap { id in
+                    model.snapshot.sessions.first { $0.id == id }
+                }
                 NewTaskView(
                     model: model,
-                    session: model.conversationSessionId.flatMap { id in model.snapshot.sessions.first { $0.id == id } }
+                    session: session
                 )
                     .environment(\.colorScheme, .dark)
-                    .presentationDetents([.large])
+                    .presentationDetents(session == nil ? [.medium, .large] : [.height(320), .medium])
                     .presentationDragIndicator(.visible)
                     .presentationBackground(ZColor.paper)
             }
@@ -310,17 +313,17 @@ private struct BottomBar: View {
             tabButton(.feed, "rectangle.stack.fill", "Feed")
             tabButton(.tasks, "checklist", "Tasks")
             Button {
-                if let session = model.selectedSession, session.cwd != nil, !session.correlationUncertain {
+                if let session = model.selectedSession {
                     model.conversationSessionId = session.id
-                    model.newTaskProjectId = nil
+                    model.newTaskProjectId = projectID(for: session)
                 } else if model.selectedProject != nil {
                     model.conversationSessionId = nil
                     model.newTaskProjectId = model.selectedProject?.id
                 } else if model.selectedTab == .feed,
                           let id = model.activeFeedSessionId,
-                          let session = model.snapshot.sessions.first(where: { $0.id == id && $0.cwd != nil && !$0.correlationUncertain }) {
+                          let session = model.snapshot.sessions.first(where: { $0.id == id }) {
                     model.conversationSessionId = session.id
-                    model.newTaskProjectId = nil
+                    model.newTaskProjectId = model.activeFeedProjectId ?? projectID(for: session)
                 } else {
                     model.conversationSessionId = nil
                     model.newTaskProjectId = nil
@@ -387,6 +390,14 @@ private struct BottomBar: View {
 
     private var settingsSelected: Bool {
         model.selectedTab == .settings && model.selectedSession == nil && model.selectedProject == nil
+    }
+
+    private func projectID(for session: AgentSession) -> String? {
+        if let projectID = session.projectId { return projectID }
+        guard let cwd = session.cwd else { return nil }
+        return model.snapshot.projects.first(where: { project in
+            project.paths.contains(where: { cwd == $0 || cwd.hasPrefix($0 + "/") })
+        })?.id
     }
 
     private func tabSelected(_ tab: MainTab) -> Bool {
