@@ -13,7 +13,6 @@ import {
   isPostCovered,
   isQuickApprovable,
   mergeRoutinePosts,
-  postNeedsAction,
   postPriority,
   semanticCommandKey,
 } from "../src/index.js";
@@ -43,9 +42,6 @@ function toFeedPost(post: VectorPost): FeedPost {
     headline: post.id,
     takeaway: post.id,
     highlights: [...post.highlights],
-    actionRequired: false,
-    actions: [],
-    pendingActionIds: [],
     dedupeKey: post.id,
     source: "agent",
     createdAt: post.createdAt,
@@ -72,10 +68,6 @@ describe("feed-priority vectors", () => {
   interface PriorityInput {
     kind: FeedPostKind;
     createdAt: string;
-    actionRequired: boolean;
-    hasLinkedPendingAction: boolean;
-    directReplyIsCurrent: boolean;
-    reviewState: "unreviewed" | "accepted" | "changes_requested" | "superseded" | null;
     latestOutcomeCreatedAt: string | null;
     unread: boolean;
   }
@@ -83,10 +75,10 @@ describe("feed-priority vectors", () => {
   interface PriorityCase {
     name: string;
     input: PriorityInput | { items: SortItem[] };
-    expected: { needsAction?: boolean; covered?: boolean; priority?: number; order?: string[] };
+    expected: { covered?: boolean; priority?: number; order?: string[] };
   }
   const { version, cases } = readVectors<PriorityCase>("feed-priority.json");
-  it("declares version 1", () => expect(version).toBe(1));
+  it("declares version 3", () => expect(version).toBe(3));
   for (const testCase of cases) {
     it(testCase.name, () => {
       if ("items" in testCase.input) {
@@ -95,11 +87,10 @@ describe("feed-priority vectors", () => {
         return;
       }
       const input = testCase.input;
-      expect(postNeedsAction(input)).toBe(testCase.expected.needsAction);
       expect(isPostCovered(input)).toBe(testCase.expected.covered);
       expect(postPriority({
         kind: input.kind,
-        needsAction: postNeedsAction(input),
+        needsAction: false,
         covered: isPostCovered(input),
         unread: input.unread,
       })).toBe(testCase.expected.priority);

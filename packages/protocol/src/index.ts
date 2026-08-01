@@ -134,9 +134,6 @@ export type FeedPostKind = z.infer<typeof FeedPostKindSchema>;
 export const FeedTemplateSchema = z.enum(["paper", "grid", "sticky", "marker", "poster"]);
 export type FeedTemplate = z.infer<typeof FeedTemplateSchema>;
 
-export const FeedActionSchema = z.enum(["approve", "reject", "reply", "open_diff"]);
-export type FeedAction = z.infer<typeof FeedActionSchema>;
-
 export const MaterialKindSchema = z.enum(["image", "video", "pdf", "document"]);
 export type MaterialKind = z.infer<typeof MaterialKindSchema>;
 
@@ -201,22 +198,9 @@ export const FeedPostInputSchema = z.object({
   takeaway: z.string().min(1).max(320),
   highlights: z.array(z.string().min(1).max(100)).max(3).default([]),
   proof: z.string().min(1).max(160).optional(),
-  action_required: z.boolean().default(false),
-  action_prompt: z.string().min(1).max(240).optional(),
-  actions: z.array(FeedActionSchema).max(4).default([]),
   content: FeedContentSchema.optional(),
   dedupe_key: z.string().min(1).max(240),
-}).superRefine((post, context) => {
-  if (post.action_required && !post.action_prompt) {
-    context.addIssue({ code: "custom", path: ["action_prompt"], message: "需要用户处理时必须提供 action_prompt" });
-  }
-  if (!post.action_required && post.action_prompt) {
-    context.addIssue({ code: "custom", path: ["action_prompt"], message: "无需用户处理时不能提供 action_prompt" });
-  }
-  if (post.action_required && !post.actions.some((action) => action === "reply" || action === "approve" || action === "reject")) {
-    context.addIssue({ code: "custom", path: ["actions"], message: "需要用户处理时必须提供 reply、approve 或 reject 操作" });
-  }
-});
+}).strict();
 export type FeedPostInput = z.infer<typeof FeedPostInputSchema>;
 
 export const FeedSkipInputSchema = z.object({
@@ -255,11 +239,7 @@ export const FeedPostSchema = z.object({
   takeaway: z.string(),
   highlights: z.array(z.string()),
   proof: z.string().optional(),
-  actionRequired: z.boolean(),
-  actionPrompt: z.string().optional(),
-  actions: z.array(FeedActionSchema),
   content: FeedContentSchema.optional(),
-  pendingActionIds: z.array(z.string()),
   dedupeKey: z.string(),
   source: z.literal("agent"),
   createdAt: z.string(),
@@ -384,49 +364,6 @@ export const TaskPreferenceSchema = z.object({
 });
 export type TaskPreference = z.infer<typeof TaskPreferenceSchema>;
 
-export const ReviewStateSchema = z.enum(["unreviewed", "accepted", "changes_requested", "superseded"]);
-export type ReviewState = z.infer<typeof ReviewStateSchema>;
-
-export const ReviewEvidenceSourceSchema = z.enum(["app_server", "hook", "agent_reported"]);
-export type ReviewEvidenceSource = z.infer<typeof ReviewEvidenceSourceSchema>;
-
-export const ReviewEvidenceSchema = z.object({
-  source: ReviewEvidenceSourceSchema,
-  label: z.string(),
-  detail: z.string(),
-});
-export type ReviewEvidence = z.infer<typeof ReviewEvidenceSchema>;
-
-export const ReviewBundleSchema = z.object({
-  conclusion: z.string(),
-  impact: z.string().optional(),
-  changedFiles: z.array(z.string()),
-  diffSummary: z.string().optional(),
-  tests: z.array(ReviewEvidenceSchema),
-  links: z.array(z.object({ label: z.string(), url: z.string() })),
-  evidenceSource: ReviewEvidenceSourceSchema,
-});
-export type ReviewBundle = z.infer<typeof ReviewBundleSchema>;
-
-export const TaskReviewSchema = z.object({
-  id: z.string(),
-  taskId: z.string(),
-  sessionId: z.string(),
-  postId: z.string(),
-  version: z.number().int().positive(),
-  state: ReviewStateSchema,
-  bundle: ReviewBundleSchema,
-  decisionNote: z.string().optional(),
-  decidedByDeviceId: z.string().optional(),
-  createdAt: z.string(),
-  updatedAt: z.string(),
-  legacy: z.boolean(),
-});
-export type TaskReview = z.infer<typeof TaskReviewSchema>;
-
-export const ReviewDecisionSchema = z.enum(["accept", "request_changes"]);
-export type ReviewDecision = z.infer<typeof ReviewDecisionSchema>;
-
 export const ApprovalCategorySchema = z.enum([
   "read",
   "search",
@@ -478,7 +415,6 @@ export const NotificationSettingsSchema = z.object({
   enabled: z.boolean(),
   approvals: z.boolean(),
   failures: z.boolean(),
-  reviews: z.boolean(),
   showTaskTitle: z.boolean(),
   updatedAt: z.string(),
 });
@@ -514,7 +450,6 @@ export const PushRouteV1Schema = z.object({
 export type PushRouteV1 = z.infer<typeof PushRouteV1Schema>;
 
 export const FeatureCapabilitiesSchema = z.object({
-  taskReview: z.boolean(),
   projectTrustPolicy: z.boolean(),
   pushNotifications: z.boolean(),
   remoteSync: z.boolean(),
@@ -522,14 +457,12 @@ export const FeatureCapabilitiesSchema = z.object({
 export type FeatureCapabilities = z.infer<typeof FeatureCapabilitiesSchema>;
 
 export const FEATURE_CAPABILITIES: FeatureCapabilities = {
-  taskReview: true,
   projectTrustPolicy: true,
   pushNotifications: true,
   remoteSync: true,
 };
 
 export const EMPTY_FEATURE_CAPABILITIES: FeatureCapabilities = {
-  taskReview: false,
   projectTrustPolicy: false,
   pushNotifications: false,
   remoteSync: false,
@@ -550,7 +483,6 @@ export const SnapshotSchema = z.object({
   taskTimelineCursors: z.record(z.string(), z.string()),
   taskPreferences: z.array(TaskPreferenceSchema),
   actions: z.array(PendingActionSchema),
-  reviews: z.array(TaskReviewSchema),
   trustPolicies: z.array(ProjectTrustPolicySchema),
   trustAudit: z.array(TrustAuditEntrySchema),
   notificationSettings: NotificationSettingsSchema,
@@ -631,14 +563,6 @@ export const ClientCommandSchema = z.discriminatedUnion("type", [
   z.object({ type: z.literal("task.timeline.seen"), sessionId: z.string(), itemId: z.string().min(1).max(240) }),
   z.object({ type: z.literal("task.pin"), sessionId: z.string(), pinned: z.boolean(), idempotencyKey: z.string().optional() }),
   z.object({ type: z.literal("task.archive"), sessionId: z.string(), archived: z.boolean(), idempotencyKey: z.string().optional() }),
-  z.object({
-    type: z.literal("review.respond"),
-    reviewId: z.string(),
-    decision: ReviewDecisionSchema,
-    note: z.string().max(2_000).optional(),
-    idempotencyKey: z.string(),
-  }),
-  z.object({ type: z.literal("review.list"), sessionId: z.string().optional() }),
   z.object({ type: z.literal("trust.policy.get"), projectId: z.string().optional() }),
   z.object({
     type: z.literal("trust.policy.update"),
@@ -704,8 +628,6 @@ export type ServerMessage =
   | { type: "feed.dismissed.updated"; itemId: string }
   | { type: "task.timeline.seen.updated"; sessionId: string; itemId: string }
   | { type: "task.preference.updated"; preference: TaskPreference }
-  | { type: "review.updated"; review: TaskReview }
-  | { type: "reviews.list"; reviews: TaskReview[] }
   | { type: "trust.policy.updated"; policy: ProjectTrustPolicy }
   | { type: "trust.policies"; policies: ProjectTrustPolicy[]; audit: TrustAuditEntry[] }
   | { type: "notification.settings.updated"; settings: NotificationSettings }

@@ -1,4 +1,4 @@
-import type { FeedPost, FeedPostKind, PendingAction, ReviewState, TaskCommandState } from "./index.js";
+import type { FeedPost, FeedPostKind, PendingAction, TaskCommandState } from "./index.js";
 
 // Shared feed / outbox / reconnect policy. These rules used to be handwritten
 // in apps/web (TypeScript) and apps/ios (Swift) and started to drift; every
@@ -50,16 +50,6 @@ export function mergeRoutinePosts(posts: FeedPost[]): FeedPost[] {
     merged[existingIndex!] = { ...existing, highlights: [...existing.highlights, ...post.highlights].filter((value, index, all) => all.indexOf(value) === index).slice(0, 2) };
   }
   return merged;
-}
-
-export function postNeedsAction(input: {
-  actionRequired: boolean;
-  hasLinkedPendingAction: boolean;
-  directReplyIsCurrent: boolean;
-  reviewState: ReviewState | null;
-}): boolean {
-  return input.reviewState === "unreviewed"
-    || (input.actionRequired && (input.hasLinkedPendingAction || input.directReplyIsCurrent));
 }
 
 // A coverable post is covered when the task's newest result/failure outcome is
@@ -143,8 +133,6 @@ export function semanticCommandKey(command: SemanticCommandFields): string {
     case "notification.device.register":
     case "notification.device.unregister":
       return command.type;
-    case "review.respond":
-      return `${command.type}:${textField(command, "reviewId")}:${textField(command, "decision")}:${textField(command, "note")}`;
     default: {
       const { type: _, ...fields } = command;
       return `${command.type}:${stableStringify(fields)}`;

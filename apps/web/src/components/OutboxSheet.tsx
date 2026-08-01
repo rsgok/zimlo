@@ -57,8 +57,6 @@ export function describeOutboxCommand(
       return { typeLabel: command.pinned ? "置顶任务" : "取消置顶", target: sessionTitle(sessions, command.sessionId), preview: "" };
     case "task.archive":
       return { typeLabel: command.archived ? "归档任务" : "恢复任务", target: sessionTitle(sessions, command.sessionId), preview: "" };
-    case "review.respond":
-      return { typeLabel: "结果审阅", target: null, preview: command.decision === "accept" ? "接受结果" : (command.note ?? "要求修改") };
     case "user.profile.update":
       return { typeLabel: "更新头像", target: null, preview: command.avatarId };
     case "agent.profile.update":

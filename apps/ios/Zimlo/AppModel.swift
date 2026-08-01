@@ -90,6 +90,8 @@ final class AppModel: ObservableObject {
     @Published var showingOutbox = false
     @Published var showingConnectionRecovery = false
     @Published var newTaskProjectId: String?
+    @Published var conversationSessionId: String?
+    @Published var activeFeedSessionId: String?
     @Published private(set) var notice: String?
     @Published private(set) var noticeAction: NoticeAction?
     @Published private(set) var noticeGeneration = 0
@@ -190,15 +192,6 @@ final class AppModel: ObservableObject {
     var feedEntries: [FeedEntry] {
         let dismissed = Set(snapshot.dismissedFeedItemIds)
         let seen = Set(snapshot.seenPostIds)
-        let pendingActionIds = Set(snapshot.actions.filter { $0.state == "pending" }.map(\.actionId))
-        let linkedActionIds = Set(snapshot.posts.flatMap(\.pendingActionIds))
-        let taskById = Dictionary(uniqueKeysWithValues: snapshot.tasks.map { ($0.id, $0) })
-        let reviewByPostId = Dictionary(uniqueKeysWithValues: snapshot.reviews.map { ($0.postId, $0) })
-        var taskBySession: [String: TaskRecord] = [:]
-        for task in snapshot.tasks {
-            guard let sessionId = task.sessionId else { continue }
-            if task.updatedAt > (taskBySession[sessionId]?.updatedAt ?? "") { taskBySession[sessionId] = task }
-        }
         // 每个任务（sessionId ?? taskId 分组）最新的 result/failure 时间，用于覆盖判定。
         var latestOutcomeByTask: [String: String] = [:]
         for post in snapshot.posts where FeedRules.outcomeKinds.contains(post.kind) {
@@ -207,33 +200,21 @@ final class AppModel: ObservableObject {
         }
 
         var entries = FeedRules.mergeRoutinePosts(snapshot.posts).map { post -> FeedEntry in
-            let task = taskById[post.taskId] ?? post.sessionId.flatMap { taskBySession[$0] }
-            let review = reviewByPostId[post.id]
-            let settledReview = review != nil && review?.state != "unreviewed"
-            let linkedPending = post.pendingActionIds.contains(where: pendingActionIds.contains)
-            let directReply = post.pendingActionIds.isEmpty
-                && (task == nil || ["waiting_input", "user_review"].contains(task?.state ?? ""))
-            let needsAction = FeedRules.needsAction(
-                actionRequired: post.actionRequired,
-                hasLinkedPendingAction: linkedPending,
-                directReplyIsCurrent: directReply,
-                reviewState: review?.state
-            )
-            let unread = !settledReview && !seen.contains(post.id)
+            let unread = !seen.contains(post.id)
             let covered = FeedRules.isCovered(
                 kind: post.kind,
                 createdAt: post.createdAt,
                 latestOutcomeCreatedAt: latestOutcomeByTask[post.sessionId ?? post.taskId]
             )
             return FeedEntry(
-                id: "post:\(post.id)", createdAt: post.createdAt, needsAction: needsAction,
-                unread: unread, settledReview: settledReview,
-                priority: FeedRules.priority(kind: post.kind, needsAction: needsAction, covered: covered, unread: unread),
+                id: "post:\(post.id)", createdAt: post.createdAt, needsAction: false,
+                unread: unread, settledReview: false,
+                priority: FeedRules.priority(kind: post.kind, needsAction: false, covered: covered, unread: unread),
                 sessionId: post.sessionId, content: .post(post)
             )
         }
         entries += snapshot.actions
-            .filter { $0.state == "pending" && !linkedActionIds.contains($0.actionId) }
+            .filter { $0.state == "pending" }
             .map {
                 FeedEntry(
                     id: "action:\($0.actionId)", createdAt: $0.createdAt, needsAction: true,
@@ -424,16 +405,6 @@ final class AppModel: ObservableObject {
         if persisted { Haptics.persisted() }
     }
 
-    func respondReview(_ review: TaskReview, decision: String, note: String? = nil) {
-        var values: [String: JSONValue] = [
-            "reviewId": .string(review.id),
-            "decision": .string(decision),
-            "idempotencyKey": .string(UUID().uuidString),
-        ]
-        if let note, !note.isEmpty { values["note"] = .string(note) }
-        _ = sendDurable(ClientCommand(type: "review.respond", values))
-    }
-
     func updateTrustPolicy(projectId: String, preset: String) {
         _ = sendDurable(ClientCommand(type: "trust.policy.update", [
             "projectId": .string(projectId),
@@ -448,7 +419,6 @@ final class AppModel: ObservableObject {
                 "enabled": .bool(settings.enabled),
                 "approvals": .bool(settings.approvals),
                 "failures": .bool(settings.failures),
-                "reviews": .bool(settings.reviews),
                 "showTaskTitle": .bool(settings.showTaskTitle),
             ]),
             "idempotencyKey": .string(UUID().uuidString),
@@ -774,7 +744,7 @@ final class AppModel: ObservableObject {
 
     // 只有用户主动撰写的发送才播轻触；已读标记、设置同步等被动指令不打扰。
     private static let hapticSendTypes: Set<String> = [
-        "task.create", "task.follow_up", "session.message", "action.decide", "review.respond",
+        "task.create", "task.follow_up", "session.message", "action.decide",
     ]
 
     func uploadAndRegister(_ prepared: PreparedMobileMaterial) async throws -> Material {
@@ -864,9 +834,6 @@ final class AppModel: ObservableObject {
                 guard let project = message.project,
                       case .string(let projectId) = entry.command.values["projectId"] else { return false }
                 return entry.command.type == "agent.profile.update" && project.id == projectId
-            case "review.updated":
-                guard let review = message.review, case .string(let reviewId) = entry.command.values["reviewId"] else { return false }
-                return entry.command.type == "review.respond" && review.id == reviewId
             case "trust.policy.updated":
                 guard let policy = message.policy, case .string(let projectId) = entry.command.values["projectId"] else { return false }
                 return entry.command.type == "trust.policy.update" && policy.projectId == projectId
@@ -949,10 +916,6 @@ final class AppModel: ObservableObject {
             }
         case "task.preference.updated":
             if let preference = message.preference { upsert(&snapshot.taskPreferences, preference); snapshotChanged = true }
-        case "review.updated":
-            if let review = message.review { upsert(&snapshot.reviews, review); snapshotChanged = true }
-        case "reviews.list":
-            if let reviews = message.reviews { snapshot.reviews = reviews; snapshotChanged = true }
         case "trust.policy.updated":
             if let policy = message.policy { upsert(&snapshot.trustPolicies, policy); snapshotChanged = true }
         case "trust.policies":

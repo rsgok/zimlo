@@ -171,8 +171,7 @@ final class OutboxFlowTests: XCTestCase {
         FeedPost(
             id: id, projectId: nil, taskId: "t1", runId: "r1", agentId: "a1",
             sessionId: "s1", kind: "progress", template: "", headline: "h",
-            takeaway: "t", highlights: [], proof: nil, actionRequired: false,
-            actionPrompt: nil, actions: [], pendingActionIds: [], dedupeKey: "",
+            takeaway: "t", highlights: [], proof: nil, dedupeKey: "",
             source: "test", createdAt: "2026-07-20T10:00:00.000Z"
         )
     }
@@ -290,8 +289,7 @@ final class FeedCohortRulesTests: XCTestCase {
         let post = FeedPost(
             id: id, projectId: nil, taskId: "t-\(id)", runId: "r1", agentId: "a1",
             sessionId: "s1", kind: "result", template: "paper", headline: id,
-            takeaway: "", highlights: [], proof: nil, actionRequired: false,
-            actionPrompt: nil, actions: [], pendingActionIds: [], dedupeKey: id,
+            takeaway: "", highlights: [], proof: nil, dedupeKey: id,
             source: "test", createdAt: "2026-07-20T10:00:00.000Z"
         )
         return FeedEntry(
@@ -500,7 +498,6 @@ final class TaskDirectoryProjectionTests: XCTestCase {
             id: id, projectId: projectID, taskId: "task-\(id)", runId: "run-\(id)",
             agentId: "agent", sessionId: "s1", kind: "progress", template: "paper",
             headline: id, takeaway: id, highlights: [], proof: nil,
-            actionRequired: false, actionPrompt: nil, actions: [], pendingActionIds: [],
             dedupeKey: id, source: "test", createdAt: createdAt
         )
     }

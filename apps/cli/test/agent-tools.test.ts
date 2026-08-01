@@ -54,8 +54,6 @@ describe("agent-authored feed protocol", () => {
       takeaway: "刷新竞态已修复，用户不会再被重复登出。",
       highlights: ["刷新请求只保留一个在途实例"],
       proof: "关键路径测试通过",
-      action_required: false,
-      actions: [],
       dedupe_key: "task-a:auth-fixed",
     };
     expect(tools.handle(request("feed.post", args)).ok).toBe(true);
@@ -65,8 +63,8 @@ describe("agent-authored feed protocol", () => {
     expect(store.listFeedPosts()[0]).toMatchObject({ template: "grid", headline: "完成认证重构", highlights: ["刷新请求只保留一个在途实例"] });
   });
 
-  it("rejects incomplete V2 posts without storing partial content", () => {
-    const missingPrompt = tools.handle(request("feed.post", {
+  it("rejects removed V2 action fields without storing partial content", () => {
+    const legacyAction = tools.handle(request("feed.post", {
       task_id: "task-a",
       kind: "attention",
       template: "marker",
@@ -74,11 +72,9 @@ describe("agent-authored feed protocol", () => {
       takeaway: "旧客户端无法读取新记录。",
       highlights: [],
       action_required: true,
-      actions: ["reply"],
       dedupe_key: "task-a:invalid",
     }));
-    expect(missingPrompt.ok).toBe(false);
-    expect(missingPrompt.message).toContain("action_prompt");
+    expect(legacyAction.ok).toBe(false);
     expect(store.listFeedPosts()).toHaveLength(0);
   });
 
@@ -101,9 +97,6 @@ describe("agent-authored feed protocol", () => {
       headline: "需要选择兼容方案",
       takeaway: "两种迁移策略会影响旧客户端。",
       highlights: ["旧客户端仍在使用"],
-      action_required: true,
-      action_prompt: "建议先保留兼容读取，是否继续？",
-      actions: ["reply"],
       dedupe_key: "task-a:compat-choice",
     }));
     const allowed = tools.handle(request("signal.transition", { task_id: "task-a", state: "waiting_input", reason: "等待用户选择" }));
@@ -146,7 +139,7 @@ describe("agent-authored feed protocol", () => {
 
       const posted = localTools.handle({ ...request("feed.post", {
         task_id: "task-a", kind: "result", template: "paper", headline: "效果图已生成",
-        takeaway: "可以直接查看最终画面。", highlights: [], action_required: false, actions: [],
+        takeaway: "可以直接查看最终画面。", highlights: [],
         content: { type: "image_album", materialIds: [materialId] }, dedupe_key: "task-a:image-result",
       }), cwd: root });
       expect(posted.ok).toBe(true);
@@ -193,8 +186,6 @@ describe("feed decision Stop checkpoint", () => {
           headline: "归属完成",
           takeaway: "卡片继承真实 Session 的项目。",
           highlights: [],
-          action_required: false,
-          actions: [],
           dedupe_key: "editor-task:result",
         },
       });

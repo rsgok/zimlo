@@ -29,7 +29,7 @@ function descriptor(pid: number): ServiceDescriptor {
     pid,
     port: 4747,
     version: "0.2.0",
-    protocolVersion: 2,
+    protocolVersion: 3,
     startedAt: "2026-07-29T00:00:00.000Z",
     socketPath: "/tmp/bridge.sock",
     logPath: null,

@@ -102,16 +102,6 @@
       "expected": { "key": "notification.device.unregister" }
     },
     {
-      "name": "review.respond trims the note",
-      "input": { "type": "review.respond", "reviewId": "r-1", "decision": "accept", "note": "  没问题  ", "idempotencyKey": "k-1" },
-      "expected": { "key": "review.respond:r-1:accept:没问题" }
-    },
-    {
-      "name": "review.respond without a note",
-      "input": { "type": "review.respond", "reviewId": "r-1", "decision": "request_changes", "idempotencyKey": "k-2" },
-      "expected": { "key": "review.respond:r-1:request_changes:" }
-    },
-    {
       "name": "unknown command falls back to recursively sorted json",
       "input": { "type": "future.command", "b": 2, "a": 1 },
       "expected": { "key": "future.command:{\"a\":1,\"b\":2}" }

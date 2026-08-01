@@ -64,7 +64,10 @@ struct RootView: View {
                 .zIndex(10)
             }
             .sheet(isPresented: $model.showingNewTask) {
-                NewTaskView(model: model)
+                NewTaskView(
+                    model: model,
+                    session: model.conversationSessionId.flatMap { id in model.snapshot.sessions.first { $0.id == id } }
+                )
                     .environment(\.colorScheme, .dark)
                     .presentationDetents([.large])
                     .presentationDragIndicator(.visible)
@@ -85,7 +88,10 @@ struct RootView: View {
                     .presentationBackground(ZColor.paper)
             }
             .onChange(of: model.showingNewTask) { _, showing in
-                if !showing { model.newTaskProjectId = nil }
+                if !showing {
+                    model.newTaskProjectId = nil
+                    model.conversationSessionId = nil
+                }
             }
         }
     }
@@ -304,9 +310,24 @@ private struct BottomBar: View {
             tabButton(.feed, "rectangle.stack.fill", "Feed")
             tabButton(.tasks, "checklist", "Tasks")
             Button {
+                if let session = model.selectedSession, session.cwd != nil, !session.correlationUncertain {
+                    model.conversationSessionId = session.id
+                    model.newTaskProjectId = nil
+                } else if model.selectedProject != nil {
+                    model.conversationSessionId = nil
+                    model.newTaskProjectId = model.selectedProject?.id
+                } else if model.selectedTab == .feed,
+                          let id = model.activeFeedSessionId,
+                          let session = model.snapshot.sessions.first(where: { $0.id == id && $0.cwd != nil && !$0.correlationUncertain }) {
+                    model.conversationSessionId = session.id
+                    model.newTaskProjectId = nil
+                } else {
+                    model.conversationSessionId = nil
+                    model.newTaskProjectId = nil
+                }
                 model.showingNewTask = true
             } label: {
-                Image(systemName: "plus")
+                Image(systemName: "bubble.left.and.bubble.right.fill")
                     .font(.system(size: dynamicTypeSize.isAccessibilitySize ? 22 : 20, weight: .black))
                     .frame(width: 48, height: 44)
                     .foregroundStyle(ZColor.onAccent)
@@ -315,7 +336,7 @@ private struct BottomBar: View {
             }
             .frame(maxWidth: .infinity, minHeight: 44)
             .foregroundStyle(ZColor.ink.opacity(0.66))
-            .accessibilityLabel("新任务")
+            .accessibilityLabel("对话")
             tabButton(.agents, "person.2.fill", "Agents")
             Button {
                 clearDetail()

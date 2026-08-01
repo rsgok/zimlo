@@ -1,5 +1,5 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import type { ClientCommand, FeedPost, Material, PendingAction, Project, Session, TaskCommand, TaskRecord, TaskReview } from "@zimlo/protocol";
+import type { ClientCommand, FeedPost, Material, PendingAction, Project, Session, TaskCommand, TaskRecord } from "@zimlo/protocol";
 import { FeedPostView } from "./FeedPostView";
 import { ActionFeedCard } from "./ActionFeedCard";
 import { buildFeedItems, feedItemId, type FeedItem } from "./feedItems";
@@ -26,13 +26,12 @@ interface FeedViewProps {
   actions: PendingAction[];
   commands: TaskCommand[];
   tasks: TaskRecord[];
-  reviews?: TaskReview[] | undefined;
   seenPostIds: string[];
   dismissedFeedItemIds: string[];
   send: (command: ClientCommand) => boolean;
   onOpen: (sessionId: string) => void;
   onOpenProject: (projectId: string) => void;
-  onNewTask: () => void;
+  onActiveSessionChange?: ((sessionId: string | null) => void) | undefined;
   onRequestUndo?: ((label: string, undo: () => void) => void) | undefined;
   interactionMode?: "swipe" | "desktop";
 }
@@ -77,7 +76,7 @@ function SeenFeedPage({ children, postId, seen, onSeen, pageRef, feedKey, histor
   >{children}</section>;
 }
 
-export function FeedView({ projects, posts, materials = [], sessions, actions, commands, tasks, reviews = [], seenPostIds, dismissedFeedItemIds, send, onOpen, onOpenProject, onNewTask, onRequestUndo, interactionMode = "swipe" }: FeedViewProps) {
+export function FeedView({ projects, posts, materials = [], sessions, actions, commands, tasks: _tasks, seenPostIds, dismissedFeedItemIds, send, onOpen, onOpenProject, onActiveSessionChange, onRequestUndo, interactionMode = "swipe" }: FeedViewProps) {
   const sessionById = useMemo(() => new Map(sessions.map((session) => [session.id, session])), [sessions]);
   const projectById = useMemo(() => new Map(projects.map((project) => [project.id, project])), [projects]);
 
@@ -94,8 +93,8 @@ export function FeedView({ projects, posts, materials = [], sessions, actions, c
   }, [dismissResolution.settled]);
 
   const items = useMemo(
-    () => buildFeedItems(posts, actions, seenPostIds, commands, dismissResolution.effective, tasks, reviews),
-    [posts, actions, seenPostIds, commands, dismissResolution.effective, tasks, reviews],
+    () => buildFeedItems(posts, actions, seenPostIds, commands, dismissResolution.effective),
+    [posts, actions, seenPostIds, commands, dismissResolution.effective],
   );
 
   // 页面会话固定序列：首帧按 protocol 排序建立，之后只追加、不换位
@@ -112,6 +111,13 @@ export function FeedView({ projects, posts, materials = [], sessions, actions, c
     return item ? [item] : [];
   });
   const currentItems = resolveItems(sequence.queue);
+  const reportedInitialActiveRef = useRef(false);
+  useEffect(() => {
+    if (reportedInitialActiveRef.current || items.length === 0) return;
+    reportedInitialActiveRef.current = true;
+    const first = currentItems[0];
+    onActiveSessionChange?.(first?.type === "post" ? first.post.sessionId : first?.type === "action" ? first.action.sessionId : null);
+  }, [currentItems, items.length, onActiveSessionChange]);
   const [historyLimit, setHistoryLimit] = useState(HISTORY_BATCH);
   const historyItems = resolveItems(sequence.history);
   const visibleHistoryItems = historyItems.slice(0, historyLimit);
@@ -200,6 +206,8 @@ export function FeedView({ projects, posts, materials = [], sessions, actions, c
       const container = timelineRef.current;
       if (!container) return;
       anchorRef.current = captureAnchor(container.scrollTop, measurePages());
+      const active = anchorRef.current ? itemByKey.get(anchorRef.current.key) : undefined;
+      onActiveSessionChange?.(active?.type === "post" ? active.post.sessionId : active?.type === "action" ? active.action.sessionId : null);
       // 历史懒渲染：接近底部时追加一批
       if (historyItems.length > visibleHistoryItems.length
         && container.scrollTop + container.clientHeight > container.scrollHeight - container.clientHeight * 1.5) {
@@ -214,7 +222,6 @@ export function FeedView({ projects, posts, materials = [], sessions, actions, c
   }, []);
 
   const renderItem = (item: FeedItem, historical = false, index = -1) => {
-    const position = historical ? null : index + 1;
     return (
       <SeenFeedPage
         key={feedItemId(item)}
@@ -237,21 +244,13 @@ export function FeedView({ projects, posts, materials = [], sessions, actions, c
             materials={materials}
             session={item.post.sessionId ? sessionById.get(item.post.sessionId) : undefined}
             project={item.post.projectId ? projectById.get(item.post.projectId) : undefined}
-            actions={actions.filter((action) => item.post.pendingActionIds.includes(action.actionId))}
-            review={reviews.find((review) => review.postId === item.post.id)}
-            send={send}
             onOpenProject={onOpenProject}
-            needsAction={item.needsAction}
-            position={position}
-            total={sequence.queue.length}
             interactionMode={interactionMode}
           /> : item.type === "action" ? <ActionFeedCard
             action={item.action}
             session={sessionById.get(item.action.sessionId)}
             send={send}
-            position={position}
-            total={sequence.queue.length}
-          /> : <TaskCommandFailureCard command={item.command} send={send} position={position} total={sequence.queue.length} />}
+          /> : <TaskCommandFailureCard command={item.command} send={send} />}
         </SwipeToTask>
       </SeenFeedPage>
     );
@@ -278,11 +277,8 @@ export function FeedView({ projects, posts, materials = [], sessions, actions, c
               <span className="empty-mark">✓</span>
               <p className="eyebrow">YOU'RE ALL CAUGHT UP</p>
             </div>
-            <h2>{currentItems.length === 0 && historyItems.length === 0 ? "Feed 已经清空" : "当前更新已经看完"}</h2>
-            <div>
-              <button className="primary-button" onClick={onNewTask}>＋ 新任务</button>
-              {historyItems.length > 0 && <button className="secondary-button" onClick={() => historyPage.current?.scrollIntoView({ behavior: "smooth" })}>继续看历史 ↓</button>}
-            </div>
+            <h2>暂时没有新内容</h2>
+            {historyItems.length > 0 && <button className="secondary-button" onClick={() => historyPage.current?.scrollIntoView({ behavior: "smooth" })}>继续看历史 ↓</button>}
           </div>
         </section>
         {visibleHistoryItems.map((item, index) => renderItem(item, true, index))}
@@ -293,7 +289,7 @@ export function FeedView({ projects, posts, materials = [], sessions, actions, c
           setSequence((current) => clearFresh(current));
           if (firstFresh) scrollToKey(firstFresh);
         }}>
-          有 {sequence.fresh.length} 条新更新
+          有新内容
         </button>
       )}
     </div>

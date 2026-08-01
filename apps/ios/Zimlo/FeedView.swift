@@ -4,6 +4,7 @@ struct NativeFeedView: View {
     @ObservedObject var model: AppModel
     @State private var visibleID: String?
     @State private var currentOrder: [String] = []
+    @State private var showNewContent = false
 
     var body: some View {
         // Feed projection is intentionally built once per render. It used to be
@@ -13,21 +14,19 @@ struct NativeFeedView: View {
         let current = currentOrder.compactMap { byID[$0] }
         let currentIDs = Set(currentOrder)
         let history = entries.filter { !currentIDs.contains($0.id) }
-        let positions = Dictionary(uniqueKeysWithValues: current.enumerated().map { ($0.element.id, $0.offset + 1) })
-
-        GeometryReader { geometry in
+        return GeometryReader { geometry in
             ScrollView(.vertical) {
                 LazyVStack(spacing: 0) {
                     ForEach(current) { entry in
-                        FeedPage(model: model, entry: entry, position: positions[entry.id] ?? 1, total: current.count)
+                        FeedPage(model: model, entry: entry)
                             .frame(width: geometry.size.width, height: geometry.size.height)
                             .id(entry.id)
                     }
-                    CaughtUpPage(model: model, feedIsEmpty: entries.isEmpty, hasHistory: !history.isEmpty)
+                    CaughtUpPage(hasHistory: !history.isEmpty)
                         .frame(width: geometry.size.width, height: geometry.size.height)
                         .id(FeedCohortRules.caughtUpID)
                     ForEach(history) { entry in
-                        FeedPage(model: model, entry: entry, position: 0, total: current.count, historical: true)
+                        FeedPage(model: model, entry: entry, historical: true)
                             .frame(width: geometry.size.width, height: geometry.size.height)
                             .id(entry.id)
                     }
@@ -37,15 +36,33 @@ struct NativeFeedView: View {
             .scrollIndicators(.hidden)
             .scrollTargetBehavior(.paging)
             .scrollPosition(id: $visibleID)
+            .simultaneousGesture(DragGesture(minimumDistance: 4).onChanged { _ in showNewContent = false })
             .background(ZColor.canvas)
             .onAppear { updateCohort() }
             .onChange(of: FeedCohortRules.signature(entries)) { _, _ in updateCohort() }
             .task(id: visibleID) {
-                guard let id = visibleID, let entry = byID[id],
+                guard let id = visibleID, let entry = byID[id] else {
+                    model.activeFeedSessionId = nil
+                    return
+                }
+                model.activeFeedSessionId = entry.sessionId
+                guard
                       case .post(let post) = entry.content, entry.unread else { return }
                 try? await Task.sleep(for: .seconds(1))
                 guard !Task.isCancelled, visibleID == id else { return }
                 model.markSeen(post.id)
+            }
+            .overlay(alignment: .top) {
+                if showNewContent {
+                    Text("有新内容")
+                        .font(ZFont.caption.weight(.bold))
+                        .foregroundStyle(ZColor.ink)
+                        .padding(.horizontal, 14).frame(minHeight: 36)
+                        .background(.ultraThinMaterial)
+                        .clipShape(Capsule())
+                        .padding(.top, 12)
+                        .transition(.move(edge: .top).combined(with: .opacity))
+                }
             }
         }
     }
@@ -54,15 +71,25 @@ struct NativeFeedView: View {
         let entries = model.feedEntries
         let previous = currentOrder
         let next = FeedCohortRules.reconcile(previous: previous, entries: entries)
+        if !previous.isEmpty && next.contains(where: { !Set(previous).contains($0) }) {
+            showNewContent = true
+        }
         let arrival = FeedCohortRules.arrivalTarget(
             visibleID: visibleID,
             previous: previous,
             next: next,
             entries: entries
         )
+        let initial = visibleID == nil ? next.first : nil
+        let target = arrival ?? initial
         withAnimation(.easeOut(duration: 0.22)) {
             currentOrder = next
-            if let arrival { visibleID = arrival }
+            if let target { visibleID = target }
+        }
+        if let target, let entry = entries.first(where: { $0.id == target }) {
+            model.activeFeedSessionId = entry.sessionId
+        } else if next.isEmpty {
+            model.activeFeedSessionId = nil
         }
     }
 }
@@ -70,8 +97,6 @@ struct NativeFeedView: View {
 private struct FeedPage: View {
     @ObservedObject var model: AppModel
     let entry: FeedEntry
-    let position: Int
-    let total: Int
     var historical = false
     @State private var offset: CGFloat = 0
 
@@ -88,11 +113,11 @@ private struct FeedPage: View {
             Group {
                 switch entry.content {
                 case .post(let post):
-                    PostCard(model: model, post: post, needsAction: entry.needsAction, position: position, total: total, historical: historical)
+                    PostCard(model: model, post: post, historical: historical)
                 case .action(let action):
-                    ActionCard(model: model, action: action, position: position, total: total, historical: historical)
+                    ActionCard(model: model, action: action, historical: historical)
                 case .command(let command):
-                    CommandCard(model: model, command: command, position: position, total: total, historical: historical)
+                    CommandCard(model: model, command: command, historical: historical)
                 }
             }
             .environment(\.colorScheme, .dark)
@@ -129,17 +154,10 @@ private struct FeedPage: View {
 private struct PostCard: View {
     @ObservedObject var model: AppModel
     let post: FeedPost
-    let needsAction: Bool
-    let position: Int
-    let total: Int
     let historical: Bool
-    @State private var reply = ""
 
     private var session: AgentSession? { post.sessionId.flatMap { id in model.snapshot.sessions.first { $0.id == id } } }
     private var project: Project? { post.projectId.flatMap { id in model.snapshot.projects.first { $0.id == id } } }
-    private var pendingActions: [PendingAction] {
-        model.snapshot.actions.filter { post.pendingActionIds.contains($0.actionId) && $0.state == "pending" }
-    }
     private var mediaContent: FeedContent? {
         guard let content = post.content, content.type != "text" else { return nil }
         return content
@@ -149,21 +167,21 @@ private struct PostCard: View {
         return mediaContent
     }
     private var isImmersiveMedia: Bool { immersiveMedia != nil }
-    private var label: String {
-        ["progress": "阶段成果", "decision": "新的判断", "attention": "需要关注", "result": "结果", "failure": "失败 / 风险"][post.kind] ?? "更新"
-    }
-
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             HStack {
-                Text(historical ? "历史 · \(label)" : label).font(ZFont.caption)
-                Spacer()
-                if !historical {
-                    Text(String(format: "%02d / %02d", position, max(total, 1)))
-                        .font(ZFont.caption.monospaced())
+                if let project {
+                    Button { model.openAgent(projectId: project.id) } label: {
+                        AgentAvatar(value: project.agentProfile.avatar, size: 22)
+                        Text(project.agentProfile.displayName).fontWeight(.semibold)
+                    }
+                } else {
+                    Text(post.agentId).fontWeight(.semibold)
                 }
+                Spacer()
+                TimelineView(.periodic(from: .now, by: 30)) { _ in Text(relative(post.createdAt)) }
             }
-            .foregroundStyle(ZColor.muted).padding(.top, 22)
+            .font(ZFont.footnote).foregroundStyle(isImmersiveMedia ? Color.white.opacity(0.7) : ZColor.muted).padding(.top, 22)
 
             Spacer(minLength: mediaContent == nil ? 28 : isImmersiveMedia ? 120 : 12)
 
@@ -171,12 +189,6 @@ private struct PostCard: View {
                 FeedMaterialCard(model: model, content: mediaContent)
             }
 
-            if !isImmersiveMedia {
-                TimelineView(.periodic(from: .now, by: 30)) { _ in
-                    Text(relative(post.createdAt))
-                        .font(ZFont.footnote).foregroundStyle(ZColor.muted)
-                }
-            }
             Text(post.headline)
                 .font(mediaContent == nil ? ZFont.hero : isImmersiveMedia ? ZFont.title : ZFont.title)
                 .lineSpacing(0)
@@ -200,68 +212,9 @@ private struct PostCard: View {
 
             Spacer(minLength: mediaContent == nil ? 22 : isImmersiveMedia ? 10 : 8)
 
-            if !isImmersiveMedia && (mediaContent == nil || needsAction) { VStack(alignment: .leading, spacing: 5) {
-                Text("下一步").font(ZFont.caption2).foregroundStyle(ZColor.sageText)
-                Text(nextAction).font(ZFont.subheadline.weight(.bold)).lineLimit(2)
-            }
-            .padding(14)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .background(ZColor.sage.opacity(0.09))
-            .overlay(alignment: .leading) { Rectangle().fill(ZColor.sage).frame(width: 4) }
-            .clipShape(RoundedRectangle(cornerRadius: ZRadius.control, style: .continuous))
-            }
-
-            if !pendingActions.isEmpty {
-                ForEach(pendingActions) { action in
-                    VStack(alignment: .leading, spacing: 7) {
-                        Text(action.title).font(ZFont.caption)
-                        PendingActionControls(model: model, action: action, limit: 2)
-                    }.padding(.top, 10)
-                }
-            } else if needsAction, post.actions.contains("reply"), let session {
-                VStack(alignment: .leading, spacing: 6) {
-                    HStack(spacing: 8) {
-                        VoiceInput(text: $reply, placeholder: "说出或输入回复…", axis: .horizontal)
-                        Button("回复") {
-                            let value = reply.trimmingCharacters(in: .whitespacesAndNewlines)
-                            // 发送即清空：先持久化 outbox，成功后同一交互周期清空输入与草稿。
-                            if model.followUp(sessionId: session.id, text: value) {
-                                reply = ""
-                                UserDefaults.standard.removeObject(forKey: "zimlo.feed-reply.\(post.id)")
-                            }
-                        }
-                        .font(ZFont.caption)
-                        .padding(.horizontal, 12).padding(.vertical, 11)
-                        .foregroundStyle(ZColor.onAccent)
-                        .background(ZColor.acid).clipShape(RoundedRectangle(cornerRadius: 12))
-                        .disabled(reply.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || session.correlationUncertain)
-                    }
-                    if model.hasPendingLocalReply(sessionId: session.id) {
-                        Text("回复已保存在手机，等待 Mac 确认")
-                            .font(ZFont.caption2).foregroundStyle(ZColor.sageText)
-                    }
-                }.padding(.top, 10)
-            }
-
             HStack(spacing: 8) {
-                if let project {
-                    Button { model.openAgent(projectId: project.id) } label: {
-                        AgentAvatar(value: project.agentProfile.avatar, size: 20)
-                        Text(project.agentProfile.displayName).fontWeight(.bold)
-                    }
-                } else if let session {
-                    ProviderBadge(provider: session.provider, surface: session.surface)
-                } else {
-                    Text(post.agentId.uppercased()).fontWeight(.bold)
-                }
+                Text(historical ? "历史内容" : session == nil ? "新任务上下文" : "滑动查看任务")
                 Spacer()
-                if needsAction {
-                    Text("需要你处理")
-                        .font(ZFont.caption2)
-                        .foregroundStyle(ZColor.ink)
-                        .padding(.horizontal, 9).padding(.vertical, 6)
-                        .background(ZColor.coral).clipShape(Capsule())
-                }
             }
             .font(ZFont.footnote)
             .foregroundStyle(ZColor.ink.opacity(0.72))
@@ -280,52 +233,22 @@ private struct PostCard: View {
                     )
                 } else {
                     ZColor.paper
-                    Rectangle().fill(needsAction ? ZColor.coral : Color.clear).frame(height: 9)
                 }
             }
         )
         .clipShape(RoundedRectangle(cornerRadius: ZRadius.card, style: .continuous))
-        .onAppear {
-            reply = UserDefaults.standard.string(forKey: "zimlo.feed-reply.\(post.id)") ?? ""
-        }
-        .task(id: reply) {
-            try? await Task.sleep(for: .milliseconds(350))
-            guard !Task.isCancelled else { return }
-            persistReplyDraft()
-        }
-        .onDisappear { persistReplyDraft() }
-    }
-
-    private var nextAction: String {
-        if needsAction, let prompt = post.actionPrompt { return prompt }
-        if post.kind == "failure" { return "左滑查看原因并决定下一步" }
-        if post.kind == "result" { return "左滑查看完整结果" }
-        if session?.status == "running" { return "Agent 继续执行，重要变化会再次出现" }
-        return "等待下一条重要更新"
-    }
-
-    private func persistReplyDraft() {
-        let key = "zimlo.feed-reply.\(post.id)"
-        if reply.isEmpty { UserDefaults.standard.removeObject(forKey: key) }
-        else { UserDefaults.standard.set(reply, forKey: key) }
     }
 }
 
 private struct ActionCard: View {
     @ObservedObject var model: AppModel
     let action: PendingAction
-    let position: Int
-    let total: Int
     let historical: Bool
 
     var body: some View {
         VStack(alignment: .leading, spacing: 20) {
             HStack {
                 Text("需要你处理").font(ZFont.caption)
-                Spacer()
-                if !historical {
-                    Text(String(format: "%02d / %02d", position, max(total, 1))).font(ZFont.caption.monospaced())
-                }
             }
             .foregroundStyle(ZColor.muted)
             Spacer()
@@ -344,18 +267,12 @@ private struct ActionCard: View {
 private struct CommandCard: View {
     @ObservedObject var model: AppModel
     let command: TaskCommand
-    let position: Int
-    let total: Int
     let historical: Bool
 
     var body: some View {
         VStack(alignment: .leading, spacing: 20) {
             HStack {
                 Text(command.state == "failed" ? "启动失败" : "启动中").font(ZFont.caption)
-                Spacer()
-                if !historical {
-                    Text(String(format: "%02d / %02d", position, max(total, 1))).font(ZFont.caption.monospaced())
-                }
             }.foregroundStyle(ZColor.muted)
             Spacer()
             Text(command.text).font(ZFont.title).lineSpacing(0).lineLimit(4).minimumScaleFactor(0.8)
@@ -366,10 +283,6 @@ private struct CommandCard: View {
                 Button("原地重试") { model.retry(commandId: command.id) }
                     .buttonStyle(ActionButtonStyle(primary: true))
             }
-            HStack(spacing: 7) {
-                ProviderBadge(provider: command.provider, iconOnly: true)
-                Text(command.cwd).font(ZFont.footnote).lineLimit(1)
-            }
         }
         .padding(24).foregroundStyle(ZColor.ink)
         .background(ZColor.paper)
@@ -379,8 +292,6 @@ private struct CommandCard: View {
 }
 
 private struct CaughtUpPage: View {
-    @ObservedObject var model: AppModel
-    let feedIsEmpty: Bool
     let hasHistory: Bool
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
 
@@ -428,21 +339,18 @@ private struct CaughtUpPage: View {
                     .multilineTextAlignment(.center)
                     .fixedSize(horizontal: false, vertical: true)
             }
-            Text(feedIsEmpty ? "Feed 已经清空" : "当前更新已经看完")
+            Text("暂时没有新内容")
                 .font(ZFont.title).lineSpacing(0).minimumScaleFactor(0.8)
                 .multilineTextAlignment(.center)
                 .fixedSize(horizontal: false, vertical: true)
                 .padding(.top, 18)
-            Text("重要更新、待审批和需要回复的任务会出现在这里。")
+            Text("Agent 有新的重要进展时会出现在这里。")
                 .font(ZFont.footnote)
                 .foregroundStyle(ZColor.muted)
                 .multilineTextAlignment(.center)
                 .frame(maxWidth: 270)
                 .fixedSize(horizontal: false, vertical: true)
                 .padding(.top, 9)
-            Button("＋ 新任务") { model.showingNewTask = true }.buttonStyle(ActionButtonStyle(primary: true))
-                .frame(maxWidth: dynamicTypeSize.isAccessibilitySize ? 300 : 240)
-                .padding(.top, 22)
             if hasHistory {
                 Text("继续向下浏览历史 ↓")
                     .font(ZFont.footnote)

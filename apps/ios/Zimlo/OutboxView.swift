@@ -115,7 +115,6 @@ private struct OutboxRow: View {
         case "task.create": return "新任务"
         case "task.follow_up", "session.message": return "追加指令"
         case "action.decide": return "审批决定"
-        case "review.respond": return "结果审阅"
         case "task.command.retry": return "重试指令"
         case "task.command.cancel": return "撤回指令"
         case "feed.dismiss", "feed.dismiss.set": return "Feed 移除"

@@ -12,9 +12,6 @@ describe("Feed compatibility", () => {
       kind: "progress",
       title: "旧标题",
       body: "旧正文",
-      actionRequired: false,
-      actions: [],
-      pendingActionIds: [],
       dedupeKey: "legacy-agent",
       source: "agent",
       createdAt: "2026-07-21T00:00:00.000Z",
@@ -49,7 +46,6 @@ describe("Feed compatibility", () => {
     expect(snapshot.taskPreferences).toEqual([]);
     expect(snapshot.userProfile.avatarId).toBe("user-01");
     expect(snapshot.features).toEqual({
-      taskReview: false,
       projectTrustPolicy: false,
       pushNotifications: false,
       remoteSync: false,
@@ -64,7 +60,6 @@ describe("Feed compatibility", () => {
   it("defaults capabilities added after an older Bridge snapshot", () => {
     const snapshot = normalizeSnapshot({
       features: {
-        taskReview: true,
         projectTrustPolicy: false,
         pushNotifications: true,
       },

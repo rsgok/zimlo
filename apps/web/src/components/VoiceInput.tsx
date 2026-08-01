@@ -78,6 +78,17 @@ export function VoiceInput({ value, onChange, placeholder, ariaLabel, rows = 2, 
 
   return (
     <div className={`voice-input ${compact ? "voice-input-compact" : ""} ${listening ? "is-listening" : ""}`}>
+      <textarea
+        aria-label={ariaLabel}
+        value={value}
+        onChange={(event) => handleChange(event.target.value)}
+        onKeyDown={handleKeyDown}
+        placeholder={placeholder}
+        rows={rows}
+        disabled={disabled}
+        autoFocus={autoFocus}
+        {...(onSubmit ? { enterKeyHint: "send" as const } : {})}
+      />
       <button
         type="button"
         className="voice-input-button"
@@ -90,17 +101,6 @@ export function VoiceInput({ value, onChange, placeholder, ariaLabel, rows = 2, 
         <AppIcon name={listening ? "stop" : "mic"} />
         <span>{listening ? "正在听" : "语音"}</span>
       </button>
-      <textarea
-        aria-label={ariaLabel}
-        value={value}
-        onChange={(event) => handleChange(event.target.value)}
-        onKeyDown={handleKeyDown}
-        placeholder={placeholder}
-        rows={rows}
-        disabled={disabled}
-        autoFocus={autoFocus}
-        {...(onSubmit ? { enterKeyHint: "send" as const } : {})}
-      />
     </div>
   );
 }

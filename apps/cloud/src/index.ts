@@ -575,7 +575,7 @@ export default {
       return Response.json({
         ok: true,
         service: "zimlo-cloud",
-        protocolVersion: 2,
+        protocolVersion: 3,
         storesContent: false,
         storesEncryptedMaterials: Boolean(env.MATERIALS),
         encryptedRemoteSync: true,

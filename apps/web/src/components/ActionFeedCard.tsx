@@ -1,17 +1,15 @@
 import type { ClientCommand, PendingAction, Session } from "@zimlo/protocol";
 import { ActionPanel } from "./ActionPanel";
-import { ProviderBadge, ProviderIcon } from "./ProviderBadge";
+import { ProviderIcon } from "./ProviderBadge";
 import { runtimeLabel, sessionLocation } from "./sessionPresentation";
 
 interface ActionFeedCardProps {
   action: PendingAction;
   session: Session | undefined;
   send: (command: ClientCommand) => boolean;
-  position: number | null;
-  total: number;
 }
 
-export function ActionFeedCard({ action, session, send, position, total }: ActionFeedCardProps) {
+export function ActionFeedCard({ action, session, send }: ActionFeedCardProps) {
   const location = session ? sessionLocation(session) : null;
   const risk = action.availableDecisions.some((decision) => decision.risk === "high")
     ? "高风险"
@@ -29,23 +27,14 @@ export function ActionFeedCard({ action, session, send, position, total }: Actio
     <article className="feed-post post-attention template-marker is-attention action-feed-card">
       <div className="post-topline">
         <div><span className="post-kind">需要你处理</span><span className="post-author">{session ? <ProviderIcon provider={session.provider} /> : "AGENT"}</span></div>
-        {position !== null && <span className="post-position">{String(position).padStart(2, "0")} / {String(total).padStart(2, "0")}</span>}
       </div>
       <div className="post-copy">
         <p className="post-time">刚刚</p>
         <h2>{title}</h2>
         <p className="post-takeaway">{action.kind === "input" ? `“${subject}”正在等待你的回答，提交后会继续执行。` : takeaway}</p>
-        <ul className="post-highlights action-context">
-          <li>来源任务：{subject}</li>
-          <li>{location ? `${location.kind === "project" ? "项目" : "目录"}：${location.label}` : "位置：未知"}{action.kind === "approval" ? ` · ${risk}` : ""}</li>
-        </ul>
+        <p className="action-risk-note">{action.kind === "approval" ? `${risk} · 请明确批准或拒绝` : "提交回答后任务会继续"}</p>
       </div>
       <div className="post-footer">
-        <div className="session-meta">
-          {session ? <ProviderBadge provider={session.provider} surface={session.surface} /> : <span>Agent</span>}
-          <span>{location ? `${location.kind === "project" ? "项目" : "目录"} · ${location.label}` : "任务"}</span>
-          <span className="action-required-badge">需要你处理</span>
-        </div>
         <ActionPanel action={action} send={send} compact />
       </div>
     </article>

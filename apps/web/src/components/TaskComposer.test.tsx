@@ -51,7 +51,10 @@ describe("TaskComposer", () => {
     expect(markup).toContain("交给谁");
     expect(markup).toContain("Zimlo");
     expect(markup).toContain("/avatars/user-07.png");
-    expect(markup).toContain("提交后可离开，任务会继续运行");
+    expect(markup).toContain("aria-label=\"添加附件\"");
+    expect(markup).toContain("aria-label=\"开始任务\"");
+    expect(markup).toContain("aria-label=\"开始语音输入\"");
+    expect(markup).not.toContain("autofocus");
     expect(markup).not.toContain("NEW TASK");
     expect(markup).not.toContain("Project Agent");
     expect(markup).not.toContain("/Projects/zimlo");

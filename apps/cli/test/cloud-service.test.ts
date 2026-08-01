@@ -20,7 +20,7 @@ describe("CloudService health capabilities", () => {
     delete process.env.ZIMLO_CLOUD_DISABLED;
     vi.stubGlobal("fetch", vi.fn(async () => Response.json({
       ok: true,
-      protocolVersion: 2,
+      protocolVersion: 3,
       pushConfigured: true,
     })));
     const store = new ZimloStore(":memory:");
@@ -40,7 +40,7 @@ describe("CloudService health capabilities", () => {
     delete process.env.ZIMLO_CLOUD_DISABLED;
     vi.stubGlobal("fetch", vi.fn(async () => Response.json({
       ok: true,
-      protocolVersion: 2,
+      protocolVersion: 3,
       pushConfigured: false,
     })));
     const store = new ZimloStore(":memory:");

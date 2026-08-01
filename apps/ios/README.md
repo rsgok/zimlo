@@ -1,22 +1,22 @@
 # Zimlo for iOS
 
-原生 SwiftUI 客户端，复用 Zimlo Bridge protocol v2，不是 WebView 包装。
+原生 SwiftUI 客户端，复用 Zimlo Bridge protocol v3，不是 WebView 包装。
 
 ## 已实现的闭环
 
 - 扫描或粘贴 Mac 配对链接；设备密钥保存在 iOS Keychain。
 - X25519 + HKDF + HMAC 配对，以及 XChaCha20-Poly1305 加密 WebSocket。
 - Snapshot 驱动的一页一卡 Feed；左滑 Task Detail、右滑移出 Feed、稳定停留 1 秒标记已读。
-- Feed、Tasks、居中新任务、Agents、个人设置五键底栏。
+- Feed、Tasks、居中对话入口、Agents、个人设置五键底栏。
 - Task Detail 的紧凑 Header、分层 Timeline、待处理事项和可靠 follow-up 队列。
 - Feed、Tasks、Agents、Settings 与详情页共用 44pt `AppTopBar`；系统安全区由 `safeAreaInset` 管理，无障碍字号时内容行最多 52pt。
-- 结果审阅支持接受或填写原因要求修改；后者进入持久 outbox，断网、退出和重连后仍可幂等重放。
-- 配对后由用户主动请求 APNs 权限，只接收审批/回复、失败和待审结果三类可见通知；加密任务路由只在设备端解密。
+- 任意可关联任务的卡片都能从统一输入面板继续对话；面板默认既不录音也不弹键盘，文字、语音和附件由用户自由选择。
+- 配对后由用户主动请求 APNs 权限，只接收真实审批与失败通知；加密任务路由只在设备端解密。
 - 局域网连接失败时自动切到 Cloudflare 加密中继；最近快照保存在受文件保护的数据目录，离线操作进入持久 outbox。
 - 新任务草稿、最近 Runtime / Project、断网 outbox、重连重放与幂等 key。
 - 用户与 Project Agent 共用 24 个预置头像；Agent 初次创建时随机分配并可编辑，另有固定 Zimlo 头像和原生语音输入。
 - 高风险审批走底部 Sheet：完整展示风险、作用域、目标命令与确认短语，「填入确认短语」+「确认执行」双确认，取消或过期自动清空。
-- Feed 回复、审批回答与 follow-up 发送即清空：先持久化 outbox，成功后清空输入与草稿并立即展示本地 pending；服务端拒绝标失败，可在 outbox 详情里重试或重新编辑。
+- 对话 follow-up 与审批回答发送即清空：先持久化 outbox，成功后清空输入与草稿并立即展示本地 pending；服务端拒绝标失败，可在 outbox 详情里重试或重新编辑。
 - 右滑移除 Feed、归档任务均乐观更新并提供 6 秒撤销；任务列表有「已归档」筛选可找回。
 - Outbox 详情（设置页或顶部胶囊进入）展示每条指令的类型、目标、预览与状态；本地或服务端仍 queued 的 create/follow-up 可撤回（task.command.cancel）。
 - 重连使用共享退避序列 [1,2,4,8,16,30]s ±20% 抖动，系统离线时暂停，认证成功或回前台重置；离线/重连胶囊与顶栏状态都可点按立即重试。
@@ -26,7 +26,7 @@
 
 ## 规范对齐与测试
 
-Feed 合并（6h 窗口）、优先级（covered +6 / 已读 +10 / needsAction 0）、outbox 语义键、
+Feed 合并（6h 窗口）、阅读优先级（covered +6 / 已读 +10）、真实 PendingAction 独立置顶、outbox 语义键、
 重连退避、撤回状态与快捷审批规则由 `Zimlo/SharedRules.swift` 实现，与
 `packages/protocol/src/policy.ts` 逐行对齐。`ZimloTests/VectorTests.swift` 直接读取
 `packages/protocol/test-vectors/` 下的 6 个 JSON 向量文件（共 83 个 case）逐个断言，
@@ -73,7 +73,7 @@ node apps/cli/dist/index.js start
 
 再打开 `apps/ios/Zimlo.xcodeproj`，选择 iPhone 模拟器或已签名真机运行，并使用 Mac 网页 Settings 中生成的配对信息。首次配对默认通过两分钟有效的 Cloudflare 配对房间完成，真机与 Mac 不需要处于同一 LAN；配对后也可在外网继续同步。
 
-Bridge 在局域网使用用户提供的 HTTP / WebSocket 地址，但所有配对证明和应用消息均由 Zimlo protocol v2 自行认证和端到端加密。
+Bridge 在局域网使用用户提供的 HTTP / WebSocket 地址，但所有配对证明和应用消息均由 Zimlo protocol v3 自行认证和端到端加密。
 
 ## 安装到自己的 iPhone
 

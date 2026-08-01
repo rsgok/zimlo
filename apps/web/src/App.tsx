@@ -32,6 +32,8 @@ export function App() {
   const [selectedProjectId, setSelectedProjectId] = useState<string | null>(null);
   const [newTaskOpen, setNewTaskOpen] = useState(false);
   const [newTaskProjectId, setNewTaskProjectId] = useState<string | null>(null);
+  const [composerSessionId, setComposerSessionId] = useState<string | null>(null);
+  const [activeFeedSessionId, setActiveFeedSessionId] = useState<string | null>(null);
   const [outboxOpen, setOutboxOpen] = useState(false);
   const [undoToast, setUndoToast] = useState<UndoToastData | null>(null);
   const scrollPositionsRef = useRef<Partial<Record<Tab, number>>>({});
@@ -42,6 +44,10 @@ export function App() {
   const selectedProject = useMemo(
     () => bridge.snapshot.projects.find((project) => project.id === selectedProjectId) ?? null,
     [bridge.snapshot.projects, selectedProjectId],
+  );
+  const composerSession = useMemo(
+    () => bridge.snapshot.sessions.find((session) => session.id === composerSessionId) ?? null,
+    [bridge.snapshot.sessions, composerSessionId],
   );
   const localTaskCommands = useMemo<TaskCommand[]>(() => bridge.pendingCommandEntries.flatMap(({ command, enqueuedAt, state }): TaskCommand[] => {
     const localState = state === "failed" ? "failed" : "queued";
@@ -69,9 +75,22 @@ export function App() {
   }, [send]);
   const openAgent = useCallback((projectId: string) => setSelectedProjectId(projectId), []);
   const openNewTask = useCallback((projectId: string | null = null) => {
+    setComposerSessionId(null);
     setNewTaskProjectId(projectId);
     setNewTaskOpen(true);
   }, []);
+  const openConversation = useCallback(() => {
+    const contextualSessionId = selectedSessionId ?? (tab === "feed" ? activeFeedSessionId : null);
+    const contextualSession = bridge.snapshot.sessions.find((session) => session.id === contextualSessionId && session.cwd && !session.correlationUncertain);
+    if (contextualSession) {
+      setComposerSessionId(contextualSession.id);
+      setNewTaskProjectId(null);
+    } else {
+      setComposerSessionId(null);
+      setNewTaskProjectId(selectedProjectId);
+    }
+    setNewTaskOpen(true);
+  }, [activeFeedSessionId, bridge.snapshot.sessions, selectedProjectId, selectedSessionId, tab]);
   const openSettings = useCallback(() => {
     mountTab("settings");
     if (bridge.localAdmin) send({ type: "devices.request" });
@@ -149,7 +168,7 @@ export function App() {
 
       <main className={`main-content ${tab === "feed" ? "feed-main" : ""}`}>
         <div className={tab === "feed" ? "tab-panel" : "tab-panel tab-panel-hidden"}>
-          {mountedTabs.has("feed") && <FeedView projects={bridge.snapshot.projects} posts={bridge.snapshot.posts} materials={bridge.snapshot.materials} sessions={bridge.snapshot.sessions} actions={bridge.snapshot.actions} commands={commands} tasks={bridge.snapshot.tasks} reviews={bridge.snapshot.features.taskReview ? bridge.snapshot.reviews : []} seenPostIds={bridge.snapshot.seenPostIds} dismissedFeedItemIds={bridge.snapshot.dismissedFeedItemIds} send={send} onOpen={openSession} onOpenProject={openAgent} onNewTask={() => openNewTask()} onRequestUndo={showUndo} interactionMode={macosShell ? "desktop" : "swipe"} />}
+          {mountedTabs.has("feed") && <FeedView projects={bridge.snapshot.projects} posts={bridge.snapshot.posts} materials={bridge.snapshot.materials} sessions={bridge.snapshot.sessions} actions={bridge.snapshot.actions} commands={commands} tasks={bridge.snapshot.tasks} seenPostIds={bridge.snapshot.seenPostIds} dismissedFeedItemIds={bridge.snapshot.dismissedFeedItemIds} send={send} onOpen={openSession} onOpenProject={openAgent} onActiveSessionChange={setActiveFeedSessionId} onRequestUndo={showUndo} interactionMode={macosShell ? "desktop" : "swipe"} />}
         </div>
         <div className={tab === "tasks" ? "tab-panel" : "tab-panel tab-panel-hidden"}>
           {mountedTabs.has("tasks") && <TasksView projects={bridge.snapshot.projects} sessions={bridge.snapshot.sessions} tasks={bridge.snapshot.tasks} posts={bridge.snapshot.posts} preferences={bridge.snapshot.taskPreferences} send={send} onOpen={openSession} onRequestUndo={showUndo} />}
@@ -192,11 +211,11 @@ export function App() {
         <button
           className={`new-task-nav ${newTaskOpen ? "active" : ""}`}
           aria-pressed={newTaskOpen}
-          onClick={() => openNewTask()}
-          aria-label="布置新任务"
+          onClick={openConversation}
+          aria-label="打开对话"
         >
-          <span className="bottom-nav-icon bottom-nav-create"><AppIcon name="plus" /></span>
-          <strong className="bottom-nav-label">新任务</strong>
+          <span className="bottom-nav-icon bottom-nav-create"><AppIcon name="conversation" /></span>
+          <strong className="bottom-nav-label">对话</strong>
         </button>
         <button aria-current={tab === "agents" ? "page" : undefined} className={tab === "agents" ? "active" : ""} onClick={() => mountTab("agents")}>
           <span className="bottom-nav-icon"><AppIcon name="agents" /></span>
@@ -256,7 +275,6 @@ export function App() {
           commands={commands.filter((command) => command.sessionId === selectedSession.id)}
           materials={bridge.snapshot.materials}
           task={[...bridge.snapshot.tasks].filter((task) => task.sessionId === selectedSession.id).sort((left, right) => right.updatedAt.localeCompare(left.updatedAt))[0]}
-          reviews={bridge.snapshot.features.taskReview ? bridge.snapshot.reviews.filter((review) => review.sessionId === selectedSession.id) : []}
           userAvatarId={bridge.snapshot.userProfile.avatarId}
           timelineCursor={bridge.snapshot.taskTimelineCursors[selectedSession.id]}
           send={send}
@@ -264,7 +282,7 @@ export function App() {
           onClose={() => setSelectedSessionId(null)}
         />
       )}
-      {newTaskOpen && <TaskComposer workspaces={bridge.snapshot.workspaces} projects={bridge.snapshot.projects} initialProjectId={newTaskProjectId} send={send} onSubmitted={() => mountTab("feed")} onClose={() => { setNewTaskOpen(false); setNewTaskProjectId(null); }} />}
+      {newTaskOpen && <TaskComposer key={composerSession?.id ?? `new:${newTaskProjectId ?? "default"}`} workspaces={bridge.snapshot.workspaces} projects={bridge.snapshot.projects} initialProjectId={newTaskProjectId} session={composerSession} send={send} onSubmitted={() => mountTab("feed")} onClose={() => { setNewTaskOpen(false); setNewTaskProjectId(null); setComposerSessionId(null); }} />}
     </div>
   );
 }

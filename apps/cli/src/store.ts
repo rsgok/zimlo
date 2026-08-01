@@ -17,14 +17,12 @@ import type {
   Project,
   ProjectTrustPolicy,
   PushDeviceRegistration,
-  ReviewBundle,
   Session,
   SessionCapabilities,
   Snapshot,
   TaskCommand,
   TaskPreference,
   TaskRecord,
-  TaskReview,
   TrustedWorkspace,
   TrustAuditEntry,
   UnifiedEvent,
@@ -66,7 +64,6 @@ interface StoredFeedContentV2 {
   takeaway: string;
   highlights: string[];
   proof?: string;
-  actionPrompt?: string;
   content?: FeedContent;
 }
 
@@ -217,16 +214,13 @@ export class ZimloStore {
         kind TEXT NOT NULL,
         title TEXT NOT NULL,
         body TEXT NOT NULL,
-        action_required INTEGER NOT NULL DEFAULT 0,
-        actions_json TEXT NOT NULL,
-        pending_action_ids_json TEXT NOT NULL,
         dedupe_key TEXT NOT NULL,
         source TEXT NOT NULL,
         created_at TEXT NOT NULL,
         content_json TEXT,
         UNIQUE(agent_id, run_id, dedupe_key)
       );
-      CREATE INDEX IF NOT EXISTS feed_posts_timeline_idx ON feed_posts(action_required DESC, created_at DESC);
+      CREATE INDEX IF NOT EXISTS feed_posts_timeline_idx ON feed_posts(created_at DESC);
 
       CREATE TABLE IF NOT EXISTS materials (
         id TEXT PRIMARY KEY,
@@ -348,23 +342,6 @@ export class ZimloStore {
         can_manage_trust INTEGER NOT NULL DEFAULT 0
       );
 
-      CREATE TABLE IF NOT EXISTS task_reviews (
-        id TEXT PRIMARY KEY,
-        task_id TEXT NOT NULL,
-        session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
-        post_id TEXT NOT NULL REFERENCES feed_posts(id) ON DELETE CASCADE,
-        version INTEGER NOT NULL,
-        state TEXT NOT NULL,
-        bundle_json TEXT NOT NULL,
-        decision_note TEXT,
-        decided_by_device_id TEXT,
-        created_at TEXT NOT NULL,
-        updated_at TEXT NOT NULL,
-        legacy INTEGER NOT NULL DEFAULT 0,
-        UNIQUE(session_id, version)
-      );
-      CREATE INDEX IF NOT EXISTS task_reviews_attention_idx ON task_reviews(state, updated_at DESC);
-
       CREATE TABLE IF NOT EXISTS project_trust_policies (
         project_id TEXT PRIMARY KEY REFERENCES projects(id) ON DELETE CASCADE,
         preset TEXT NOT NULL,
@@ -391,7 +368,6 @@ export class ZimloStore {
         enabled INTEGER NOT NULL DEFAULT 0,
         approvals INTEGER NOT NULL DEFAULT 1,
         failures INTEGER NOT NULL DEFAULT 1,
-        reviews INTEGER NOT NULL DEFAULT 1,
         show_task_title INTEGER NOT NULL DEFAULT 0,
         updated_at TEXT NOT NULL
       );
@@ -471,10 +447,10 @@ export class ZimloStore {
     this.cleanupEphemeralProjects();
     this.backfillAgentAvatars();
     this.migrateFeedV2();
+    this.migrateInteractionV3();
     this.database.prepare("UPDATE task_commands SET state = 'queued', updated_at = ?, error = NULL WHERE state IN ('dispatching', 'running')")
       .run(new Date().toISOString());
     this.database.prepare("UPDATE actions SET state = 'expired' WHERE state IN ('pending', 'submitted')").run();
-    this.clearInactiveActionLinks();
     this.scrubStoredContent();
   }
 
@@ -609,25 +585,6 @@ export class ZimloStore {
     }
   }
 
-  private clearInactiveActionLinks(): void {
-    const active = new Set((this.database.prepare(`
-      SELECT action_id FROM actions
-      WHERE state IN ('pending', 'submitted') AND expires_at > ?
-    `).all(new Date().toISOString()) as Array<{ action_id: string }>).map((row) => row.action_id));
-    const posts = this.database.prepare("SELECT id, pending_action_ids_json FROM feed_posts WHERE action_required = 1").all() as Array<{ id: string; pending_action_ids_json: string }>;
-    const update = this.database.prepare("UPDATE feed_posts SET pending_action_ids_json = ?, action_required = ? WHERE id = ?");
-    for (const post of posts) {
-      let linked: string[] = [];
-      try {
-        linked = json<string[]>(post.pending_action_ids_json).filter((id) => active.has(id));
-      } catch {
-        // Invalid historical linkage is cleared rather than keeping a stale card pinned.
-      }
-      if (linked.length > 0) update.run(JSON.stringify(linked), 1, post.id);
-      else update.run("[]", 0, post.id);
-    }
-  }
-
   private migrateFeedV2(): void {
     const migrationKey = "feed_v2_migration";
     const current = this.database.prepare("SELECT value FROM metadata WHERE key = ?").get(migrationKey) as { value: string } | undefined;
@@ -659,7 +616,7 @@ export class ZimloStore {
 
       if (Number(current?.value ?? 0) < 1) {
         const legacyPosts = this.database.prepare(`
-          SELECT id, kind, title, body, action_required FROM feed_posts
+          SELECT id, kind, title, body FROM feed_posts
           WHERE source = 'agent' AND content_json IS NULL
         `).all() as Array<Record<string, unknown>>;
         const updateContent = this.database.prepare("UPDATE feed_posts SET content_json = ? WHERE id = ?");
@@ -669,7 +626,6 @@ export class ZimloStore {
             headline: String(post.title).slice(0, 72),
             takeaway: String(post.body).slice(0, 320),
             highlights: [],
-            ...(Number(post.action_required) === 1 ? { actionPrompt: "需要你处理这项任务。" } : {}),
           };
           updateContent.run(JSON.stringify(content), String(post.id));
         }
@@ -678,6 +634,30 @@ export class ZimloStore {
         INSERT INTO metadata(key, value) VALUES (?, '1')
         ON CONFLICT(key) DO UPDATE SET value = excluded.value
       `).run(migrationKey);
+      this.database.exec("COMMIT");
+    } catch (error) {
+      this.database.exec("ROLLBACK");
+      throw error;
+    }
+  }
+
+  private migrateInteractionV3(): void {
+    const migrationKey = "interaction_v3_migration";
+    if (this.getMetadata(migrationKey) === "1") return;
+    this.database.exec("BEGIN IMMEDIATE");
+    try {
+      this.database.exec("DROP TABLE IF EXISTS task_reviews");
+      this.database.exec("DROP INDEX IF EXISTS feed_posts_timeline_idx");
+      const feedColumns = this.database.prepare("PRAGMA table_info(feed_posts)").all() as Array<{ name: string }>;
+      for (const name of ["action_required", "action_prompt", "actions_json", "pending_action_ids_json"]) {
+        if (feedColumns.some((column) => column.name === name)) this.database.exec(`ALTER TABLE feed_posts DROP COLUMN ${name}`);
+      }
+      this.database.exec("CREATE INDEX IF NOT EXISTS feed_posts_timeline_idx ON feed_posts(created_at DESC)");
+      const notificationColumns = this.database.prepare("PRAGMA table_info(notification_settings)").all() as Array<{ name: string }>;
+      if (notificationColumns.some((column) => column.name === "reviews")) {
+        this.database.exec("ALTER TABLE notification_settings DROP COLUMN reviews");
+      }
+      this.database.prepare("INSERT OR REPLACE INTO metadata(key, value) VALUES (?, '1')").run(migrationKey);
       this.database.exec("COMMIT");
     } catch (error) {
       this.database.exec("ROLLBACK");
@@ -716,7 +696,6 @@ export class ZimloStore {
             takeaway: redactText(content.takeaway, 320),
             highlights: (content.highlights ?? []).slice(0, 3).map((highlight) => redactText(highlight, 100)),
             ...(content.proof ? { proof: redactText(content.proof, 160) } : {}),
-            ...(content.actionPrompt ? { actionPrompt: redactText(content.actionPrompt, 240) } : {}),
             ...(content.content ? { content: content.content } : {}),
           };
           updatePost.run(JSON.stringify(sanitized), sanitized.headline, sanitized.takeaway, post.id);
@@ -978,9 +957,8 @@ export class ZimloStore {
     const result = this.database.prepare(`
       INSERT OR IGNORE INTO feed_posts (
         id, project_id, task_id, run_id, agent_id, session_id, kind, title, body,
-        action_required, actions_json, pending_action_ids_json, dedupe_key,
-        source, created_at, content_json
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        dedupe_key, source, created_at, content_json
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
       post.id,
       projectId,
@@ -991,9 +969,6 @@ export class ZimloStore {
       post.kind,
       post.headline,
       post.takeaway,
-      post.actionRequired ? 1 : 0,
-      JSON.stringify(post.actions),
-      JSON.stringify(post.pendingActionIds),
       post.dedupeKey,
       post.source,
       post.createdAt,
@@ -1003,7 +978,6 @@ export class ZimloStore {
         takeaway: post.takeaway,
         highlights: post.highlights,
         ...(post.proof ? { proof: post.proof } : {}),
-        ...(post.actionPrompt ? { actionPrompt: post.actionPrompt } : {}),
         ...(post.content ? { content: post.content } : {}),
       } satisfies StoredFeedContentV2),
     );
@@ -1026,7 +1000,7 @@ export class ZimloStore {
     return (this.database.prepare(`
       SELECT * FROM feed_posts
       WHERE source = 'agent' AND kind <> 'instruction'
-      ORDER BY action_required DESC, created_at DESC
+      ORDER BY created_at DESC
       LIMIT 200
     `).all() as Record<string, unknown>[]).map((row) => this.feedPostFromRow(row));
   }
@@ -1074,47 +1048,6 @@ export class ZimloStore {
       ORDER BY created_at DESC LIMIT 1
     `).get(agentId, runId, since) as Record<string, unknown> | undefined;
     return row ? this.feedPostFromRow(row) : null;
-  }
-
-  latestResultFeedPost(sessionId: string): FeedPost | null {
-    const row = this.database.prepare(`
-      SELECT * FROM feed_posts
-      WHERE session_id = ? AND source = 'agent' AND kind = 'result'
-      ORDER BY created_at DESC LIMIT 1
-    `).get(sessionId) as Record<string, unknown> | undefined;
-    return row ? this.feedPostFromRow(row) : null;
-  }
-
-  linkPendingAction(sessionId: string, actionId: string): FeedPost | null {
-    const row = this.database.prepare(`
-      SELECT * FROM feed_posts
-      WHERE session_id = ? AND action_required = 1 AND kind = 'attention' AND source = 'agent'
-      ORDER BY created_at DESC LIMIT 1
-    `).get(sessionId) as Record<string, unknown> | undefined;
-    if (!row) return null;
-    const post = this.feedPostFromRow(row);
-    if (post.pendingActionIds.includes(actionId)) return post;
-    const next = [...post.pendingActionIds, actionId];
-    this.database.prepare("UPDATE feed_posts SET pending_action_ids_json = ? WHERE id = ?")
-      .run(JSON.stringify(next), post.id);
-    return { ...post, pendingActionIds: next };
-  }
-
-  unlinkPendingAction(actionId: string): FeedPost[] {
-    const rows = this.database.prepare(`
-      SELECT * FROM feed_posts WHERE pending_action_ids_json LIKE ?
-    `).all(`%${actionId}%`) as Record<string, unknown>[];
-    const updated: FeedPost[] = [];
-    for (const row of rows) {
-      const post = this.feedPostFromRow(row);
-      if (!post.pendingActionIds.includes(actionId)) continue;
-      const pendingActionIds = post.pendingActionIds.filter((id) => id !== actionId);
-      this.database.prepare(`
-        UPDATE feed_posts SET pending_action_ids_json = ?, action_required = ? WHERE id = ?
-      `).run(JSON.stringify(pendingActionIds), pendingActionIds.length > 0 ? 1 : 0, post.id);
-      updated.push({ ...post, pendingActionIds, actionRequired: pendingActionIds.length > 0 });
-    }
-    return updated;
   }
 
   upsertTask(task: TaskRecord): TaskRecord {
@@ -1297,85 +1230,6 @@ export class ZimloStore {
       .map((row) => ({ sessionId: row.session_id, pinnedAt: row.pinned_at, archivedAt: row.archived_at }));
   }
 
-  createTaskReview(input: {
-    taskId: string;
-    sessionId: string;
-    postId: string;
-    bundle: ReviewBundle;
-    createdAt: string;
-    legacy?: boolean;
-  }): TaskReview {
-    const existing = this.database.prepare("SELECT * FROM task_reviews WHERE post_id = ?").get(input.postId) as Record<string, unknown> | undefined;
-    if (existing) return this.taskReviewFromRow(existing);
-    const current = this.database.prepare("SELECT COALESCE(MAX(version), 0) AS version FROM task_reviews WHERE session_id = ?")
-      .get(input.sessionId) as { version: number };
-    this.database.prepare("UPDATE task_reviews SET state = 'superseded', updated_at = ? WHERE session_id = ? AND state = 'unreviewed'")
-      .run(input.createdAt, input.sessionId);
-    const review: TaskReview = {
-      id: `review:${randomUUID()}`,
-      taskId: input.taskId,
-      sessionId: input.sessionId,
-      postId: input.postId,
-      version: Number(current.version) + 1,
-      state: "unreviewed",
-      bundle: input.bundle,
-      createdAt: input.createdAt,
-      updatedAt: input.createdAt,
-      legacy: input.legacy ?? false,
-    };
-    this.database.prepare(`
-      INSERT INTO task_reviews(
-        id, task_id, session_id, post_id, version, state, bundle_json,
-        decision_note, decided_by_device_id, created_at, updated_at, legacy
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, NULL, NULL, ?, ?, ?)
-    `).run(
-      review.id,
-      review.taskId,
-      review.sessionId,
-      review.postId,
-      review.version,
-      review.state,
-      JSON.stringify(review.bundle),
-      review.createdAt,
-      review.updatedAt,
-      review.legacy ? 1 : 0,
-    );
-    return review;
-  }
-
-  getTaskReview(id: string): TaskReview | null {
-    const row = this.database.prepare("SELECT * FROM task_reviews WHERE id = ?").get(id) as Record<string, unknown> | undefined;
-    return row ? this.taskReviewFromRow(row) : null;
-  }
-
-  getTaskReviewByPost(postId: string): TaskReview | null {
-    const row = this.database.prepare("SELECT * FROM task_reviews WHERE post_id = ?").get(postId) as Record<string, unknown> | undefined;
-    return row ? this.taskReviewFromRow(row) : null;
-  }
-
-  listTaskReviews(sessionId?: string): TaskReview[] {
-    const rows = sessionId
-      ? this.database.prepare("SELECT * FROM task_reviews WHERE session_id = ? ORDER BY version DESC").all(sessionId)
-      : this.database.prepare("SELECT * FROM task_reviews ORDER BY updated_at DESC LIMIT 200").all();
-    return (rows as Record<string, unknown>[]).map((row) => this.taskReviewFromRow(row));
-  }
-
-  respondToTaskReview(input: {
-    reviewId: string;
-    decision: "accept" | "request_changes";
-    note?: string;
-    deviceId: string;
-    updatedAt: string;
-  }): TaskReview | null {
-    const review = this.getTaskReview(input.reviewId);
-    if (!review || review.state !== "unreviewed") return review;
-    const state = input.decision === "accept" ? "accepted" : "changes_requested";
-    this.database.prepare(`
-      UPDATE task_reviews SET state = ?, decision_note = ?, decided_by_device_id = ?, updated_at = ? WHERE id = ?
-    `).run(state, input.note?.trim() || null, input.deviceId, input.updatedAt, input.reviewId);
-    return this.getTaskReview(input.reviewId);
-  }
-
   getTrustPolicy(projectId: string): ProjectTrustPolicy {
     const row = this.database.prepare("SELECT * FROM project_trust_policies WHERE project_id = ?")
       .get(projectId) as Record<string, unknown> | undefined;
@@ -1443,7 +1297,6 @@ export class ZimloStore {
       enabled: false,
       approvals: true,
       failures: true,
-      reviews: true,
       showTaskTitle: false,
       updatedAt: new Date(0).toISOString(),
     };
@@ -1452,13 +1305,12 @@ export class ZimloStore {
   updateNotificationSettings(deviceId: string, settings: Omit<NotificationSettings, "updatedAt">): NotificationSettings {
     const updatedAt = new Date().toISOString();
     this.database.prepare(`
-      INSERT INTO notification_settings(device_id, enabled, approvals, failures, reviews, show_task_title, updated_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?)
+      INSERT INTO notification_settings(device_id, enabled, approvals, failures, show_task_title, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?)
       ON CONFLICT(device_id) DO UPDATE SET
         enabled = excluded.enabled,
         approvals = excluded.approvals,
         failures = excluded.failures,
-        reviews = excluded.reviews,
         show_task_title = excluded.show_task_title,
         updated_at = excluded.updated_at
     `).run(
@@ -1466,7 +1318,6 @@ export class ZimloStore {
       settings.enabled ? 1 : 0,
       settings.approvals ? 1 : 0,
       settings.failures ? 1 : 0,
-      settings.reviews ? 1 : 0,
       settings.showTaskTitle ? 1 : 0,
       updatedAt,
     );
@@ -1756,7 +1607,6 @@ export class ZimloStore {
       taskTimelineCursors: this.listTaskTimelineCursors(deviceId),
       taskPreferences: this.listTaskPreferences(),
       actions: this.listActions(),
-      reviews: this.listTaskReviews(),
       trustPolicies: this.listTrustPolicies(),
       trustAudit: this.listTrustAudit(),
       notificationSettings: this.getNotificationSettings(deviceId),
@@ -1894,11 +1744,7 @@ export class ZimloStore {
       takeaway: content.takeaway,
       highlights: content.highlights,
       ...(content.proof ? { proof: content.proof } : {}),
-      actionRequired: Number(row.action_required) === 1,
-      ...(Number(row.action_required) === 1 && content.actionPrompt ? { actionPrompt: content.actionPrompt } : {}),
-      actions: json<FeedPost["actions"]>(String(row.actions_json)),
       content: content.content ?? { type: "text" },
-      pendingActionIds: json<string[]>(String(row.pending_action_ids_json)),
       dedupeKey: String(row.dedupe_key),
       source: "agent",
       createdAt: String(row.created_at),
@@ -1954,23 +1800,6 @@ export class ZimloStore {
     };
   }
 
-  private taskReviewFromRow(row: Record<string, unknown>): TaskReview {
-    return {
-      id: String(row.id),
-      taskId: String(row.task_id),
-      sessionId: String(row.session_id),
-      postId: String(row.post_id),
-      version: Number(row.version),
-      state: row.state as TaskReview["state"],
-      bundle: json<ReviewBundle>(String(row.bundle_json)),
-      ...(row.decision_note ? { decisionNote: String(row.decision_note) } : {}),
-      ...(row.decided_by_device_id ? { decidedByDeviceId: String(row.decided_by_device_id) } : {}),
-      createdAt: String(row.created_at),
-      updatedAt: String(row.updated_at),
-      legacy: Number(row.legacy) === 1,
-    };
-  }
-
   private trustPolicyFromRow(row: Record<string, unknown>): ProjectTrustPolicy {
     return {
       projectId: String(row.project_id),
@@ -2000,7 +1829,6 @@ export class ZimloStore {
       enabled: Number(row.enabled) === 1,
       approvals: Number(row.approvals) === 1,
       failures: Number(row.failures) === 1,
-      reviews: Number(row.reviews) === 1,
       showTaskTitle: Number(row.show_task_title) === 1,
       updatedAt: String(row.updated_at),
     };

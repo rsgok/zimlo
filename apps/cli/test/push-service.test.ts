@@ -28,7 +28,6 @@ function setup(showTaskTitle = false) {
     enabled: true,
     approvals: true,
     failures: true,
-    reviews: true,
     showTaskTitle,
   });
   const sent: Array<Record<string, unknown>> = [];
@@ -43,17 +42,15 @@ function setup(showTaskTitle = false) {
 }
 
 describe("PushService", () => {
-  it("sends only the three user-action notification kinds with stable collapse ids", () => {
+  it("sends only approval and failure notifications with stable collapse ids", () => {
     const { store, sent, service } = setup();
     service.notify("approval", "session-a", "Private task");
     service.notify("failure", "session-a", "Private task");
-    service.notify("review", "session-a", "Private task");
 
-    expect(sent.map((input) => input.kind)).toEqual(["approval", "failure", "review"]);
+    expect(sent.map((input) => input.kind)).toEqual(["approval", "failure"]);
     expect(sent.map((input) => input.collapseId)).toEqual([
       "session-a:approval",
       "session-a:failure",
-      "session-a:review",
     ]);
     expect(sent.every((input) => JSON.stringify(input.alert).includes("Private task") === false)).toBe(true);
     store.close();
@@ -61,7 +58,7 @@ describe("PushService", () => {
 
   it("keeps the task title inside the encrypted route and hides it by default", () => {
     const hidden = setup(false);
-    hidden.service.notify("review", "session-a", "Private task");
+    hidden.service.notify("failure", "session-a", "Private task");
     expect(openPushRoute(
       hidden.routeKeys.privateKey,
       hidden.sent[0]!.route as Parameters<typeof openPushRoute>[1],
@@ -69,7 +66,7 @@ describe("PushService", () => {
     hidden.store.close();
 
     const visible = setup(true);
-    visible.service.notify("review", "session-a", "Private task");
+    visible.service.notify("failure", "session-a", "Private task");
     expect(openPushRoute(
       visible.routeKeys.privateKey,
       visible.sent[0]!.route as Parameters<typeof openPushRoute>[1],
@@ -83,19 +80,16 @@ describe("PushService", () => {
       enabled: true,
       approvals: false,
       failures: true,
-      reviews: false,
       showTaskTitle: false,
     });
     service.notify("approval", "session-a");
     service.notify("failure", "session-a");
-    service.notify("review", "session-a");
     expect(sent.map((input) => input.kind)).toEqual(["failure"]);
 
     store.updateNotificationSettings("device_phone", {
       enabled: false,
       approvals: true,
       failures: true,
-      reviews: true,
       showTaskTitle: false,
     });
     service.notify("failure", "session-b");

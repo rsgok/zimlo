@@ -87,9 +87,6 @@ const post: FeedPost = {
   takeaway: "现在只保留需要阅读的更新。",
   highlights: ["工具日志已隐藏"],
   proof: "Web 构建通过",
-  actionRequired: false,
-  actions: [],
-  pendingActionIds: [],
   dedupeKey: "result-a",
   source: "agent",
   createdAt: "2026-07-22T10:00:00.000Z",
@@ -193,7 +190,7 @@ describe("SessionDetail", () => {
     expect(markup).toContain("还没有需要阅读的更新");
   });
 
-  it("offers a continue action for resumable Codex and Claude tasks", () => {
+  it("does not duplicate the global conversation composer in task detail", () => {
     const markup = renderToStaticMarkup(
       <SessionDetail
         session={{ ...session, capabilities: { ...session.capabilities, replyable: true, resumable: true } }}
@@ -206,7 +203,7 @@ describe("SessionDetail", () => {
         onClose={vi.fn()}
       />,
     );
-    expect(markup).toContain("继续当前任务");
-    expect(markup).toContain("加入队列");
+    expect(markup).not.toContain("继续当前任务");
+    expect(markup).not.toContain("加入队列");
   });
 });

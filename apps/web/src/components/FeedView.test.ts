@@ -7,7 +7,7 @@ import { FeedView } from "./FeedView";
 const post: FeedPost = {
   id: "post-a", taskId: "task-a", runId: "run-a", agentId: "codex", sessionId: "session-a",
   kind: "result", template: "paper", headline: "结果", takeaway: "完成", highlights: [],
-  actionRequired: false, actions: [], pendingActionIds: [], dedupeKey: "result", source: "agent",
+  dedupeKey: "result", source: "agent",
   createdAt: "2026-07-23T00:00:00.000Z",
 };
 
@@ -24,7 +24,6 @@ function renderFeed(overrides: { posts?: FeedPost[]; seenPostIds?: string[]; int
     send: vi.fn(() => true),
     onOpen: vi.fn(),
     onOpenProject: vi.fn(),
-    onNewTask: vi.fn(),
     ...(overrides.interactionMode ? { interactionMode: overrides.interactionMode } : {}),
   }));
 }
@@ -34,21 +33,18 @@ describe("FeedView", () => {
     const historical = { ...post, id: "post-history", createdAt: "2026-07-22T00:00:00.000Z" };
     const markup = renderFeed({ posts: [post, historical], seenPostIds: [historical.id] });
 
-    // 队列卡带编号，历史卡带"历史"标签且无编号
-    expect(markup).toContain("01 / 01");
-    expect(markup.match(/class="post-position"/gu)).toHaveLength(1);
+    expect(markup).not.toContain("post-position");
     expect(markup).toContain("history-label");
     expect(markup).toContain('data-feed-key="post:post-a"');
     expect(markup).toContain('data-feed-key="post:post-history"');
   });
 
-  it("renders the caught-up page and keeps the new-task action concise", () => {
+  it("renders a quiet caught-up page without consumption counts or a large task CTA", () => {
     const markup = renderFeed();
 
     expect(markup).toContain('data-feed-key="__caught_up__"');
-    expect(markup).toContain("当前更新已经看完");
-    expect(markup).toContain("＋ 新任务");
-    expect(markup).not.toContain("现在可以布置一个新任务");
+    expect(markup).toContain("暂时没有新内容");
+    expect(markup).not.toContain("新任务");
   });
 
   it("does not show the new-updates pill on first render", () => {
@@ -77,9 +73,8 @@ describe("FeedView", () => {
       send: vi.fn(() => true),
       onOpen: vi.fn(),
       onOpenProject: vi.fn(),
-      onNewTask: vi.fn(),
     }));
-    expect(markup).toContain("Feed 已经清空");
+    expect(markup).toContain("暂时没有新内容");
     expect(markup).not.toContain("post-position");
   });
 });

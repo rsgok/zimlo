@@ -135,11 +135,7 @@ struct FeedPost: Codable, Hashable, Identifiable {
     var takeaway: String
     var highlights: [String]
     var proof: String?
-    var actionRequired: Bool
-    var actionPrompt: String?
-    var actions: [String]
     var content: FeedContent?
-    var pendingActionIds: [String]
     var dedupeKey: String
     var source: String
     var createdAt: String
@@ -207,42 +203,6 @@ struct PendingAction: Codable, Hashable, Identifiable {
     var id: String { actionId }
 }
 
-struct ReviewEvidence: Codable, Hashable {
-    var source: String
-    var label: String
-    var detail: String
-}
-
-struct ReviewLink: Codable, Hashable {
-    var label: String
-    var url: String
-}
-
-struct ReviewBundle: Codable, Hashable {
-    var conclusion: String
-    var impact: String?
-    var changedFiles: [String]
-    var diffSummary: String?
-    var tests: [ReviewEvidence]
-    var links: [ReviewLink]
-    var evidenceSource: String
-}
-
-struct TaskReview: Codable, Hashable, Identifiable {
-    var id: String
-    var taskId: String
-    var sessionId: String
-    var postId: String
-    var version: Int
-    var state: String
-    var bundle: ReviewBundle
-    var decisionNote: String?
-    var decidedByDeviceId: String?
-    var createdAt: String
-    var updatedAt: String
-    var legacy: Bool
-}
-
 struct ProjectTrustPolicy: Codable, Hashable, Identifiable {
     var projectId: String
     var preset: String
@@ -268,7 +228,6 @@ struct NotificationSettings: Codable, Hashable {
     var enabled: Bool
     var approvals: Bool
     var failures: Bool
-    var reviews: Bool
     var showTaskTitle: Bool
     var updatedAt: String
 }
@@ -285,17 +244,15 @@ struct PushDeviceRegistration: Codable, Hashable, Identifiable {
 }
 
 struct FeatureCapabilities: Codable, Hashable {
-    var taskReview: Bool
     var projectTrustPolicy: Bool
     var pushNotifications: Bool
     var remoteSync: Bool
 
     private enum CodingKeys: String, CodingKey {
-        case taskReview, projectTrustPolicy, pushNotifications, remoteSync
+        case projectTrustPolicy, pushNotifications, remoteSync
     }
 
-    init(taskReview: Bool, projectTrustPolicy: Bool, pushNotifications: Bool, remoteSync: Bool) {
-        self.taskReview = taskReview
+    init(projectTrustPolicy: Bool, pushNotifications: Bool, remoteSync: Bool) {
         self.projectTrustPolicy = projectTrustPolicy
         self.pushNotifications = pushNotifications
         self.remoteSync = remoteSync
@@ -303,7 +260,6 @@ struct FeatureCapabilities: Codable, Hashable {
 
     init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
-        taskReview = try container.decodeIfPresent(Bool.self, forKey: .taskReview) ?? false
         projectTrustPolicy = try container.decodeIfPresent(Bool.self, forKey: .projectTrustPolicy) ?? false
         pushNotifications = try container.decodeIfPresent(Bool.self, forKey: .pushNotifications) ?? false
         remoteSync = try container.decodeIfPresent(Bool.self, forKey: .remoteSync) ?? false
@@ -380,7 +336,6 @@ struct Snapshot: Codable, Hashable {
     var taskTimelineCursors: [String: String]
     var taskPreferences: [TaskPreference]
     var actions: [PendingAction]
-    var reviews: [TaskReview]
     var trustPolicies: [ProjectTrustPolicy]
     var trustAudit: [TrustAuditEntry]
     var notificationSettings: NotificationSettings
@@ -393,11 +348,10 @@ struct Snapshot: Codable, Hashable {
         userProfile: UserProfile(avatarId: "user-01", updatedAt: ""),
         projects: [], sessions: [], posts: [], tasks: [], commands: [], materials: [], workspaces: [],
         seenPostIds: [], dismissedFeedItemIds: [], taskTimelineCursors: [:],
-        taskPreferences: [], actions: [], reviews: [], trustPolicies: [], trustAudit: [],
-        notificationSettings: NotificationSettings(enabled: false, approvals: true, failures: true, reviews: true, showTaskTitle: false, updatedAt: ""),
+        taskPreferences: [], actions: [], trustPolicies: [], trustAudit: [],
+        notificationSettings: NotificationSettings(enabled: false, approvals: true, failures: true, showTaskTitle: false, updatedAt: ""),
         pushDevices: [], features: FeatureCapabilities(
-            taskReview: false, projectTrustPolicy: false,
-            pushNotifications: false, remoteSync: false
+            projectTrustPolicy: false, pushNotifications: false, remoteSync: false
         ),
         sequence: 0, lanApprovalsEnabled: false
     )
@@ -405,7 +359,7 @@ struct Snapshot: Codable, Hashable {
     enum CodingKeys: String, CodingKey {
         case userProfile, projects, sessions, posts, tasks, commands, materials, workspaces
         case seenPostIds, dismissedFeedItemIds, taskTimelineCursors, taskPreferences
-        case actions, reviews, trustPolicies, trustAudit, notificationSettings, pushDevices, features
+        case actions, trustPolicies, trustAudit, notificationSettings, pushDevices, features
         case sequence, lanApprovalsEnabled
     }
 
@@ -415,7 +369,7 @@ struct Snapshot: Codable, Hashable {
         workspaces: [TrustedWorkspace], seenPostIds: [String],
         dismissedFeedItemIds: [String], taskTimelineCursors: [String: String],
         taskPreferences: [TaskPreference], actions: [PendingAction],
-        reviews: [TaskReview], trustPolicies: [ProjectTrustPolicy], trustAudit: [TrustAuditEntry],
+        trustPolicies: [ProjectTrustPolicy], trustAudit: [TrustAuditEntry],
         notificationSettings: NotificationSettings, pushDevices: [PushDeviceRegistration],
         features: FeatureCapabilities,
         sequence: Int, lanApprovalsEnabled: Bool
@@ -433,7 +387,6 @@ struct Snapshot: Codable, Hashable {
         self.taskTimelineCursors = taskTimelineCursors
         self.taskPreferences = taskPreferences
         self.actions = actions
-        self.reviews = reviews
         self.trustPolicies = trustPolicies
         self.trustAudit = trustAudit
         self.notificationSettings = notificationSettings
@@ -458,7 +411,6 @@ struct Snapshot: Codable, Hashable {
         taskTimelineCursors = try c.decodeIfPresent([String: String].self, forKey: .taskTimelineCursors) ?? [:]
         taskPreferences = try c.decodeIfPresent([TaskPreference].self, forKey: .taskPreferences) ?? []
         actions = try c.decodeIfPresent([PendingAction].self, forKey: .actions) ?? []
-        reviews = try c.decodeIfPresent([TaskReview].self, forKey: .reviews) ?? []
         trustPolicies = try c.decodeIfPresent([ProjectTrustPolicy].self, forKey: .trustPolicies) ?? []
         trustAudit = try c.decodeIfPresent([TrustAuditEntry].self, forKey: .trustAudit) ?? []
         notificationSettings = try c.decodeIfPresent(NotificationSettings.self, forKey: .notificationSettings) ?? Snapshot.empty.notificationSettings
@@ -485,8 +437,6 @@ struct ServerEnvelope: Codable {
     var postId: String?
     var itemId: String?
     var preference: TaskPreference?
-    var review: TaskReview?
-    var reviews: [TaskReview]?
     var policy: ProjectTrustPolicy?
     var policies: [ProjectTrustPolicy]?
     var audit: [TrustAuditEntry]?

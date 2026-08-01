@@ -18,7 +18,7 @@ function postItem(id: string, options: { unread?: boolean; needsAction?: boolean
   const post: FeedPost = {
     id, taskId: `task-${id}`, runId: "run-a", agentId: "codex", sessionId: null,
     kind: "result", template: "paper", headline: id, takeaway: "", highlights: [],
-    actionRequired: false, actions: [], pendingActionIds: [], dedupeKey: id, source: "agent", createdAt,
+    dedupeKey: id, source: "agent", createdAt,
   };
   return {
     type: "post",

@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import type { ClientCommand, Project, Provider, TrustedWorkspace } from "@zimlo/protocol";
+import type { ClientCommand, Project, Provider, Session, TrustedWorkspace } from "@zimlo/protocol";
 import { agentAvatarStyle } from "./AgentsView";
 import { ProviderBadge } from "./ProviderBadge";
 import { AgentAvatar } from "./UserAvatar";
@@ -11,6 +11,7 @@ interface TaskComposerProps {
   workspaces: TrustedWorkspace[];
   projects: Project[];
   initialProjectId?: string | null;
+  session?: Session | null | undefined;
   send: (command: ClientCommand) => boolean;
   onClose: () => void;
   onSubmitted?: () => void;
@@ -22,13 +23,14 @@ export function defaultWorkspaceId(workspaces: TrustedWorkspace[], preferredId?:
   return [...workspaces].sort((left, right) => right.lastUsedAt.localeCompare(left.lastUsedAt) || left.id.localeCompare(right.id))[0]?.id ?? "";
 }
 
-export function TaskComposer({ workspaces, projects, initialProjectId = null, send, onClose, onSubmitted }: TaskComposerProps) {
+export function TaskComposer({ workspaces, projects, initialProjectId = null, session = null, send, onClose, onSubmitted }: TaskComposerProps) {
   const projectByPath = useMemo(() => new Map(projects.flatMap((project) => project.paths.map((path) => [path, project] as const))), [projects]);
-  const initialProject = projects.find((project) => project.id === initialProjectId);
+  const initialProject = projects.find((project) => project.id === (session?.projectId ?? initialProjectId));
   const preferredWorkspace = workspaces.find((workspace) => initialProject?.paths.includes(workspace.path));
   const savedWorkspace = typeof localStorage === "undefined" ? null : localStorage.getItem("zimlo:last-workspace");
   const savedProvider = typeof localStorage === "undefined" ? null : localStorage.getItem("zimlo:last-provider");
-  const savedDraft = typeof localStorage === "undefined" ? "" : localStorage.getItem("zimlo:new-task-draft") ?? "";
+  const draftKey = session ? `zimlo:task-draft:${session.id}` : "zimlo:new-task-draft";
+  const savedDraft = typeof localStorage === "undefined" ? "" : localStorage.getItem(draftKey) ?? "";
   const initialWorkspaceId = defaultWorkspaceId(workspaces, preferredWorkspace?.id, savedWorkspace);
   const initialWorkspace = workspaces.find((workspace) => workspace.id === initialWorkspaceId);
   const preferredProvider = initialProject?.agentProfile.defaultProvider ?? (savedProvider === "claude" ? "claude" : "codex");
@@ -68,8 +70,9 @@ export function TaskComposer({ workspaces, projects, initialProjectId = null, se
   }, [onClose]);
 
   useEffect(() => {
-    localStorage.setItem("zimlo:new-task-draft", text);
-  }, [text]);
+    if (text) localStorage.setItem(draftKey, text);
+    else localStorage.removeItem(draftKey);
+  }, [draftKey, text]);
 
   useEffect(() => () => {
     for (const url of materialURLs.current) URL.revokeObjectURL(url);
@@ -136,6 +139,27 @@ export function TaskComposer({ workspaces, projects, initialProjectId = null, se
     setChoosingAgent(false);
   };
 
+  const canSubmit = Boolean((session || workspaceId) && text.trim() && materials.every((item) => item.state === "ready"));
+  const submit = () => {
+    if (!canSubmit || sending.current) return;
+    sending.current = true;
+    const materialIds = materials.flatMap((item) => item.prepared ? [item.prepared.material.id] : []);
+    const accepted = session
+      ? send({ type: "task.follow_up", sessionId: session.id, text: text.trim(), materialIds, idempotencyKey: crypto.randomUUID() })
+      : send({ type: "task.create", provider, workspaceId, text: text.trim(), materialIds, idempotencyKey: crypto.randomUUID() });
+    if (!accepted) {
+      sending.current = false;
+      return;
+    }
+    if (!session) {
+      localStorage.setItem("zimlo:last-workspace", workspaceId);
+      localStorage.setItem("zimlo:last-provider", provider);
+    }
+    localStorage.removeItem(draftKey);
+    onSubmitted?.();
+    onClose();
+  };
+
   return (
     <div className="composer-backdrop" role="presentation" onMouseDown={(event) => {
       if (event.currentTarget === event.target) onClose();
@@ -149,8 +173,8 @@ export function TaskComposer({ workspaces, projects, initialProjectId = null, se
         }}>
         <header className="new-task-header">
           <div>
-            <h2 id="new-task-title">新任务</h2>
-            <p>说清目标，Agent 会在后台继续推进。</p>
+            <h2 id="new-task-title">{session ? "继续对话" : "新任务"}</h2>
+            <p>{session ? session.title : "说清目标，Agent 会在后台继续推进。"}</p>
           </div>
           <button onClick={onClose} aria-label="关闭新任务">×</button>
         </header>
@@ -160,14 +184,17 @@ export function TaskComposer({ workspaces, projects, initialProjectId = null, se
               <strong id="task-brief-label">你想完成什么？</strong>
               <span>{text.trim() ? "草稿已保存" : "草稿自动保存"}</span>
             </div>
-            <VoiceInput autoFocus rows={6} value={text} onChange={setText} ariaLabel="任务目标" placeholder="例如：检查首页白屏原因，修复后跑完测试并告诉我结果…" />
-            <div className="composer-material-toolbar">
+            <div className="composer-input-row">
               <input ref={attachmentInput} type="file" multiple hidden accept="image/jpeg,image/png,image/webp,image/heic,image/heif,video/mp4,video/quicktime,video/x-m4v,application/pdf,text/plain,text/markdown,text/csv,application/json,.doc,.docx,.xls,.xlsx,.ppt,.pptx" onChange={(event) => { void addFiles([...event.target.files ?? []]); event.currentTarget.value = ""; }} />
-              <button type="button" onClick={() => attachmentInput.current?.click()} disabled={materials.length >= 10}>
-                <span aria-hidden="true">＋</span> 添加图片、视频或文件
+              <button className="composer-attach-button" type="button" onClick={() => attachmentInput.current?.click()} disabled={materials.length >= 10} aria-label="添加附件" title="添加附件">
+                <span aria-hidden="true">＋</span>
               </button>
-              <span>可拖入或粘贴 · 最多 10 个</span>
+              <VoiceInput rows={4} value={text} onChange={setText} ariaLabel={session ? "继续当前任务" : "任务目标"} placeholder={session ? "输入下一步，或点按麦克风说话…" : "描述目标，或点按麦克风说话…"} onSubmit={submit} />
+              <button className="composer-send-button" type="button" onClick={submit} disabled={!canSubmit} aria-label={session ? "发送消息" : "开始任务"} title={session ? "发送" : "开始任务"}>
+                <span aria-hidden="true">↑</span>
+              </button>
             </div>
+            <div className="composer-input-hint"><span>可拖入或粘贴附件 · 最多 10 个</span>{materials.length > 0 && <span>{materials.length}/10</span>}</div>
             {materials.length > 0 && <div className="composer-material-list" aria-label="已选择物料">
               {materials.map((item) => {
                 const kind = validateFile(item.file);
@@ -189,7 +216,7 @@ export function TaskComposer({ workspaces, projects, initialProjectId = null, se
             <p>直接描述想要的结果；Agent 会自己拆解步骤，需要决定时再来找你。</p>
           </section>
 
-          <section className="composer-destination" aria-labelledby="composer-destination-title">
+          {!session && <section className="composer-destination" aria-labelledby="composer-destination-title">
             <div className="composer-field-heading">
               <strong id="composer-destination-title">交给谁</strong>
               <span>已沿用最近选择</span>
@@ -250,34 +277,10 @@ export function TaskComposer({ workspaces, projects, initialProjectId = null, se
                 </div>
               </div>
             )}
-          </section>
+          </section>}
 
-          {workspaces.length === 0 && <p className="composer-warning">先在 Mac 的 Codex 或 Claude Code 中打开一次项目，Zimlo 才能安全地把任务交给它。</p>}
+          {!session && workspaces.length === 0 && <p className="composer-warning">先在 Mac 的 Codex 或 Claude Code 中打开一次项目，Zimlo 才能安全地把任务交给它。</p>}
         </div>
-        <footer className="new-task-footer">
-          <div>
-            <strong>{workspaceId ? `交给 ${agentName}` : "还没有可用 Agent"}</strong>
-            <span>提交后可离开，任务会继续运行</span>
-          </div>
-          <button
-            className="new-task-submit"
-            disabled={!workspaceId || !text.trim() || materials.some((item) => item.state !== "ready")}
-            onClick={() => {
-              if (sending.current) return;
-              sending.current = true;
-              const accepted = send({ type: "task.create", provider, workspaceId, text: text.trim(), materialIds: materials.flatMap((item) => item.prepared ? [item.prepared.material.id] : []), idempotencyKey: crypto.randomUUID() });
-              if (!accepted) {
-                sending.current = false;
-                return;
-              }
-              localStorage.setItem("zimlo:last-workspace", workspaceId);
-              localStorage.setItem("zimlo:last-provider", provider);
-              localStorage.removeItem("zimlo:new-task-draft");
-              onSubmitted?.();
-              onClose();
-            }}
-          >开始任务 <span aria-hidden="true">→</span></button>
-        </footer>
       </section>
     </div>
   );

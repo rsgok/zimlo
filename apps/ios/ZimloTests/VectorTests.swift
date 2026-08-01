@@ -45,12 +45,7 @@ final class VectorTests: XCTestCase {
             let input = try XCTUnwrap(testCase["input"] as? [String: Any], name)
             let expected = try XCTUnwrap(testCase["expected"] as? [String: Any], name)
             if let kind = input["kind"] as? String {
-                let needsAction = FeedRules.needsAction(
-                    actionRequired: input["actionRequired"] as? Bool ?? false,
-                    hasLinkedPendingAction: input["hasLinkedPendingAction"] as? Bool ?? false,
-                    directReplyIsCurrent: input["directReplyIsCurrent"] as? Bool ?? false,
-                    reviewState: input["reviewState"] as? String
-                )
+                let needsAction = false
                 let covered = FeedRules.isCovered(
                     kind: kind,
                     createdAt: try XCTUnwrap(input["createdAt"] as? String, name),
@@ -62,7 +57,6 @@ final class VectorTests: XCTestCase {
                     covered: covered,
                     unread: input["unread"] as? Bool ?? false
                 )
-                XCTAssertEqual(needsAction, expected["needsAction"] as? Bool, name)
                 XCTAssertEqual(covered, expected["covered"] as? Bool, name)
                 XCTAssertEqual(priority, expected["priority"] as? Int, name)
             } else {
@@ -158,10 +152,6 @@ final class VectorTests: XCTestCase {
             takeaway: "",
             highlights: raw["highlights"] as? [String] ?? [],
             proof: nil,
-            actionRequired: false,
-            actionPrompt: nil,
-            actions: [],
-            pendingActionIds: [],
             dedupeKey: "",
             source: "test",
             createdAt: raw["createdAt"] as? String ?? ""

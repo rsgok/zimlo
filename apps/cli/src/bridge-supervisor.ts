@@ -67,7 +67,7 @@ export async function bridgeProtocolVersion(socketPath: string | NetConnectOpts,
 export async function ensureBridgeRunning(options: BridgeSupervisorOptions): Promise<boolean> {
   if (await isBridgeSocketReachable(options.socketPath)) {
     const protocolVersion = await bridgeProtocolVersion(options.socketPath);
-    if (protocolVersion === 2) return true;
+    if (protocolVersion === 3) return true;
     throw new Error("Zimlo Bridge 版本过旧，请运行 zimlo stop 停止旧进程后重试。");
   }
 

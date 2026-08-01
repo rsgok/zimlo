@@ -134,7 +134,7 @@ private struct WelcomeStep: View {
                     .font(.system(size: 42, weight: .black, design: .rounded))
                     .tracking(-1.4)
                     .foregroundStyle(ZColor.ink)
-                Text("Zimlo 把 Codex 和 Claude Code 真正需要你处理的内容送到手机：审批、失败和待审结果。")
+                Text("Zimlo 把 Codex 和 Claude Code 值得阅读的结果、真实审批与失败提醒送到手机。")
                     .font(.system(size: 16, weight: .medium))
                     .foregroundStyle(ZColor.muted)
                     .lineSpacing(5)

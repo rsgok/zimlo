@@ -1,195 +1,53 @@
 {
-  "version": 1,
+  "version": 3,
   "cases": [
     {
       "name": "unread uncovered result sits at its base value",
-      "input": {
-        "kind": "result",
-        "createdAt": "2026-07-20T10:00:00.000Z",
-        "actionRequired": false,
-        "hasLinkedPendingAction": false,
-        "directReplyIsCurrent": false,
-        "reviewState": null,
-        "latestOutcomeCreatedAt": null,
-        "unread": true
-      },
-      "expected": { "needsAction": false, "covered": false, "priority": 2 }
+      "input": { "kind": "result", "createdAt": "2026-07-20T10:00:00.000Z", "latestOutcomeCreatedAt": null, "unread": true },
+      "expected": { "covered": false, "priority": 2 }
     },
     {
       "name": "read covered progress sinks to the bottom",
-      "input": {
-        "kind": "progress",
-        "createdAt": "2026-07-20T10:00:00.000Z",
-        "actionRequired": false,
-        "hasLinkedPendingAction": false,
-        "directReplyIsCurrent": false,
-        "reviewState": null,
-        "latestOutcomeCreatedAt": "2026-07-20T11:00:00.000Z",
-        "unread": false
-      },
-      "expected": { "needsAction": false, "covered": true, "priority": 20 }
+      "input": { "kind": "progress", "createdAt": "2026-07-20T10:00:00.000Z", "latestOutcomeCreatedAt": "2026-07-20T11:00:00.000Z", "unread": false },
+      "expected": { "covered": true, "priority": 20 }
     },
     {
       "name": "unread uncovered decision",
-      "input": {
-        "kind": "decision",
-        "createdAt": "2026-07-20T10:00:00.000Z",
-        "actionRequired": false,
-        "hasLinkedPendingAction": false,
-        "directReplyIsCurrent": false,
-        "reviewState": null,
-        "latestOutcomeCreatedAt": null,
-        "unread": true
-      },
-      "expected": { "needsAction": false, "covered": false, "priority": 3 }
+      "input": { "kind": "decision", "createdAt": "2026-07-20T10:00:00.000Z", "latestOutcomeCreatedAt": null, "unread": true },
+      "expected": { "covered": false, "priority": 3 }
     },
     {
-      "name": "read uncovered attention",
-      "input": {
-        "kind": "attention",
-        "createdAt": "2026-07-20T10:00:00.000Z",
-        "actionRequired": false,
-        "hasLinkedPendingAction": false,
-        "directReplyIsCurrent": false,
-        "reviewState": null,
-        "latestOutcomeCreatedAt": null,
-        "unread": false
-      },
-      "expected": { "needsAction": false, "covered": false, "priority": 13 }
-    },
-    {
-      "name": "unreviewed review forces needs action",
-      "input": {
-        "kind": "result",
-        "createdAt": "2026-07-20T10:00:00.000Z",
-        "actionRequired": false,
-        "hasLinkedPendingAction": false,
-        "directReplyIsCurrent": false,
-        "reviewState": "unreviewed",
-        "latestOutcomeCreatedAt": null,
-        "unread": false
-      },
-      "expected": { "needsAction": true, "covered": false, "priority": 0 }
-    },
-    {
-      "name": "linked pending action forces needs action",
-      "input": {
-        "kind": "attention",
-        "createdAt": "2026-07-20T10:00:00.000Z",
-        "actionRequired": true,
-        "hasLinkedPendingAction": true,
-        "directReplyIsCurrent": false,
-        "reviewState": null,
-        "latestOutcomeCreatedAt": null,
-        "unread": true
-      },
-      "expected": { "needsAction": true, "covered": false, "priority": 0 }
-    },
-    {
-      "name": "current direct reply forces needs action",
-      "input": {
-        "kind": "attention",
-        "createdAt": "2026-07-20T10:00:00.000Z",
-        "actionRequired": true,
-        "hasLinkedPendingAction": false,
-        "directReplyIsCurrent": true,
-        "reviewState": null,
-        "latestOutcomeCreatedAt": null,
-        "unread": true
-      },
-      "expected": { "needsAction": true, "covered": false, "priority": 0 }
-    },
-    {
-      "name": "stale action request without link or current reply does not need action",
-      "input": {
-        "kind": "decision",
-        "createdAt": "2026-07-20T10:00:00.000Z",
-        "actionRequired": true,
-        "hasLinkedPendingAction": false,
-        "directReplyIsCurrent": false,
-        "reviewState": null,
-        "latestOutcomeCreatedAt": null,
-        "unread": true
-      },
-      "expected": { "needsAction": false, "covered": false, "priority": 3 }
-    },
-    {
-      "name": "settled review does not force action",
-      "input": {
-        "kind": "failure",
-        "createdAt": "2026-07-20T10:00:00.000Z",
-        "actionRequired": false,
-        "hasLinkedPendingAction": false,
-        "directReplyIsCurrent": false,
-        "reviewState": "accepted",
-        "latestOutcomeCreatedAt": null,
-        "unread": false
-      },
-      "expected": { "needsAction": false, "covered": false, "priority": 11 }
+      "name": "read uncovered attention stays editorial",
+      "input": { "kind": "attention", "createdAt": "2026-07-20T10:00:00.000Z", "latestOutcomeCreatedAt": null, "unread": false },
+      "expected": { "covered": false, "priority": 13 }
     },
     {
       "name": "covering requires a strictly newer outcome",
-      "input": {
-        "kind": "progress",
-        "createdAt": "2026-07-20T10:00:00.000Z",
-        "actionRequired": false,
-        "hasLinkedPendingAction": false,
-        "directReplyIsCurrent": false,
-        "reviewState": null,
-        "latestOutcomeCreatedAt": "2026-07-20T10:00:00.000Z",
-        "unread": true
-      },
-      "expected": { "needsAction": false, "covered": false, "priority": 4 }
+      "input": { "kind": "progress", "createdAt": "2026-07-20T10:00:00.000Z", "latestOutcomeCreatedAt": "2026-07-20T10:00:00.000Z", "unread": true },
+      "expected": { "covered": false, "priority": 4 }
     },
     {
       "name": "outcome kinds are not coverable",
-      "input": {
-        "kind": "failure",
-        "createdAt": "2026-07-20T10:00:00.000Z",
-        "actionRequired": false,
-        "hasLinkedPendingAction": false,
-        "directReplyIsCurrent": false,
-        "reviewState": null,
-        "latestOutcomeCreatedAt": "2026-07-20T12:00:00.000Z",
-        "unread": true
-      },
-      "expected": { "needsAction": false, "covered": false, "priority": 1 }
-    },
-    {
-      "name": "an earlier outcome does not cover the post",
-      "input": {
-        "kind": "attention",
-        "createdAt": "2026-07-20T10:00:00.000Z",
-        "actionRequired": false,
-        "hasLinkedPendingAction": false,
-        "directReplyIsCurrent": false,
-        "reviewState": null,
-        "latestOutcomeCreatedAt": "2026-07-20T09:00:00.000Z",
-        "unread": false
-      },
-      "expected": { "needsAction": false, "covered": false, "priority": 13 }
+      "input": { "kind": "failure", "createdAt": "2026-07-20T10:00:00.000Z", "latestOutcomeCreatedAt": "2026-07-20T12:00:00.000Z", "unread": true },
+      "expected": { "covered": false, "priority": 1 }
     },
     {
       "name": "sort orders by priority then newest first",
-      "input": {
-        "items": [
-          { "id": "a", "priority": 3, "createdAt": "2026-07-20T10:00:00.000Z" },
-          { "id": "b", "priority": 0, "createdAt": "2026-07-20T09:00:00.000Z" },
-          { "id": "c", "priority": 3, "createdAt": "2026-07-20T11:00:00.000Z" },
-          { "id": "d", "priority": 5, "createdAt": "2026-07-20T12:00:00.000Z" }
-        ]
-      },
+      "input": { "items": [
+        { "id": "a", "priority": 3, "createdAt": "2026-07-20T10:00:00.000Z" },
+        { "id": "b", "priority": 0, "createdAt": "2026-07-20T09:00:00.000Z" },
+        { "id": "c", "priority": 3, "createdAt": "2026-07-20T11:00:00.000Z" },
+        { "id": "d", "priority": 5, "createdAt": "2026-07-20T12:00:00.000Z" }
+      ] },
       "expected": { "order": ["b", "c", "a", "d"] }
     },
     {
       "name": "sort keeps input order for equal priority and timestamp",
-      "input": {
-        "items": [
-          { "id": "a", "priority": 3, "createdAt": "2026-07-20T10:00:00.000Z" },
-          { "id": "b", "priority": 3, "createdAt": "2026-07-20T10:00:00.000Z" },
-          { "id": "c", "priority": 3, "createdAt": "2026-07-20T10:00:00.000Z" }
-        ]
-      },
+      "input": { "items": [
+        { "id": "a", "priority": 3, "createdAt": "2026-07-20T10:00:00.000Z" },
+        { "id": "b", "priority": 3, "createdAt": "2026-07-20T10:00:00.000Z" },
+        { "id": "c", "priority": 3, "createdAt": "2026-07-20T10:00:00.000Z" }
+      ] },
       "expected": { "order": ["a", "b", "c"] }
     }
   ]

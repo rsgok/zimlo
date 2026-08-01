@@ -50,8 +50,8 @@ final class HealthCheckTests: XCTestCase {
         try? JSONDecoder().decode(HealthResponse.self, from: Data(json.utf8))
     }
 
-    func testProtocolVersionTwoIsCompatible() {
-        let health = decode(#"{"ok":true,"version":"0.2.0","protocolVersion":2,"features":{}}"#)
+    func testProtocolVersionThreeIsCompatible() {
+        let health = decode(#"{"ok":true,"version":"0.2.0","protocolVersion":3,"features":{}}"#)
         XCTAssertNotNil(health)
         XCTAssertTrue(HealthCheck.isCompatible(protocolVersion: health?.protocolVersion))
     }
@@ -60,7 +60,7 @@ final class HealthCheckTests: XCTestCase {
         XCTAssertFalse(HealthCheck.isCompatible(protocolVersion: decode(#"{"ok":true,"protocolVersion":1}"#)?.protocolVersion))
         XCTAssertFalse(HealthCheck.isCompatible(protocolVersion: decode(#"{"ok":true}"#)?.protocolVersion))
         // protocolVersion 类型不对时整个 decode 失败，按不兼容处理
-        XCTAssertNil(decode(#"{"ok":true,"protocolVersion":"2"}"#))
+        XCTAssertNil(decode(#"{"ok":true,"protocolVersion":"3"}"#))
         XCTAssertFalse(HealthCheck.isCompatible(protocolVersion: nil))
     }
 }

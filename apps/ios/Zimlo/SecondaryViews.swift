@@ -1016,7 +1016,6 @@ struct SettingsView: View {
                 Divider().overlay(ZColor.line)
                 notificationToggle("任务失败", keyPath: \.failures)
                 Divider().overlay(ZColor.line)
-                notificationToggle("待审结果", keyPath: \.reviews)
                 Divider().overlay(ZColor.line)
                 notificationToggle("锁屏任务标题", keyPath: \.showTaskTitle)
             }

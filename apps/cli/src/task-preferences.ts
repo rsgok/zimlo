@@ -1,5 +1,5 @@
 // task.pin / task.archive 的可选幂等：客户端带 idempotencyKey 时纳入与
-// review.respond 等命令相同的 (deviceId, key) 去重；缺省保持旧行为（直接应用）。
+// feed 与任务偏好命令按相同的 (deviceId, key) 去重；缺省保持旧行为（直接应用）。
 import type { TaskPreference } from "@zimlo/protocol";
 import type { ZimloStore } from "./store.js";
 

@@ -556,49 +556,6 @@ export class BridgeServer {
         connection.send({ type: "task.preference.updated", preference: result.preference });
         return;
       }
-      case "review.list":
-        connection.send({ type: "reviews.list", reviews: this.runtime.store.listTaskReviews(command.sessionId) });
-        return;
-      case "review.respond": {
-        const storageKey = `${deviceId}:${command.idempotencyKey}`;
-        const prior = this.runtime.store.getIdempotentResult(storageKey);
-        if (prior) {
-          const existing = this.runtime.store.getTaskReview(command.reviewId);
-          if (existing) connection.send({ type: "review.updated", review: existing });
-          return;
-        }
-        const current = this.runtime.store.getTaskReview(command.reviewId);
-        if (!current) return connection.send({ type: "error", code: "review_not_found", message: "这份结果审阅已不存在。" });
-        if (current.legacy || current.state !== "unreviewed") {
-          return connection.send({ type: "error", code: "review_not_actionable", message: "这份结果已经处理或被新版本替代。" });
-        }
-        if (command.decision === "request_changes" && !command.note?.trim()) {
-          return connection.send({ type: "error", code: "review_note_required", message: "请说明需要修改的内容。" });
-        }
-        if (command.decision === "request_changes") {
-          const queued = this.taskCommands.followUp({
-            deviceId,
-            sessionId: current.sessionId,
-            text: command.note!.trim(),
-            materialIds: [],
-            idempotencyKey: `review:${command.idempotencyKey}`,
-          });
-          if (queued.state === "failed") {
-            return connection.send({ type: "error", code: "review_follow_up_failed", message: queued.error ?? "修改要求未能进入任务队列。" });
-          }
-        }
-        const review = this.runtime.store.respondToTaskReview({
-          reviewId: command.reviewId,
-          decision: command.decision,
-          ...(command.note ? { note: command.note } : {}),
-          deviceId,
-          updatedAt: new Date().toISOString(),
-        });
-        if (!review) return connection.send({ type: "error", code: "review_not_found", message: "这份结果审阅已不存在。" });
-        this.runtime.store.saveIdempotentResult(storageKey, review.id, { ok: true });
-        this.broadcast({ type: "review.updated", review });
-        return;
-      }
       case "trust.policy.get":
         connection.send({
           type: "trust.policies",

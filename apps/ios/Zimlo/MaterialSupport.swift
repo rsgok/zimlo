@@ -186,6 +186,10 @@ struct FeedMaterialCard: View {
         return isReadableDocument(material)
     }
 
+    private var hasInlinePDF: Bool {
+        content.type == "document" && materials.first(where: { $0.id == content.materialId })?.kind == "pdf"
+    }
+
     var body: some View {
         Group {
             if content.type == "image_album" {
@@ -221,6 +225,18 @@ struct FeedMaterialCard: View {
                     }
                     .foregroundStyle(ZColor.ink)
                     .background(ZColor.raised)
+                } else if material.kind == "pdf", let url = urls[material.id] {
+                    VStack(spacing: 0) {
+                        InlinePDFReader(url: url)
+                        HStack {
+                            Text(material.name).font(ZFont.caption).lineLimit(1)
+                            Spacer()
+                            Button("全屏阅读") { previewURL = url }
+                                .font(ZFont.caption.weight(.bold))
+                        }
+                        .padding(.horizontal, 14).frame(height: 44)
+                        .background(ZColor.raised)
+                    }
                 } else { Button {
                     if let url = urls[material.id] { previewURL = url }
                     else { Task { await load() } }
@@ -251,7 +267,7 @@ struct FeedMaterialCard: View {
         .frame(
             maxWidth: .infinity,
             minHeight: fullBleed ? 0 : content.type == "document" ? 106 : 220,
-            maxHeight: fullBleed ? .infinity : hasReadableDocument ? 330 : content.type == "document" ? 130 : 330
+            maxHeight: fullBleed ? .infinity : hasInlinePDF ? 460 : hasReadableDocument ? 330 : content.type == "document" ? 130 : 330
         )
         .background(Color.black.opacity(0.34))
         .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
@@ -299,6 +315,24 @@ struct FeedMaterialCard: View {
             }
             catch { loadError = error.localizedDescription }
         }
+    }
+}
+
+private struct InlinePDFReader: UIViewRepresentable {
+    let url: URL
+
+    func makeUIView(context: Context) -> PDFView {
+        let view = PDFView()
+        view.autoScales = true
+        view.displayMode = .singlePageContinuous
+        view.displayDirection = .vertical
+        view.displaysPageBreaks = true
+        view.backgroundColor = .black
+        return view
+    }
+
+    func updateUIView(_ view: PDFView, context: Context) {
+        if view.document?.documentURL != url { view.document = PDFDocument(url: url) }
     }
 }
 

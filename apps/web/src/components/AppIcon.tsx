@@ -1,4 +1,4 @@
-type AppIconName = "feed" | "tasks" | "plus" | "agents" | "mic" | "stop" | "send" | "check";
+type AppIconName = "feed" | "tasks" | "plus" | "conversation" | "agents" | "mic" | "stop" | "send" | "check";
 
 interface AppIconProps {
   name: AppIconName;
@@ -35,6 +35,9 @@ export function AppIcon({ name, className = "" }: AppIconProps) {
   }
   if (name === "plus") {
     return <svg {...common}><path d="M12 5v14M5 12h14" /></svg>;
+  }
+  if (name === "conversation") {
+    return <svg {...common}><path d="M5 5.5h14v10H10l-4.5 3v-3H5z" /><path d="M9 9h6M9 12h4" /></svg>;
   }
   if (name === "agents") {
     return (

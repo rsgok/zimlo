@@ -4,7 +4,7 @@ import { fromBase64Url, sealPushRoute } from "@zimlo/protocol/crypto";
 import type { CloudService } from "./cloud-service.js";
 import type { ZimloStore } from "./store.js";
 
-export type PushKind = "approval" | "failure" | "review";
+export type PushKind = "approval" | "failure";
 type CloudPushClient = Pick<CloudService, "enabled" | "sendPush">;
 
 // Cleartext APNs category for low-risk approvals. It is a generic
@@ -38,8 +38,7 @@ export class PushService {
   notify(kind: PushKind, sessionId: string, taskTitle?: string, action?: PendingAction): void {
     if (!this.cloud.enabled) return;
     for (const { registration, settings } of this.store.listActivePushDevices()) {
-      const subscribed = settings.enabled
-        && (kind === "approval" ? settings.approvals : kind === "failure" ? settings.failures : settings.reviews);
+      const subscribed = settings.enabled && (kind === "approval" ? settings.approvals : settings.failures);
       if (!subscribed) continue;
       const ids = kind === "approval" && action ? quickApproveDecisionIds(action) : null;
       const payload: PushRouteV1 | { sessionId: string; taskTitle?: string } = ids && action

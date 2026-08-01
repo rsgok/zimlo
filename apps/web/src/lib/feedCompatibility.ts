@@ -1,9 +1,8 @@
 import { EMPTY_FEATURE_CAPABILITIES, USER_AVATAR_IDS } from "@zimlo/protocol";
-import type { FeedAction, FeedContent, FeedPost, FeedPostKind, FeedTemplate, Project, Snapshot, UserAvatarId } from "@zimlo/protocol";
+import type { FeedContent, FeedPost, FeedPostKind, FeedTemplate, Project, Snapshot, UserAvatarId } from "@zimlo/protocol";
 
 const KINDS = new Set<FeedPostKind>(["progress", "decision", "attention", "result", "failure"]);
 const TEMPLATES = new Set<FeedTemplate>(["paper", "grid", "sticky", "marker", "poster"]);
-const ACTIONS = new Set<FeedAction>(["approve", "reject", "reply", "open_diff"]);
 
 const DEFAULT_TEMPLATE: Record<FeedPostKind, FeedTemplate> = {
   progress: "grid",
@@ -51,14 +50,6 @@ export function normalizeFeedPost(value: unknown): FeedPost | null {
   const highlights = Array.isArray(post.highlights)
     ? post.highlights.filter((item): item is string => typeof item === "string").slice(0, 3)
     : [];
-  const actions = Array.isArray(post.actions)
-    ? post.actions.filter((item): item is FeedAction => ACTIONS.has(item as FeedAction)).slice(0, 4)
-    : [];
-  const pendingActionIds = Array.isArray(post.pendingActionIds)
-    ? post.pendingActionIds.filter((item): item is string => typeof item === "string")
-    : [];
-  const actionRequired = post.actionRequired === true;
-
   return {
     id,
     projectId: typeof post.projectId === "string" ? post.projectId : null,
@@ -72,11 +63,7 @@ export function normalizeFeedPost(value: unknown): FeedPost | null {
     takeaway,
     highlights,
     ...(typeof post.proof === "string" && post.proof ? { proof: post.proof } : {}),
-    actionRequired,
-    ...(actionRequired && typeof post.actionPrompt === "string" && post.actionPrompt ? { actionPrompt: post.actionPrompt } : {}),
-    actions,
     content: feedContent(post.content),
-    pendingActionIds,
     dedupeKey: text(post.dedupeKey, id),
     source: "agent",
     createdAt: text(post.createdAt),
@@ -119,14 +106,12 @@ export function normalizeSnapshot(value: Snapshot): Snapshot {
     taskTimelineCursors: snapshot.taskTimelineCursors && typeof snapshot.taskTimelineCursors === "object" ? snapshot.taskTimelineCursors : {},
     taskPreferences: Array.isArray(snapshot.taskPreferences) ? snapshot.taskPreferences : [],
     actions: Array.isArray(snapshot.actions) ? snapshot.actions.filter((action) => !isInternalZimloAction(action)) : [],
-    reviews: Array.isArray(snapshot.reviews) ? snapshot.reviews : [],
     trustPolicies: Array.isArray(snapshot.trustPolicies) ? snapshot.trustPolicies : [],
     trustAudit: Array.isArray(snapshot.trustAudit) ? snapshot.trustAudit : [],
     notificationSettings: snapshot.notificationSettings ?? {
       enabled: false,
       approvals: true,
       failures: true,
-      reviews: true,
       showTaskTitle: false,
       updatedAt: "",
     },

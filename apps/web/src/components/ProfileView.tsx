@@ -35,7 +35,7 @@ function providerLabel(provider: "codex" | "claude") {
   return provider === "codex" ? "Codex" : "Claude Code";
 }
 
-export function ProfileView({ localAdmin, devices, pairing, lanApprovalsEnabled, codexPlugin, integrations, sessions, userProfile, notificationSettings = { enabled: false, approvals: true, failures: true, reviews: true, showTaskTitle: false, updatedAt: "" }, pushRegistered = false, notificationEnabled = true, connected = false, connectionMode = "offline", send, forgetDevice }: ProfileViewProps) {
+export function ProfileView({ localAdmin, devices, pairing, lanApprovalsEnabled, codexPlugin, integrations, sessions, userProfile, notificationSettings = { enabled: false, approvals: true, failures: true, showTaskTitle: false, updatedAt: "" }, pushRegistered = false, notificationEnabled = true, connected = false, connectionMode = "offline", send, forgetDevice }: ProfileViewProps) {
   const [selectedAvatarId, setSelectedAvatarId] = useState(userProfile.avatarId);
   const [avatarPickerOpen, setAvatarPickerOpen] = useState(false);
   const [pairingOpen, setPairingOpen] = useState(false);
@@ -112,7 +112,6 @@ export function ProfileView({ localAdmin, devices, pairing, lanApprovalsEnabled,
             ["enabled", "允许 Zimlo 通知"],
             ["approvals", "审批与回复"],
             ["failures", "任务失败"],
-            ["reviews", "待审结果"],
             ["showTaskTitle", "锁屏任务标题"],
           ].map(([key, label]) => {
             const field = key as keyof Omit<NotificationSettings, "updatedAt">;
@@ -131,7 +130,6 @@ export function ProfileView({ localAdmin, devices, pairing, lanApprovalsEnabled,
                       enabled: field === "enabled" ? !notificationSettings.enabled : notificationSettings.enabled,
                       approvals: field === "approvals" ? !notificationSettings.approvals : notificationSettings.approvals,
                       failures: field === "failures" ? !notificationSettings.failures : notificationSettings.failures,
-                      reviews: field === "reviews" ? !notificationSettings.reviews : notificationSettings.reviews,
                       showTaskTitle: field === "showTaskTitle" ? !notificationSettings.showTaskTitle : notificationSettings.showTaskTitle,
                     },
                     idempotencyKey: crypto.randomUUID(),

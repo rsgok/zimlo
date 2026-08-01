@@ -5,15 +5,6 @@ import UniformTypeIdentifiers
 struct TaskDetailView: View {
     @ObservedObject var model: AppModel
     let session: AgentSession
-    @State private var followUp = ""
-    @State private var reviewChangesMode = false
-
-    init(model: AppModel, session: AgentSession) {
-        self.model = model
-        self.session = session
-        _followUp = State(initialValue: UserDefaults.standard.string(forKey: "zimlo.task-draft.\(session.id)") ?? "")
-    }
-
     var body: some View {
         let projection = TaskDetailProjection(
             snapshot: model.snapshot,
@@ -23,52 +14,16 @@ struct TaskDetailView: View {
         )
         let latestTimelineItemID = projection.timelineItems.first?.id
 
-        return VStack(spacing: 0) {
-            ScrollView {
-                LazyVStack(spacing: 0) {
-                    compactHeader(projection)
-                    if !projection.pendingActions.isEmpty { attentionSection(projection.pendingActions) }
-                    if let review = projection.latestReview { reviewSection(review) }
-                    timeline(projection)
-                }
+        return ScrollView {
+            LazyVStack(spacing: 0) {
+                compactHeader(projection)
+                if !projection.pendingActions.isEmpty { attentionSection(projection.pendingActions) }
+                timeline(projection)
             }
-            .scrollIndicators(.hidden)
-            .background(ZColor.paper)
-
-            VStack(spacing: 5) {
-                VoiceInput(text: $followUp, placeholder: canContinue ? "说出或输入下一步…" : "当前任务关联待确认")
-                if !projection.activeQueue.isEmpty {
-                    Text("当前有 \(projection.activeQueue.count) 条指令正在执行或排队")
-                        .font(ZFont.caption2).foregroundStyle(ZColor.muted)
-                }
-                Button(reviewChangesMode ? "发送修改要求" : willQueue(projection) ? "加入队列" : "发送") {
-                    let value = followUp.trimmingCharacters(in: .whitespacesAndNewlines)
-                    if reviewChangesMode, let review = projection.latestReview {
-                        model.respondReview(review, decision: "request_changes", note: value)
-                        reviewChangesMode = false
-                        followUp = ""
-                        UserDefaults.standard.removeObject(forKey: "zimlo.task-draft.\(session.id)")
-                    } else if model.followUp(sessionId: session.id, text: value) {
-                        // 发送即清空：持久化成功后同一交互周期清空输入与草稿；
-                        // 本地 pending 由时间线中的 local: 条目立即展示，失败则保留原文。
-                        followUp = ""
-                        UserDefaults.standard.removeObject(forKey: "zimlo.task-draft.\(session.id)")
-                    }
-                }
-                .buttonStyle(ActionButtonStyle(primary: true))
-                .disabled(!canContinue || followUp.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || duplicateActive(in: projection))
-            }
-            .padding(.horizontal, 14).padding(.vertical, 10)
-            .background(ZColor.paper)
-            .overlay(alignment: .top) { Rectangle().fill(ZColor.line).frame(height: 1) }
         }
+        .scrollIndicators(.hidden)
+        .background(ZColor.paper)
         .zPageSurface()
-        .task(id: followUp) {
-            try? await Task.sleep(for: .milliseconds(350))
-            guard !Task.isCancelled else { return }
-            persistFollowUpDraft()
-        }
-        .onDisappear { persistFollowUpDraft() }
         .task(id: latestTimelineItemID) {
             guard let latest = latestTimelineItemID,
                   model.snapshot.taskTimelineCursors[session.id] != latest else { return }
@@ -76,50 +31,6 @@ struct TaskDetailView: View {
             guard model.snapshot.taskTimelineCursors[session.id] != latest else { return }
             model.markTimelineSeen(sessionId: session.id, itemId: latest)
         }
-    }
-
-    @ViewBuilder
-    private func reviewSection(_ review: TaskReview) -> some View {
-        VStack(alignment: .leading, spacing: 12) {
-            HStack(alignment: .top) {
-                VStack(alignment: .leading, spacing: 4) {
-                    Text("RESULT REVIEW · V\(review.version)").font(ZFont.caption2).foregroundStyle(ZColor.muted)
-                    Text(review.bundle.conclusion).font(ZFont.title3)
-                }
-                Spacer()
-                Text(review.state == "unreviewed" ? "等待确认" : review.state == "accepted" ? "已接受" : review.state == "changes_requested" ? "已要求修改" : "已有新版本")
-                    .font(ZFont.caption2).foregroundStyle(ZColor.muted)
-            }
-            if let impact = review.bundle.impact {
-                Text(impact).font(ZFont.footnote).foregroundStyle(ZColor.ink.opacity(0.76))
-            }
-            HStack {
-                Text(review.bundle.evidenceSource == "app_server" ? "应用已验证" : review.bundle.evidenceSource == "hook" ? "Hook 已验证" : "Agent 报告")
-                Spacer()
-                if !review.bundle.changedFiles.isEmpty { Text("\(review.bundle.changedFiles.count) 个文件") }
-            }
-            .font(ZFont.caption2).foregroundStyle(ZColor.muted)
-            ForEach(review.bundle.tests, id: \.detail) { test in
-                Text("\(test.label) · \(test.detail)")
-                    .font(ZFont.footnote).foregroundStyle(ZColor.ink.opacity(0.72))
-            }
-            if review.state == "unreviewed" {
-                HStack {
-                    Button("接受结果") { model.respondReview(review, decision: "accept") }
-                        .buttonStyle(ActionButtonStyle(primary: true))
-                    Button("要求修改") {
-                        reviewChangesMode = true
-                        model.showNotice("请在底部输入具体修改要求")
-                    }
-                    .buttonStyle(ActionButtonStyle(primary: false))
-                }
-            }
-        }
-        .padding(16)
-        .background(ZColor.raised)
-        .overlay(RoundedRectangle(cornerRadius: ZRadius.inner).stroke(ZColor.sage.opacity(0.34)))
-        .clipShape(RoundedRectangle(cornerRadius: ZRadius.inner))
-        .padding(.horizontal, 14).padding(.top, 12)
     }
 
     private func compactHeader(_ projection: TaskDetailProjection) -> some View {
@@ -210,29 +121,13 @@ struct TaskDetailView: View {
         if !projection.activeQueue.isEmpty { return "等待当前步骤结束" }
         switch projection.currentState {
         case "waiting_input": return "回复 Agent，让任务继续"
-        case "user_review": return "审阅最新结果；需要调整时追加指令"
+        case "user_review": return "有需要时继续对话"
         case "running", "reviewing": return "Agent 正在执行，无需操作"
         case "failed": return "查看失败原因并决定是否重试"
         default: return "可以继续布置任务"
         }
     }
 
-    private var canContinue: Bool { session.cwd != nil && !session.correlationUncertain }
-    private func willQueue(_ projection: TaskDetailProjection) -> Bool {
-        session.activePid != nil || ["running", "waiting", "reviewing"].contains(projection.currentState)
-    }
-    private func duplicateActive(in projection: TaskDetailProjection) -> Bool {
-        let value = followUp.trimmingCharacters(in: .whitespacesAndNewlines)
-        return projection.activeQueue.contains {
-            $0.text.trimmingCharacters(in: .whitespacesAndNewlines) == value
-        }
-    }
-
-    private func persistFollowUpDraft() {
-        let key = "zimlo.task-draft.\(session.id)"
-        if followUp.isEmpty { UserDefaults.standard.removeObject(forKey: key) }
-        else { UserDefaults.standard.set(followUp, forKey: key) }
-    }
 }
 
 enum TaskTimelineItem: Identifiable, Hashable {
@@ -275,7 +170,6 @@ struct TaskDetailProjection {
     let currentState: String
     let pendingActions: [PendingAction]
     let activeQueue: [TaskCommand]
-    let latestReview: TaskReview?
     let taskInput: String
     let timelineItems: [TaskTimelineItem]
     let detailsByItemID: [String: [String]]
@@ -299,9 +193,6 @@ struct TaskDetailProjection {
         currentState = task?.state ?? session.status
         pendingActions = snapshot.actions.filter { $0.sessionId == session.id && $0.state == "pending" }
         activeQueue = commands.filter { ["queued", "dispatching", "running"].contains($0.state) }
-        latestReview = snapshot.reviews.lazy
-            .filter { $0.sessionId == session.id }
-            .max { $0.version < $1.version }
         taskInput = sessionEvents.lazy
             .filter { $0.kind == "user_instruction" }
             .min { $0.sequence < $1.sequence }?
@@ -340,7 +231,6 @@ struct TaskDetailProjection {
             case .post(let post):
                 details = post.highlights
                     + [post.proof].compactMap { $0 }
-                    + [post.actionPrompt].compactMap { $0 }
             case .command(let command):
                 if let instruction = firstInstructionByText[normalized(command.text)] {
                     details = instructionDetails[instruction.id] ?? []
@@ -508,10 +398,11 @@ private struct TimelineRow: View {
 
 struct NewTaskView: View {
     @ObservedObject var model: AppModel
+    let session: AgentSession?
     @Environment(\.dismiss) private var dismiss
     @AppStorage("zimlo.lastWorkspace") private var lastWorkspace = ""
     @AppStorage("zimlo.lastProvider") private var lastProvider = Provider.codex.rawValue
-    @State private var text = UserDefaults.standard.string(forKey: "zimlo.newTaskDraft") ?? ""
+    @State private var text: String
     @State private var search = ""
     @State private var choosingAgent = false
     @State private var submitting = false
@@ -521,6 +412,15 @@ struct NewTaskView: View {
     @State private var failedMaterials: [PreparedMobileMaterial] = []
     @State private var uploadsInFlight = 0
     @State private var materialError: String?
+
+    init(model: AppModel, session: AgentSession? = nil) {
+        self.model = model
+        self.session = session
+        let key = session.map { "zimlo.task-draft.\($0.id)" } ?? "zimlo.newTaskDraft"
+        _text = State(initialValue: UserDefaults.standard.string(forKey: key) ?? "")
+    }
+
+    private var draftKey: String { session.map { "zimlo.task-draft.\($0.id)" } ?? "zimlo.newTaskDraft" }
 
     private var materialCount: Int { preparedMaterials.count + failedMaterials.count }
 
@@ -554,34 +454,51 @@ struct NewTaskView: View {
                     VStack(alignment: .leading, spacing: 24) {
                         VStack(alignment: .leading, spacing: 9) {
                             HStack {
-                                Text("你想完成什么？").font(ZFont.headline)
+                                Text(session == nil ? "你想完成什么？" : "继续对话").font(ZFont.headline)
                                 Spacer()
                                 Text(text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? "草稿自动保存" : "草稿已保存")
                                     .font(ZFont.caption2).foregroundStyle(ZColor.muted)
                             }
-                            VoiceInput(
-                                text: $text,
-                                placeholder: "例如：检查首页白屏原因，修复后跑完测试并告诉我结果…",
-                                minHeight: 150
-                            )
-                            HStack(spacing: 10) {
-                                PhotosPicker(
+                            HStack(alignment: .bottom, spacing: 8) {
+                                Menu {
+                                    PhotosPicker(
                                     selection: $selectedPhotos,
                                     maxSelectionCount: max(0, MaterialPolicy.maxCount - materialCount),
                                     matching: .any(of: [.images, .videos])
-                                ) {
-                                    Label("照片或视频", systemImage: "photo.on.rectangle")
+                                    ) { Label("照片或视频", systemImage: "photo.on.rectangle") }
+                                    Button { showingFileImporter = true } label: { Label("文件", systemImage: "doc") }
+                                } label: {
+                                    Image(systemName: "paperclip")
+                                        .font(.system(size: 18, weight: .bold))
+                                        .frame(width: 44, height: 44)
+                                        .background(ZColor.control)
+                                        .clipShape(Circle())
                                 }
-                                Button { showingFileImporter = true } label: {
-                                    Label("文件", systemImage: "paperclip")
+                                .disabled(materialCount >= MaterialPolicy.maxCount)
+                                VoiceInput(
+                                    text: $text,
+                                    placeholder: session == nil ? "描述目标，或点按麦克风说话…" : "输入下一步，或点按麦克风说话…",
+                                    minHeight: 112
+                                )
+                                Button { submit() } label: {
+                                    Image(systemName: "arrow.up")
+                                        .font(.system(size: 18, weight: .black))
+                                        .frame(width: 44, height: 44)
+                                        .foregroundStyle(ZColor.onAccent)
+                                        .background(canSubmit ? ZColor.acid : ZColor.control)
+                                        .clipShape(Circle())
                                 }
+                                .disabled(!canSubmit)
+                                .accessibilityLabel(session == nil ? "开始任务" : "发送消息")
+                            }
+                            .buttonStyle(.plain)
+                            HStack {
+                                Text("可添加图片、视频或文件")
                                 Spacer()
                                 if uploadsInFlight > 0 { ProgressView().controlSize(.small) }
                                 Text("\(materialCount)/\(MaterialPolicy.maxCount)")
-                                    .font(ZFont.caption2).foregroundStyle(ZColor.muted)
                             }
-                            .font(ZFont.caption.weight(.bold))
-                            .buttonStyle(.bordered)
+                            .font(ZFont.caption2).foregroundStyle(ZColor.muted)
 
                             if !preparedMaterials.isEmpty {
                                 LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: 8) {
@@ -637,7 +554,7 @@ struct NewTaskView: View {
                                 .font(ZFont.caption2).foregroundStyle(ZColor.muted)
                         }
 
-                        VStack(alignment: .leading, spacing: 9) {
+                        if session == nil { VStack(alignment: .leading, spacing: 9) {
                             HStack {
                                 Text("交给谁").font(ZFont.headline)
                                 Spacer()
@@ -729,9 +646,9 @@ struct NewTaskView: View {
                                 .background(ZColor.line.opacity(0.35))
                                 .clipShape(RoundedRectangle(cornerRadius: ZRadius.inner, style: .continuous))
                             }
-                        }
+                        } }
 
-                        if model.snapshot.workspaces.isEmpty {
+                        if session == nil && model.snapshot.workspaces.isEmpty {
                             Text("先在 Mac 的 Codex 或 Claude Code 中打开一次项目，Zimlo 才能安全地把任务交给它。")
                                 .font(ZFont.footnote).foregroundStyle(ZColor.coralText)
                         }
@@ -739,43 +656,9 @@ struct NewTaskView: View {
                     .padding(20)
                 }
 
-                HStack(spacing: 14) {
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text(lastWorkspace.isEmpty ? "还没有可用 Agent" : "交给 \(selectedProject?.agentProfile.displayName ?? selectedWorkspace?.label ?? "Agent")")
-                            .font(ZFont.caption).lineLimit(1)
-                        Text("提交后可离开，任务会继续运行")
-                            .font(ZFont.caption2).foregroundStyle(ZColor.muted)
-                    }
-                    Spacer()
-                    Button {
-                        guard !submitting else { return }
-                        submitting = true
-                        let didPersist = model.createTask(
-                            provider: selectedProvider,
-                            workspaceId: lastWorkspace,
-                            text: text.trimmingCharacters(in: .whitespacesAndNewlines),
-                            materialIds: preparedMaterials.map(\.id)
-                        )
-                        if didPersist {
-                            text = ""
-                            UserDefaults.standard.removeObject(forKey: "zimlo.newTaskDraft")
-                            dismiss()
-                        } else {
-                            submitting = false
-                        }
-                    } label: {
-                        HStack { Text("开始任务"); Image(systemName: "arrow.right") }
-                    }
-                    .buttonStyle(ActionButtonStyle(primary: true))
-                    .frame(width: 142)
-                    .disabled(submitting || uploadsInFlight > 0 || !failedMaterials.isEmpty || lastWorkspace.isEmpty || text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-                }
-                .padding(.horizontal, 20).padding(.vertical, 13)
-                .background(ZColor.paper)
-                .overlay(alignment: .top) { Divider() }
             }
             .foregroundStyle(ZColor.ink).background(ZColor.paper)
-            .navigationTitle("新任务")
+            .navigationTitle(session == nil ? "新任务" : "继续对话")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) { Button("取消") { dismiss() }.foregroundStyle(ZColor.ink) }
@@ -839,9 +722,31 @@ struct NewTaskView: View {
         withAnimation(.easeOut(duration: 0.18)) { choosingAgent = false }
     }
 
+    private var canSubmit: Bool {
+        !submitting && uploadsInFlight == 0 && failedMaterials.isEmpty
+            && (session != nil || !lastWorkspace.isEmpty)
+            && !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
+
+    private func submit() {
+        guard canSubmit else { return }
+        submitting = true
+        let value = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        let materialIds = preparedMaterials.map(\.id)
+        let didPersist = session.map { model.followUp(sessionId: $0.id, text: value, materialIds: materialIds) }
+            ?? model.createTask(provider: selectedProvider, workspaceId: lastWorkspace, text: value, materialIds: materialIds)
+        if didPersist {
+            text = ""
+            UserDefaults.standard.removeObject(forKey: draftKey)
+            dismiss()
+        } else {
+            submitting = false
+        }
+    }
+
     private func persistTaskDraft() {
-        if text.isEmpty { UserDefaults.standard.removeObject(forKey: "zimlo.newTaskDraft") }
-        else { UserDefaults.standard.set(text, forKey: "zimlo.newTaskDraft") }
+        if text.isEmpty { UserDefaults.standard.removeObject(forKey: draftKey) }
+        else { UserDefaults.standard.set(text, forKey: draftKey) }
     }
 
     private func addFiles(_ urls: [URL]) async {

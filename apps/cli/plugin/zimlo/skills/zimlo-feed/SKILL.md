@@ -3,7 +3,7 @@ name: zimlo-feed
 description: Use for every Codex coding task when the Zimlo MCP tools are available. Publishes only meaningful, human-readable checkpoints while allowing ordinary turns to stay silent.
 ---
 
-# Zimlo Feed Protocol V2
+# Zimlo Feed Protocol V3
 
 Zimlo is the user's attention feed for this coding task. It is not a transcript, log stream, or task-state database.
 
@@ -49,7 +49,7 @@ Every post follows this reading order:
 - `takeaway`: In one or two sentences, explain why this deserves the user's attention now.
 - `highlights`: Add at most three verifiable facts. Each item expresses one fact, not a paragraph.
 - `proof`: Add the single strongest test, check, or first-party fact. Never paste raw logs.
-- `action_prompt`: When action is required, ask one direct question and recommend a default when appropriate.
+- Feed cards are editorial content, never approvals. Ask for ordinary feedback in the copy and let the user continue through the shared conversation composer.
 - Write in the user's primary language. Prefer user and product impact over internal symbol names.
 
 ## Kind guide
@@ -98,8 +98,6 @@ Good result:
   "takeaway": "刷新竞态已经被消除，用户在弱网下也不会被重复登出。",
   "highlights": ["刷新请求现在只保留一个在途实例", "失败时仍保留原有会话"],
   "proof": "认证定向测试与完整构建均通过",
-  "action_required": false,
-  "actions": [],
   "dedupe_key": "auth-refresh:result"
 }
 ```
@@ -115,9 +113,6 @@ Good attention post:
   "takeaway": "继续发布会让仍在使用旧协议的客户端无法读取新记录。",
   "highlights": ["线上仍有两个旧版本设备"],
   "proof": "设备列表与服务端版本统计一致",
-  "action_required": true,
-  "action_prompt": "建议先保留兼容读取一版；是否按此方案继续？",
-  "actions": ["reply"],
   "dedupe_key": "storage-migration:compat-choice"
 }
 ```

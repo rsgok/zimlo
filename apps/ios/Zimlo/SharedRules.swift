@@ -47,10 +47,6 @@ enum FeedRules {
         return Array(result.prefix(2))
     }
 
-    static func needsAction(actionRequired: Bool, hasLinkedPendingAction: Bool, directReplyIsCurrent: Bool, reviewState: String?) -> Bool {
-        reviewState == "unreviewed" || (actionRequired && (hasLinkedPendingAction || directReplyIsCurrent))
-    }
-
     // 任务最新的 result/failure 严格新于帖子时间时，可覆盖类帖子视为已被覆盖。
     static func isCovered(kind: String, createdAt: String, latestOutcomeCreatedAt: String?) -> Bool {
         coverableKinds.contains(kind) && (latestOutcomeCreatedAt ?? "") > createdAt
@@ -120,8 +116,6 @@ enum SemanticKey {
         case "user.profile.update", "notification.settings.update",
              "notification.device.register", "notification.device.unregister":
             return command.type
-        case "review.respond":
-            return "\(command.type):\(field("reviewId")):\(field("decision")):\(field("note"))"
         default:
             // 未知类型：递归按 key 码元序排序的确定性 JSON（不含 type，已在键前缀中）。
             var fields = command.values

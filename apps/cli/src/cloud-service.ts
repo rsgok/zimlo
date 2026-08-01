@@ -23,7 +23,7 @@ interface DeviceCloudCredentials {
 
 interface PushInput {
   deviceId: string;
-  kind: "approval" | "failure" | "review";
+  kind: "approval" | "failure";
   collapseId: string;
   alert: { title: string; body: string };
   route: PushRouteEnvelope;

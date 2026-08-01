@@ -17,7 +17,6 @@ const DURABLE_COMMAND_TYPES = new Set<ClientCommand["type"]>([
   "task.archive",
   "user.profile.update",
   "agent.profile.update",
-  "review.respond",
   "trust.policy.update",
   "notification.settings.update",
   "notification.device.register",

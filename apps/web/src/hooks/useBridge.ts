@@ -51,10 +51,9 @@ const EMPTY_SNAPSHOT: Snapshot = {
   taskTimelineCursors: {},
   taskPreferences: [],
   actions: [],
-  reviews: [],
   trustPolicies: [],
   trustAudit: [],
-  notificationSettings: { enabled: false, approvals: true, failures: true, reviews: true, showTaskTitle: false, updatedAt: "" },
+  notificationSettings: { enabled: false, approvals: true, failures: true, showTaskTitle: false, updatedAt: "" },
   pushDevices: [],
   features: EMPTY_FEATURE_CAPABILITIES,
   sequence: 0,
@@ -338,8 +337,6 @@ export function useBridge() {
               && command.defaultProvider === message.project.agentProfile.defaultProvider;
           case "user.profile.updated":
             return command.type === "user.profile.update" && command.avatarId === message.userProfile.avatarId;
-          case "review.updated":
-            return command.type === "review.respond" && command.reviewId === message.review.id;
           case "trust.policy.updated":
             return command.type === "trust.policy.update" && command.projectId === message.policy.projectId;
           case "notification.settings.updated":
@@ -444,10 +441,6 @@ export function useBridge() {
             return { ...current, snapshot: { ...current.snapshot, taskTimelineCursors: { ...current.snapshot.taskTimelineCursors, [message.sessionId]: message.itemId } } };
           case "task.preference.updated":
             return { ...current, snapshot: { ...current.snapshot, taskPreferences: upsertById(current.snapshot.taskPreferences.map((preference) => ({ ...preference, id: preference.sessionId })), { ...message.preference, id: message.preference.sessionId }).map(({ id: _id, ...preference }) => preference) } };
-          case "review.updated":
-            return { ...current, snapshot: { ...current.snapshot, reviews: upsertById(current.snapshot.reviews, message.review) } };
-          case "reviews.list":
-            return { ...current, snapshot: { ...current.snapshot, reviews: message.reviews } };
           case "trust.policy.updated":
             return {
               ...current,

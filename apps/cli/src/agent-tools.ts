@@ -68,7 +68,7 @@ function toolDefinitions() {
       inputSchema: {
         type: "object",
         additionalProperties: false,
-        required: ["task_id", "kind", "template", "headline", "takeaway", "highlights", "action_required", "actions", "dedupe_key"],
+        required: ["task_id", "kind", "template", "headline", "takeaway", "highlights", "dedupe_key"],
         properties: {
           task_id: { type: "string", minLength: 1, maxLength: 160, description: "本次任务的稳定标识；同一任务后续帖子保持一致。" },
           kind: { type: "string", enum: ["progress", "decision", "attention", "result", "failure"] },
@@ -77,9 +77,6 @@ function toolDefinitions() {
           takeaway: { type: "string", minLength: 1, maxLength: 320, description: "用一到两句话解释为什么这件事值得用户现在读。" },
           highlights: { type: "array", maxItems: 3, items: { type: "string", minLength: 1, maxLength: 100 }, description: "最多三条可验证事实，每条只表达一件事。" },
           proof: { type: "string", minLength: 1, maxLength: 160, description: "可选的一项测试、检查或一手证据，不得粘贴原始日志。" },
-          action_required: { type: "boolean" },
-          action_prompt: { type: "string", minLength: 1, maxLength: 240, description: "仅在需要用户处理时提供，直接说明用户要决定或输入什么。" },
-          actions: { type: "array", maxItems: 4, items: { type: "string", enum: ["approve", "reject", "reply", "open_diff"] } },
           content: {
             description: "可选的独立媒体卡。文本卡省略或传 {type:'text'}；图片组、视频、文档只引用已注册 material id。",
             oneOf: [
@@ -192,11 +189,7 @@ export class AgentToolService {
       takeaway: redactText(input.takeaway, 320),
       highlights: input.highlights.map((highlight) => redactText(highlight, 100)),
       ...(input.proof ? { proof: redactText(input.proof, 160) } : {}),
-      actionRequired: input.action_required,
-      ...(input.action_prompt ? { actionPrompt: redactText(input.action_prompt, 240) } : {}),
-      actions: input.actions,
       ...(input.content ? { content: input.content } : {}),
-      pendingActionIds: [],
       dedupeKey: input.dedupe_key,
       source: "agent" as const,
       createdAt: now,

@@ -1,9 +1,8 @@
-import { useEffect, useMemo, useRef, useState } from "react";
-import type { ClientCommand, FeedPost, Material, PendingAction, Project, Session, TaskCommand, TaskRecord, TaskReview, UnifiedEvent, UserAvatarId } from "@zimlo/protocol";
+import { useEffect, useMemo, useRef } from "react";
+import type { ClientCommand, FeedPost, Material, PendingAction, Project, Session, TaskCommand, TaskRecord, UnifiedEvent, UserAvatarId } from "@zimlo/protocol";
 import { AppTopBar } from "./AppTopBar";
 import { ActionPanel } from "./ActionPanel";
 import { FormattedText } from "./FormattedText";
-import { VoiceInput } from "./VoiceInput";
 import { agentAvatarStyle } from "./AgentsView";
 import { ProviderBadge, ProviderIcon } from "./ProviderBadge";
 import { conciseTaskInput, sessionLocation } from "./sessionPresentation";
@@ -19,7 +18,6 @@ interface SessionDetailProps {
   commands: TaskCommand[];
   materials?: Material[] | undefined;
   task?: TaskRecord | undefined;
-  reviews?: TaskReview[] | undefined;
   timelineCursor?: string | undefined;
   userAvatarId: UserAvatarId;
   send: (command: ClientCommand) => boolean;
@@ -57,7 +55,7 @@ const STATUS_LABELS: Record<string, string> = {
   unknown: "状态未知",
   waiting_input: "等你回复",
   reviewing: "检查中",
-  user_review: "待你审阅",
+  user_review: "等待反馈",
 };
 
 const COMMAND_LABELS: Record<TaskCommand["state"], string> = {
@@ -254,12 +252,9 @@ function TimelineEventDetails({ events }: { events: UnifiedEvent[] }) {
   );
 }
 
-export function SessionDetail({ session, project, events, actions, posts, commands, materials = [], task, reviews = [], timelineCursor, userAvatarId, send, onClose, onRetryLocal }: SessionDetailProps) {
+export function SessionDetail({ session, project, events, actions, posts, commands, materials = [], task, timelineCursor, userAvatarId, send, onClose, onRetryLocal }: SessionDetailProps) {
   const panelRef = useRef<HTMLElement>(null);
   useModalFocus(panelRef);
-  const draftKey = `zimlo:task-draft:${session.id}`;
-  const [message, setMessage] = useState(() => typeof localStorage === "undefined" ? "" : localStorage.getItem(draftKey) ?? "");
-  const [reviewNote, setReviewNote] = useState("");
   const instructions = [...events]
     .filter((event) => event.kind === "user_instruction")
     .sort((left, right) => left.sequence - right.sequence);
@@ -271,15 +266,12 @@ export function SessionDetail({ session, project, events, actions, posts, comman
   const pendingActions = actions.filter((action) => action.state === "pending");
   const queuedCommand = commands.find((command) => ["queued", "dispatching", "running"].includes(command.state));
   const currentState = task?.state ?? session.status;
-  const latestActionPrompt = [...posts].sort((left, right) => right.createdAt.localeCompare(left.createdAt))
-    .find((post) => post.actionPrompt && (post.pendingActionIds.some((id) => pendingActions.some((action) => action.actionId === id)) || (post.pendingActionIds.length === 0 && ["waiting_input", "user_review"].includes(currentState))))?.actionPrompt;
   const nextAction = pendingAction?.title
     ?? (queuedCommand ? COMMAND_LABELS[queuedCommand.state] : null)
-    ?? latestActionPrompt
     ?? (currentState === "waiting_input"
       ? "回复 Agent，让任务继续"
       : currentState === "user_review"
-        ? "审阅最新结果；需要调整时直接追加指令"
+        ? "有需要时继续对话"
         : currentState === "reviewing"
           ? "Agent 正在检查结果，无需操作"
           : currentState === "running"
@@ -287,13 +279,7 @@ export function SessionDetail({ session, project, events, actions, posts, comman
             : currentState === "failed"
               ? "查看失败原因并决定是否重试"
               : "可以继续布置任务");
-  const canContinue = Boolean(session.cwd && !session.correlationUncertain);
-  const willQueue = session.activePid !== null || ["running", "waiting", "reviewing"].includes(currentState);
-  const activeQueue = commands.filter((command) => ["queued", "dispatching", "running"].includes(command.state)).sort((left, right) => left.createdAt.localeCompare(right.createdAt));
-  const duplicateActive = activeQueue.some((command) => command.text.trim() === message.trim());
   const latestPost = [...posts].sort((left, right) => right.createdAt.localeCompare(left.createdAt))[0];
-  const sortedReviews = [...reviews].sort((left, right) => right.version - left.version);
-  const latestReview = sortedReviews[0];
 
   const timeline = useMemo(() => buildTaskTimeline(posts, commands, events), [commands, events, posts]);
   const timelineIds = timeline.map((item) => `${item.type}:${item.id}`);
@@ -326,27 +312,12 @@ export function SessionDetail({ session, project, events, actions, posts, comman
   }, [send, session.id, timelineCursor, timelineIds[0]]);
 
   useEffect(() => {
-    if (message) localStorage.setItem(draftKey, message);
-    else localStorage.removeItem(draftKey);
-  }, [draftKey, message]);
-
-  useEffect(() => {
     const closeOnEscape = (event: KeyboardEvent) => {
       if (event.key === "Escape") onClose();
     };
     window.addEventListener("keydown", closeOnEscape);
     return () => window.removeEventListener("keydown", closeOnEscape);
   }, [onClose]);
-
-  // 发送即清空：outbox 持久化成功后同一交互周期清空输入框与草稿；
-  // 本地 pending 消息由 outbox 派生的 queued 指令立即出现在 Timeline。
-  const submitMessage = () => {
-    const text = message.trim();
-    if (!canContinue || !text || duplicateActive) return;
-    const accepted = send({ type: "task.follow_up", sessionId: session.id, text, materialIds: [], idempotencyKey: crypto.randomUUID() });
-    if (!accepted) return;
-    setMessage("");
-  };
 
   return (
     <div className="detail-backdrop" role="presentation">
@@ -386,48 +357,11 @@ export function SessionDetail({ session, project, events, actions, posts, comman
           )}
         </section>
 
-        {latestReview && (
-          <section className={`task-review-area review-state-${latestReview.state}`} aria-label="结果审阅">
-            <header>
-              <div><p className="eyebrow">RESULT REVIEW · V{latestReview.version}</p><h2>{latestReview.bundle.conclusion}</h2></div>
-              <span>{latestReview.state === "unreviewed" ? "等待你确认" : latestReview.state === "accepted" ? "已接受" : latestReview.state === "changes_requested" ? "已要求修改" : "已有新版本"}</span>
-            </header>
-            {latestReview.bundle.impact && <p className="review-impact">{latestReview.bundle.impact}</p>}
-            <div className="review-evidence">
-              <div><strong>证据</strong><span>{latestReview.bundle.evidenceSource === "app_server" ? "应用已验证" : latestReview.bundle.evidenceSource === "hook" ? "Hook 已验证" : "Agent 报告"}</span></div>
-              {latestReview.bundle.changedFiles.length > 0 && (
-                <details><summary>{latestReview.bundle.changedFiles.length} 个改动文件</summary><ul>{latestReview.bundle.changedFiles.map((file) => <li key={file}><code>{file}</code></li>)}</ul></details>
-              )}
-              {latestReview.bundle.tests.map((test, index) => <p key={`${test.label}:${index}`}><strong>{test.label}</strong> · {test.detail}</p>)}
-              {latestReview.bundle.links.length > 0 && <div className="review-links">{latestReview.bundle.links.map((link) => <a href={link.url} target="_blank" rel="noreferrer" key={link.url}>{link.label} ↗</a>)}</div>}
-            </div>
-            {latestReview.state === "unreviewed" && (
-              <div className="review-actions">
-                <button className="primary-button" onClick={() => send({ type: "review.respond", reviewId: latestReview.id, decision: "accept", idempotencyKey: crypto.randomUUID() })}>接受结果</button>
-                <details>
-                  <summary>要求修改</summary>
-                  <textarea value={reviewNote} onChange={(event) => setReviewNote(event.target.value)} placeholder="具体说明需要修改什么…" rows={3} />
-                  <button
-                    className="secondary-button"
-                    disabled={!reviewNote.trim()}
-                    onClick={() => {
-                      if (send({ type: "review.respond", reviewId: latestReview.id, decision: "request_changes", note: reviewNote.trim(), idempotencyKey: crypto.randomUUID() })) setReviewNote("");
-                    }}
-                  >发送修改要求</button>
-                </details>
-              </div>
-            )}
-            {sortedReviews.length > 1 && (
-              <details className="review-history"><summary>查看其余 {sortedReviews.length - 1} 个版本</summary>{sortedReviews.slice(1).map((review) => <p key={review.id}>V{review.version} · {review.bundle.conclusion} · {review.state}</p>)}</details>
-            )}
-          </section>
-        )}
-
         <section className="task-timeline" aria-label="任务 Timeline">
           <header className="timeline-heading"><h2>动态</h2><span>{unreadCount > 0 ? `${unreadCount} 条未读 · 已定位` : "关键轮次在第一层"}</span></header>
           {timeline.map((item) => {
             if (item.type === "post") {
-              const detailCount = item.details.length + item.post.highlights.length + (item.post.proof ? 1 : 0) + (item.post.actionPrompt ? 1 : 0);
+              const detailCount = item.details.length + item.post.highlights.length + (item.post.proof ? 1 : 0);
               return (
               <article className={`task-timeline-item timeline-${item.post.kind}`} data-timeline-level="primary" key={`post:${item.id}`} ref={setTimelineItemRef(`post:${item.id}`)}>
                 {project
@@ -441,7 +375,6 @@ export function SessionDetail({ session, project, events, actions, posts, comman
                     <div className="timeline-thread-panel">
                       {item.post.highlights.length > 0 && <ul>{item.post.highlights.map((highlight) => <li key={highlight}>{highlight}</li>)}</ul>}
                       {item.post.proof && <p className="timeline-proof"><span>已验证</span>{item.post.proof}</p>}
-                      {item.post.actionPrompt && <p className="timeline-action-prompt">{item.post.actionPrompt}</p>}
                       <TimelineEventDetails events={item.details} />
                     </div>
                   </details>}
@@ -494,11 +427,6 @@ export function SessionDetail({ session, project, events, actions, posts, comman
           {timeline.length === 0 && <div className="timeline-empty"><strong>还没有需要阅读的更新</strong><p>Agent 的工具调用和普通执行日志不会出现在这里。</p></div>}
         </section>
 
-        <section className="profile-composer" aria-label="继续当前任务">
-          <VoiceInput compact value={message} onChange={setMessage} onSubmit={submitMessage} rows={1} ariaLabel="继续当前任务" placeholder={willQueue ? "说出或输入追加指令…" : "说出或输入下一步…"} disabled={!canContinue} />
-          {activeQueue.length > 0 && <small className="queue-position">当前有 {activeQueue.length} 条指令在执行或排队</small>}
-          <button disabled={!canContinue || !message.trim() || duplicateActive} onClick={submitMessage}>{duplicateActive ? "已在队列" : willQueue ? "加入队列" : "发送"}</button>
-        </section>
       </section>
     </div>
   );

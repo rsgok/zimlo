@@ -12,18 +12,18 @@ Zimlo 是 Codex 与 Claude Code 的隐私优先移动状态层。它自动发现
 - 用户原始指令只保留在 Task 详情；Feed 只接收 Agent 主动编辑的结构化阅读卡和真实待处理操作，平台不 scrape 输出，也不二次生成摘要。
 - `signal.transition` 单独维护机器任务状态；Feed 不是状态 source of truth。
 - 普通轮次可以静默结束；Stop hook 只幂等记录 `implicit_skip`，不会打断或把内部协议提示发进对话。关键状态仍会校验匹配的帖子种类。
-- 主 Feed 使用全屏纵向 scroll-snap，一屏一张卡，序列在页面会话内固定：首次载入按待操作优先与时间次序建序；阅读中已有卡不因已读、审批完成或快照刷新换位，新卡与重新可操作的卡追加到 caught-up 之前，已处理卡在当前会话原位显示完成状态；未看到末尾时浮出“有 N 条新更新”浮条。六小时内同任务的常规更新自动合并，稳定停留一秒后按设备记录已读。合并与优先级策略由 `packages/protocol` 的共享策略函数定义，Web 与 iOS 逐行对齐。
+- 主 Feed 使用沉浸式一屏一卡，序列在页面会话内固定；阅读中已有卡不因已读、快照刷新或真实审批完成而换位。新内容只短暂浮出“有新内容”，用户真实开始浏览后自动消失。六小时内同任务的常规更新自动合并，稳定停留一秒后按设备记录已读。
 - 左滑 Feed 卡进入所属 Task Detail，右滑将卡片从本设备的当前与历史 Feed 中移除；卡片上的 Agent 身份进入跨任务 Agent Profile。Feed 移除与任务归档都是乐观更新并提供 6 秒撤销（`feed.dismiss.set` 携带幂等键，旧 `feed.dismiss` 保留兼容）。
-- 底部导航为 `Feed · Tasks · ＋ · Agents`；设备、安全和 Runtime 接入位于右上角 Settings。
-- 底部 `+` 可从 Mac 已发现的可信项目中创建 Codex/Claude Code 任务；运行中 follow-up 会先持久化，再等待精确 session 空闲后执行。
-- 新任务默认最近 Project Agent/Runtime，支持项目搜索和草稿恢复；发送后立即出现启动中占位卡。Task Detail 的 follow-up 同样保存草稿、显示队列状态并阻止同文重复提交。
+- 底部导航为 `Feed · Tasks · 对话 · Agents · 设置`；中间“对话”是操作入口而不是 Tab。
+- 在 Feed 与任务详情中，“对话”关联当前可靠 session；在其他页面或无法可靠关联时进入新任务模式，绝不误发到其他会话。
+- 统一输入面板默认不录音、不弹键盘，支持文字、按需语音和附件；草稿按 session 或新任务模式分别恢复，发送继续经过可靠 outbox。
 - Web 与 iOS 发送体验一致：先持久化本机 outbox，同周期清空输入与草稿并立即展示本地 pending；服务端拒绝标失败并保留原文，可在 outbox 详情（类型、目标、预览、时间与状态）中重试或重新编辑；本地或服务端仍 queued 的 create/follow-up 可撤回（`task.command.cancel`）。
 - Task Detail 固定展示 Task Input、状态、最新结论和下一步；Timeline 按设备保存阅读位置。
-- 新结果会形成带版本的 Review Bundle，将结论、真实改动文件、测试证据和相关链接放在 Timeline 前；用户可接受结果或通过可靠 outbox 要求修改。
+- 每张可关联任务的 Feed 卡都能通过统一“对话”入口继续讨论；不再生成接受/修改型 Review 对象。
 - 每个 Project 可单独开启“安全自动化”：只自动允许项目边界内可确认的读取、搜索、测试和构建；写入、联网、安装、发布、删除与未知动作继续询问并保留审计。
 - 高风险审批双确认：iOS 用底部 Sheet 完整展示风险、作用域、目标命令与确认短语，「填入确认短语」后再次明确提交（不使用 Face ID）；Web 保持同一双确认语义（自动聚焦、Enter 提交、44px 点击目标）。
 - 撤销设备与解除配对都有确认对话框；解除配对清理本机凭据、快照、outbox、设备草稿与待路由通知，保留界面偏好。
-- iOS 可在完成配对后按需开启三类隐私通知：等待批准/回复、任务失败、新结果待审阅。默认锁屏不显示任务标题，通知只携带设备端可解密的任务路由。低风险审批（无确认短语的批准一次/拒绝）支持锁屏快捷操作：APNs category 只是明文通用标识，决策 id 只放在加密路由内；高风险与需输入的审批仍只能进 App 处理。通知权限被拒时设置页给出去系统设置的引导。
+- iOS 可在完成配对后按需开启审批与失败通知。默认锁屏不显示任务标题，通知只携带设备端可解密的任务路由。低风险审批（无确认短语的批准一次/拒绝）支持锁屏快捷操作：APNs category 只是明文通用标识，决策 id 只放在加密路由内；高风险与需输入的审批仍只能进 App 处理。通知权限被拒时设置页给出去系统设置的引导。
 - 原生 iOS 与 PWA 都会优先本地直连，失败后自动切到 Cloudflare；顶栏明确显示“本地 / 云端 / 重连”。双端统一按 1/2/4/8/16/30 秒 ±20% 抖动退避重连，认证成功或回到前台时重置，系统离线时暂停，顶栏与离线胶囊都可手动立即重试。Cloudflare 不保存任务正文，Mac 离线时手机显示保存在设备本地的最近快照（带 savedAt，界面显示“数据更新于 X 分钟前”），操作进入可靠 outbox。
 - Web 使用语义化字体 token 与字号阶梯（正文不小于 13px）；iOS 用语义字体与圆角体系并支持 Dynamic Type。
 - 只有真实测试命令与真实退出码才能生成 `tests_passed` / `tests_failed`。
@@ -106,13 +106,13 @@ zimlo open                          # 打开本机管理页
 
 Codex GUI 插件调用 Zimlo MCP 时也可以按需拉起本机 Bridge，不要求用户先运行命令。
 
-启动后的健康检查仍使用 protocol v2，并通过 capability 增量声明新能力：
+启动后的健康检查使用 protocol v3，并通过 capability 增量声明新能力：
 
 ```bash
 curl http://127.0.0.1:4747/healthz
 ```
 
-响应中的 `features.taskReview`、`features.projectTrustPolicy`、`features.pushNotifications`、`features.remoteSync` 为 `true` 时，客户端才显示相应入口；旧客户端可以继续使用既有 Feed、任务和审批。
+响应中的 `features.projectTrustPolicy`、`features.pushNotifications`、`features.remoteSync` 为 `true` 时，客户端才显示相应入口。协议 v3 客户端遇到旧 Bridge 时会明确提示升级，不会进入无限重连。
 
 ## 手机离开局域网后如何工作
 
@@ -203,7 +203,7 @@ claude mcp add --scope user zimlo -- zimlo mcp --provider claude
 
 Agent 的编辑门槛内置在工具描述与 Skill 中：只有信息会改变用户判断、行动或信心才发帖。每张卡按“结论 → 用户影响 → 关键事实 → 证据 → 下一步”书写，并从 `paper / grid / sticky / marker / poster` 中选择模板。普通 tool call、文件读取、编译测试过程、短暂重试和心跳应保持沉默；只有受控 Runner 或显式 `completed` 状态检查点才需要用 `feed.skip` 记录“本轮不发”。
 
-Feed V2 的 `feed.post` 使用结构化字段：`headline`、`takeaway`、最多三条 `highlights`、可选 `proof`，以及需要用户处理时的 `action_prompt`。升级插件后必须新建 Codex 任务；旧任务缓存的 V1 工具参数不再兼容。
+Feed V3 的 `feed.post` 使用结构化字段：`headline`、`takeaway`、最多三条 `highlights`、可选 `proof` 和 Artifact。卡片不再携带接受、修改或审批字段；真实高风险操作继续通过独立 `PendingAction` 明确批准或拒绝。升级插件后必须新建 Codex 任务，旧协议客户端需要同步升级。
 
 ## 本地数据
 
