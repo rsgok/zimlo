@@ -38,7 +38,7 @@ describe("FeedPostView", () => {
     expect(markup).not.toContain("左滑");
   });
 
-  it("opens documents and video through explicit in-app preview controls", () => {
+  it("keeps video in the feed and uses an in-app reader for long text", () => {
     const document: Material = {
       id: "material_0123456789abcdef", kind: "pdf", name: "brief.pdf", mimeType: "application/pdf",
       sizeBytes: 12_000, sha256: "a".repeat(64), origin: "agent", status: "ready", createdAt: "2026-08-01T00:00:00.000Z",
@@ -46,8 +46,11 @@ describe("FeedPostView", () => {
     const video: Material = {
       ...document, id: "material_abcdef0123456789", kind: "video", name: "demo.mp4", mimeType: "video/mp4", durationMs: 6_000,
     };
-    const documentMarkup = renderToStaticMarkup(<FeedPostView
-      post={{ ...post, content: { type: "document", materialId: document.id } }} materials={[document]}
+    const markdown: Material = {
+      ...document, id: "material_feedface012345", kind: "document", name: "notes.md", mimeType: "text/markdown",
+    };
+    const markdownMarkup = renderToStaticMarkup(<FeedPostView
+      post={{ ...post, content: { type: "document", materialId: markdown.id } }} materials={[markdown]}
       session={session} project={undefined} actions={[]} needsAction={false} send={vi.fn()} onOpenProject={vi.fn()} position={1} total={1}
     />);
     const videoMarkup = renderToStaticMarkup(<FeedPostView
@@ -55,10 +58,26 @@ describe("FeedPostView", () => {
       session={session} project={undefined} actions={[]} needsAction={false} send={vi.fn()} onOpenProject={vi.fn()} position={1} total={1}
     />);
 
-    expect(documentMarkup).toContain("<button type=\"button\" class=\"feed-document\"");
-    expect(documentMarkup).not.toContain("target=\"_blank\"");
+    expect(markdownMarkup).toContain("feed-document-reader-scroll");
+    expect(markdownMarkup).toContain("正在读取");
+    expect(videoMarkup).toContain("<video");
+    expect(videoMarkup).toContain("loop=\"\"");
     expect(videoMarkup).toContain("播放视频：demo.mp4");
-    expect(videoMarkup).toContain(">播放</strong>");
+    expect(videoMarkup).not.toContain("feed-media-viewer");
+  });
+
+  it("keeps PDF as an explicit document preview", () => {
+    const pdf: Material = {
+      id: "material_0123456789abcdef", kind: "pdf", name: "brief.pdf", mimeType: "application/pdf",
+      sizeBytes: 12_000, sha256: "a".repeat(64), origin: "agent", status: "ready", createdAt: "2026-08-01T00:00:00.000Z",
+    };
+    const markup = renderToStaticMarkup(<FeedPostView
+      post={{ ...post, content: { type: "document", materialId: pdf.id } }} materials={[pdf]}
+      session={session} project={undefined} actions={[]} needsAction={false} send={vi.fn()} onOpenProject={vi.fn()} position={1} total={1}
+    />);
+
+    expect(markup).toContain("<button type=\"button\" class=\"feed-document\"");
+    expect(markup).not.toContain("target=\"_blank\"");
   });
 
   it("keeps result review actions compact and plainly named", () => {

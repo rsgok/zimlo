@@ -156,8 +156,10 @@ struct MaterialThumbnail: View {
 struct FeedMaterialCard: View {
     @ObservedObject var model: AppModel
     let content: FeedContent
+    var fullBleed = false
     @State private var urls: [String: URL] = [:]
     @State private var previewURL: URL?
+    @State private var documentText: String?
     @State private var loadError: String?
     @State private var isLoading = false
 
@@ -172,6 +174,17 @@ struct FeedMaterialCard: View {
     private var materials: [Material] {
         referencedIDs.compactMap { id in model.snapshot.materials.first { $0.id == id } }
     }
+    private func isReadableDocument(_ material: Material) -> Bool {
+        let ext = URL(fileURLWithPath: material.name).pathExtension.lowercased()
+        return material.mimeType.hasPrefix("text/") || material.mimeType == "application/json"
+            || ["md", "txt", "json", "csv"].contains(ext)
+    }
+
+    private var hasReadableDocument: Bool {
+        guard content.type == "document",
+              let material = materials.first(where: { $0.id == content.materialId }) else { return false }
+        return isReadableDocument(material)
+    }
 
     var body: some View {
         Group {
@@ -185,9 +198,30 @@ struct FeedMaterialCard: View {
                 }
                 .tabViewStyle(.page(indexDisplayMode: materials.count > 1 ? .automatic : .never))
             } else if content.type == "video", let material = materials.first(where: { $0.id == content.materialId }), let url = urls[material.id] {
-                VideoPlayer(player: AVPlayer(url: url))
+                InlineFeedVideoPlayer(url: url)
             } else if content.type == "document", let material = materials.first(where: { $0.id == content.materialId }) {
-                Button {
+                if isReadableDocument(material) {
+                    VStack(alignment: .leading, spacing: 0) {
+                        HStack(spacing: 9) {
+                            Text("文档").font(ZFont.caption2.monospaced().weight(.black)).foregroundStyle(ZColor.sage)
+                            Text(material.name).font(ZFont.headline).lineLimit(1)
+                        }
+                        .padding(.horizontal, 15).frame(height: 46)
+                        Divider().overlay(ZColor.line)
+                        ScrollView(.vertical) {
+                            Text(readableMarkdown)
+                                .font(ZFont.body)
+                                .lineSpacing(4)
+                                .textSelection(.enabled)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                                .padding(18)
+                        }
+                        .scrollIndicators(.visible)
+                        .scrollBounceBehavior(.basedOnSize)
+                    }
+                    .foregroundStyle(ZColor.ink)
+                    .background(ZColor.raised)
+                } else { Button {
                     if let url = urls[material.id] { previewURL = url }
                     else { Task { await load() } }
                 } label: {
@@ -209,17 +243,27 @@ struct FeedMaterialCard: View {
                     .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
                 }
                 .buttonStyle(.plain)
+                }
             } else {
                 unavailable
             }
         }
-        .frame(maxWidth: .infinity, minHeight: content.type == "document" ? 106 : 220, maxHeight: content.type == "document" ? 130 : 330)
+        .frame(
+            maxWidth: .infinity,
+            minHeight: fullBleed ? 0 : content.type == "document" ? 106 : 220,
+            maxHeight: fullBleed ? .infinity : hasReadableDocument ? 330 : content.type == "document" ? 130 : 330
+        )
         .background(Color.black.opacity(0.34))
         .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
         .task(id: "\(referencedIDs.joined(separator: ":")):\(model.bridge.connected)") { await load() }
         .sheet(isPresented: Binding(get: { previewURL != nil }, set: { if !$0 { previewURL = nil } })) {
             if let previewURL { QuickLookSheet(url: previewURL).ignoresSafeArea() }
         }
+    }
+
+    private var readableMarkdown: AttributedString {
+        guard let documentText else { return AttributedString(isLoading ? "正在读取…" : loadError ?? "物料同步中") }
+        return (try? AttributedString(markdown: documentText)) ?? AttributedString(documentText)
     }
 
     private var unavailable: some View {
@@ -244,9 +288,35 @@ struct FeedMaterialCard: View {
         defer { isLoading = false }
         loadError = nil
         for material in materials where urls[material.id] == nil {
-            do { urls[material.id] = try await model.localURL(for: material) }
+            do {
+                let url = try await model.localURL(for: material)
+                urls[material.id] = url
+                if content.type == "document", isReadableDocument(material) {
+                    documentText = try await Task.detached(priority: .userInitiated) {
+                        try String(contentsOf: url, encoding: .utf8)
+                    }.value
+                }
+            }
             catch { loadError = error.localizedDescription }
         }
+    }
+}
+
+private struct InlineFeedVideoPlayer: View {
+    let url: URL
+    @State private var player = AVPlayer()
+
+    var body: some View {
+        VideoPlayer(player: player)
+            .task(id: url) {
+                player.replaceCurrentItem(with: AVPlayerItem(url: url))
+                player.isMuted = true
+                player.play()
+            }
+            .onDisappear {
+                player.pause()
+                player.replaceCurrentItem(with: nil)
+            }
     }
 }
 

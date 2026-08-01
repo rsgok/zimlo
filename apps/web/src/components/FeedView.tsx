@@ -125,6 +125,12 @@ export function FeedView({ projects, posts, materials = [], sessions, actions, c
   const scrollRafRef = useRef(0);
   const [atCaughtUp, setAtCaughtUp] = useState(false);
 
+  const beginBrowsing = () => {
+    // 只把真实的浏览意图当成“已经看到提示”：触控、滚轮或键盘翻页。
+    // 锚定恢复和自动进入新卡触发的程序化 scroll 不应提前吞掉提示。
+    setSequence((current) => clearFresh(current));
+  };
+
   const measurePages = (): FeedPageLayout[] => {
     const container = timelineRef.current;
     if (!container) return [];
@@ -253,7 +259,18 @@ export function FeedView({ projects, posts, materials = [], sessions, actions, c
 
   return (
     <div className="feed-stage">
-      <div ref={timelineRef} className="feed-timeline" aria-label="Agent Feed" onScroll={handleScroll}>
+      <div
+        ref={timelineRef}
+        className="feed-timeline"
+        aria-label="Agent Feed"
+        tabIndex={0}
+        onScroll={handleScroll}
+        onWheel={beginBrowsing}
+        onTouchStart={beginBrowsing}
+        onKeyDown={(event) => {
+          if (["ArrowDown", "ArrowUp", "PageDown", "PageUp", "Home", "End", " "].includes(event.key)) beginBrowsing();
+        }}
+      >
         {currentItems.map((item, index) => renderItem(item, false, index))}
         <section className="feed-page feed-finished-page" aria-label="当前 Feed 已看完" data-feed-key={CAUGHT_UP_KEY}>
           <div className="feed-finished-card">
@@ -271,7 +288,11 @@ export function FeedView({ projects, posts, materials = [], sessions, actions, c
         {visibleHistoryItems.map((item, index) => renderItem(item, true, index))}
       </div>
       {sequence.fresh.length > 0 && !atCaughtUp && (
-        <button className="feed-new-updates" onClick={() => scrollToKey(sequence.fresh[0]!)}>
+        <button className="feed-new-updates" onClick={() => {
+          const firstFresh = sequence.fresh[0];
+          setSequence((current) => clearFresh(current));
+          if (firstFresh) scrollToKey(firstFresh);
+        }}>
           有 {sequence.fresh.length} 条新更新
         </button>
       )}

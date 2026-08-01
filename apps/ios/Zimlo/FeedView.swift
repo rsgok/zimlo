@@ -144,6 +144,11 @@ private struct PostCard: View {
         guard let content = post.content, content.type != "text" else { return nil }
         return content
     }
+    private var immersiveMedia: FeedContent? {
+        guard let mediaContent, ["image_album", "video"].contains(mediaContent.type) else { return nil }
+        return mediaContent
+    }
+    private var isImmersiveMedia: Bool { immersiveMedia != nil }
     private var label: String {
         ["progress": "阶段成果", "decision": "新的判断", "attention": "需要关注", "result": "结果", "failure": "失败 / 风险"][post.kind] ?? "更新"
     }
@@ -160,25 +165,27 @@ private struct PostCard: View {
             }
             .foregroundStyle(ZColor.muted).padding(.top, 22)
 
-            Spacer(minLength: mediaContent == nil ? 28 : 12)
+            Spacer(minLength: mediaContent == nil ? 28 : isImmersiveMedia ? 120 : 12)
 
-            if let mediaContent {
+            if let mediaContent, !isImmersiveMedia {
                 FeedMaterialCard(model: model, content: mediaContent)
             }
 
-            TimelineView(.periodic(from: .now, by: 30)) { _ in
-                Text(relative(post.createdAt))
-                    .font(ZFont.footnote).foregroundStyle(ZColor.muted)
+            if !isImmersiveMedia {
+                TimelineView(.periodic(from: .now, by: 30)) { _ in
+                    Text(relative(post.createdAt))
+                        .font(ZFont.footnote).foregroundStyle(ZColor.muted)
+                }
             }
             Text(post.headline)
-                .font(mediaContent == nil ? ZFont.hero : ZFont.title)
+                .font(mediaContent == nil ? ZFont.hero : isImmersiveMedia ? ZFont.title : ZFont.title)
                 .lineSpacing(0)
-                .lineLimit(mediaContent == nil ? 3 : 1).minimumScaleFactor(0.82)
-                .padding(.top, mediaContent == nil ? 12 : 10)
+                .lineLimit(mediaContent == nil ? 3 : isImmersiveMedia ? 2 : 1).minimumScaleFactor(0.82)
+                .padding(.top, mediaContent == nil ? 12 : isImmersiveMedia ? 0 : 10)
             Text(post.takeaway)
                 .font(ZFont.body)
-                .foregroundStyle(ZColor.ink.opacity(0.7))
-                .lineLimit(mediaContent == nil ? 4 : 2).lineSpacing(mediaContent == nil ? 4 : 2)
+                .foregroundStyle(isImmersiveMedia ? Color.white.opacity(0.82) : ZColor.ink.opacity(0.7))
+                .lineLimit(mediaContent == nil ? 4 : isImmersiveMedia ? 3 : 2).lineSpacing(mediaContent == nil ? 4 : 2)
                 .padding(.top, mediaContent == nil ? 18 : 6)
             if mediaContent == nil, !post.highlights.isEmpty {
                 VStack(alignment: .leading, spacing: 10) {
@@ -191,9 +198,9 @@ private struct PostCard: View {
                 }.padding(.top, 18)
             }
 
-            Spacer(minLength: mediaContent == nil ? 22 : 8)
+            Spacer(minLength: mediaContent == nil ? 22 : isImmersiveMedia ? 10 : 8)
 
-            if mediaContent == nil || needsAction { VStack(alignment: .leading, spacing: 5) {
+            if !isImmersiveMedia && (mediaContent == nil || needsAction) { VStack(alignment: .leading, spacing: 5) {
                 Text("下一步").font(ZFont.caption2).foregroundStyle(ZColor.sageText)
                 Text(nextAction).font(ZFont.subheadline.weight(.bold)).lineLimit(2)
             }
@@ -261,11 +268,20 @@ private struct PostCard: View {
             .padding(.vertical, 16)
         }
         .padding(.horizontal, 20)
-        .foregroundStyle(ZColor.ink)
+        .foregroundStyle(isImmersiveMedia ? Color.white : ZColor.ink)
         .background(
             ZStack(alignment: .top) {
-                ZColor.paper
-                Rectangle().fill(needsAction ? ZColor.coral : Color.clear).frame(height: 9)
+                if let immersiveMedia {
+                    FeedMaterialCard(model: model, content: immersiveMedia, fullBleed: true)
+                    LinearGradient(
+                        colors: [.clear, .black.opacity(0.12), .black.opacity(0.9)],
+                        startPoint: .top,
+                        endPoint: .bottom
+                    )
+                } else {
+                    ZColor.paper
+                    Rectangle().fill(needsAction ? ZColor.coral : Color.clear).frame(height: 9)
+                }
             }
         )
         .clipShape(RoundedRectangle(cornerRadius: ZRadius.card, style: .continuous))

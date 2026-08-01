@@ -1,4 +1,4 @@
-import { memo, useEffect, useState } from "react";
+import { memo, useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import type { ClientCommand, FeedPost, Material, PendingAction, Project, Session, TaskReview } from "@zimlo/protocol";
 import { ActionPanel } from "./ActionPanel";
@@ -34,7 +34,7 @@ const LABELS: Record<FeedPost["kind"], string> = {
 };
 
 interface MediaPreview {
-  kind: "image" | "video" | "document";
+  kind: "document";
   url: string;
   name: string;
   mimeType: string;
@@ -173,34 +173,28 @@ function FeedMediaCard({ post, materials, onPreview }: { post: FeedPost; materia
       return material?.status === "ready" ? [material] : [];
     });
     return <div className="feed-image-album" aria-label={`图片组，共 ${values.length} 张`}>
-      {values.map((material) => <button
-        type="button"
+      {values.map((material) => <div
         className="feed-image-preview"
         key={material.id}
-        aria-label={`查看图片：${material.name}`}
-        onPointerDown={(event) => event.stopPropagation()}
-        onClick={() => onPreview({ kind: "image", url: src(material.id), name: material.name, mimeType: material.mimeType })}
-      ><img src={src(material.id)} alt={material.name} loading="lazy" /></button>)}
+      ><img src={src(material.id)} alt={material.name} loading="lazy" /></div>)}
       {values.length > 1 && <span>{values.length} 张</span>}
     </div>;
   }
   if (content.type === "video") {
     const material = byId.get(content.materialId);
     const poster = content.posterMaterialId ? byId.get(content.posterMaterialId) : undefined;
-    return material?.status === "ready" ? <div className="feed-video-shell">
-      <video className="feed-video" src={src(material.id)} poster={poster ? src(poster.id) : undefined} playsInline muted preload="metadata" />
-      <button
-        type="button"
-        className="feed-video-open"
-        onPointerDown={(event) => event.stopPropagation()}
-        onClick={() => onPreview({ kind: "video", url: src(material.id), name: material.name, mimeType: material.mimeType })}
-        aria-label={`播放视频：${material.name}`}
-      ><span aria-hidden="true">▶</span><strong>播放</strong></button>
-    </div> : <MissingMaterial />;
+    return material?.status === "ready" ? <InlineFeedVideo
+      src={src(material.id)}
+      poster={poster ? src(poster.id) : undefined}
+      name={material.name}
+    /> : <MissingMaterial />;
   }
   if (content.type === "document") {
     const material = byId.get(content.materialId);
     if (!material || material.status !== "ready") return <MissingMaterial />;
+    if (material.mimeType.startsWith("text/") || material.mimeType === "application/json") {
+      return <InlineDocumentReader material={material} url={src(material.id)} />;
+    }
     return <button
       type="button"
       className="feed-document"
@@ -217,36 +211,95 @@ function FeedMediaCard({ post, materials, onPreview }: { post: FeedPost; materia
   return null;
 }
 
-function FeedMediaViewer({ preview, onClose }: { preview: MediaPreview; onClose: () => void }) {
-  const [textContent, setTextContent] = useState<string | null>(null);
-  const [textError, setTextError] = useState(false);
-  const isText = preview.kind === "document"
-    && (preview.mimeType.startsWith("text/") || preview.mimeType === "application/json");
+function InlineFeedVideo({ src, poster, name }: { src: string; poster?: string | undefined; name: string }) {
+  const videoRef = useRef<HTMLVideoElement>(null);
+  const [paused, setPaused] = useState(true);
+
+  useEffect(() => {
+    const video = videoRef.current;
+    if (!video || typeof IntersectionObserver === "undefined") return;
+    const observer = new IntersectionObserver(([entry]) => {
+      if (entry?.isIntersecting && entry.intersectionRatio >= 0.72) {
+        void video.play().catch(() => setPaused(true));
+      } else {
+        video.pause();
+      }
+    }, { threshold: [0, 0.72] });
+    observer.observe(video);
+    return () => {
+      observer.disconnect();
+      video.pause();
+    };
+  }, [src]);
+
+  const toggle = () => {
+    const video = videoRef.current;
+    if (!video) return;
+    if (video.paused) void video.play().catch(() => setPaused(true));
+    else video.pause();
+  };
+
+  return <div className="feed-video-shell">
+    <video
+      ref={videoRef}
+      className="feed-video"
+      src={src}
+      poster={poster}
+      playsInline
+      muted
+      loop
+      preload="metadata"
+      onPlay={() => setPaused(false)}
+      onPause={() => setPaused(true)}
+    />
+    <button
+      type="button"
+      className={`feed-video-toggle ${paused ? "is-paused" : ""}`}
+      onPointerDown={(event) => event.stopPropagation()}
+      onClick={toggle}
+      aria-label={`${paused ? "播放" : "暂停"}视频：${name}`}
+    >{paused && <span aria-hidden="true">▶</span>}</button>
+  </div>;
+}
+
+function InlineDocumentReader({ material, url }: { material: Material; url: string }) {
+  const [content, setContent] = useState<string | null>(null);
+  const [failed, setFailed] = useState(false);
 
   useEffect(() => {
     const controller = new AbortController();
-    if (isText) {
-      setTextContent(null);
-      setTextError(false);
-      fetch(preview.url, { signal: controller.signal })
-        .then((response) => {
-          if (!response.ok) throw new Error(`HTTP ${response.status}`);
-          return response.text();
-        })
-        .then(setTextContent)
-        .catch((error: unknown) => {
-          if (!(error instanceof DOMException && error.name === "AbortError")) setTextError(true);
-        });
-    }
+    setContent(null);
+    setFailed(false);
+    fetch(url, { signal: controller.signal })
+      .then((response) => {
+        if (!response.ok) throw new Error(`HTTP ${response.status}`);
+        return response.text();
+      })
+      .then(setContent)
+      .catch((error: unknown) => {
+        if (!(error instanceof DOMException && error.name === "AbortError")) setFailed(true);
+      });
+    return () => controller.abort();
+  }, [url]);
+
+  return <article className="feed-document-reader" aria-label={`阅读 ${material.name}`}>
+    <header><span>文档</span><strong>{material.name}</strong></header>
+    <div className="feed-document-reader-scroll" tabIndex={0}>
+      {content !== null && <FormattedText text={content} />}
+      {content === null && !failed && <div className="feed-material-state">正在读取…</div>}
+      {failed && <div className="feed-material-state">读取失败，连接恢复后重试</div>}
+    </div>
+  </article>;
+}
+
+function FeedMediaViewer({ preview, onClose }: { preview: MediaPreview; onClose: () => void }) {
+  useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.key === "Escape") onClose();
     };
     window.addEventListener("keydown", onKeyDown);
-    return () => {
-      controller.abort();
-      window.removeEventListener("keydown", onKeyDown);
-    };
-  }, [isText, onClose, preview.url]);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [onClose]);
 
   return createPortal(
     <div className="feed-media-viewer" role="dialog" aria-modal="true" aria-label={`预览 ${preview.name}`} onMouseDown={(event) => {
@@ -255,12 +308,7 @@ function FeedMediaViewer({ preview, onClose }: { preview: MediaPreview; onClose:
       <div className="feed-media-viewer-panel">
         <header><strong>{preview.name}</strong><button type="button" onClick={onClose} aria-label="关闭预览">×</button></header>
         <div className="feed-media-viewer-content">
-          {preview.kind === "image" && <img src={preview.url} alt={preview.name} />}
-          {preview.kind === "video" && <video src={preview.url} controls autoPlay playsInline />}
-          {preview.kind === "document" && !isText && <iframe src={preview.url} title={preview.name} />}
-          {isText && textContent !== null && <pre>{textContent}</pre>}
-          {isText && textContent === null && !textError && <div className="feed-media-viewer-state">正在读取…</div>}
-          {isText && textError && <div className="feed-media-viewer-state">预览失败，请关闭后重试</div>}
+          <iframe src={preview.url} title={preview.name} />
         </div>
       </div>
     </div>,
