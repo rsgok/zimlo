@@ -21,25 +21,25 @@ export async function generateMetadata(): Promise<Metadata> {
 
   return {
     metadataBase,
-    title: "Zimlo — The edited feed for your AI work",
+    title: "Zimlo — Leave your Mac. Stay in the loop.",
     description:
-      "Zimlo turns Codex and Claude Code activity into a calm, swipeable feed of the conclusions, decisions, and results that matter.",
+      "Bring Codex and Claude Code work from every Mac into one Feed. Review conclusions, images, video, and files, then act in seconds.",
     icons: {
       icon: "/favicon.svg",
       shortcut: "/favicon.svg",
       apple: "/apple-touch-icon.png",
     },
     openGraph: {
-      title: "Zimlo — Your AI work, edited down to what matters",
-      description: "Browse important agent work one card at a time. Approve, reply, or keep scrolling.",
+      title: "Zimlo — Leave your Mac. Stay in the loop.",
+      description: "One Feed for Codex and Claude Code across every Mac—including images, video, files, approvals, and results.",
       type: "website",
       locale: "en_US",
-      images: [{ url: "/og.png", width: 1200, height: 630, alt: "Zimlo — Your AI work, edited down to what matters" }],
+      images: [{ url: "/og.png", width: 1200, height: 630, alt: "Zimlo — Leave your Mac. Stay in the loop." }],
     },
     twitter: {
       card: "summary_large_image",
-      title: "Zimlo — Your AI work, edited down to what matters",
-      description: "Browse important agent work one card at a time. Approve, reply, or keep scrolling.",
+      title: "Zimlo — Leave your Mac. Stay in the loop.",
+      description: "One Feed for Codex and Claude Code across every Mac—including images, video, files, approvals, and results.",
       images: ["/og.png"],
     },
   };

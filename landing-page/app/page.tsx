@@ -9,19 +9,25 @@ const features = [
     index: "01",
     label: "EDITORIAL FEED",
     title: "See the signal. Lose the transcript.",
-    body: "Zimlo edits agent activity into the few conclusions, decisions, and results that can change what you do next.",
+    body: "Agents write the few conclusions, decisions, and results that can change what you do next. Zimlo leaves routine activity out.",
   },
   {
     index: "02",
-    label: "SWIPE TO COLLABORATE",
-    title: "Browse like TikTok. Respond like X.",
-    body: "One focused card at a time. Swipe through important work, open the thread, approve, reply, or request a revision in seconds.",
+    label: "RICH OUTPUTS",
+    title: "Review the work, not just a text summary.",
+    body: "Images, video, and files arrive as first-class results in the Feed, ready to preview from the task that produced them.",
   },
   {
     index: "03",
-    label: "QUIET BY DESIGN",
-    title: "Your phone speaks only when you are needed.",
-    body: "Approvals, failures, and results to review make the cut. Progress logs, heartbeats, and routine tool calls stay silent.",
+    label: "MULTI-MAC SOURCES",
+    title: "Every machine. Every agent. One view.",
+    body: "Bring Codex and Claude Code work from multiple Macs into one Feed while keeping its source machine, project, and task clear.",
+  },
+  {
+    index: "04",
+    label: "RELIABLE BY DESIGN",
+    title: "Weak networks do not get the final word.",
+    body: "Draft recovery, a persistent outbox, idempotent sends, and reconnect queues keep mobile commands from disappearing or running twice.",
   },
 ];
 
@@ -32,12 +38,12 @@ const demoCards = [
     agent: "CODEX",
     time: "2 MIN AGO",
     index: "01",
-    title: "PR #128 is ready to merge",
+    title: "The release candidate is ready to review",
     lines: [
       "43 tests passed · 0 unresolved review threads",
       "Retry logic extracted into a shared helper · +212 −148",
     ],
-    actions: ["Review diff", "Merge"],
+    next: "Open the task to review the proof or continue the conversation.",
   },
   {
     tone: "approval",
@@ -45,12 +51,12 @@ const demoCards = [
     agent: "CLAUDE CODE",
     time: "JUST NOW",
     index: "02",
-    title: "Approve a low-risk command?",
+    title: "Approve this push once?",
     lines: [
       "git push origin feat/retry-logic — first push of this branch",
-      "Runs on your Mac · nothing leaves the machine",
+      "Target: current project · Risk: creates an external change",
     ],
-    actions: ["Approve", "Decline"],
+    next: "Review the scope and risk, then approve or decline explicitly.",
   },
   {
     tone: "failure",
@@ -63,14 +69,14 @@ const demoCards = [
       "2 of 41 tests failing · src/auth/session.test.ts",
       "A fix is already drafted and waiting for your review",
     ],
-    actions: ["Review fix", "Reply"],
+    next: "Open the task to inspect the failure and decide whether to retry.",
   },
 ];
 
 const setupSteps = [
   ["Download Zimlo", "Open it once. From then on, it stays quietly in your menu bar."],
-  ["Connect your agents", "Zimlo finds Codex and Claude Code, and changes nothing until you approve."],
-  ["Scan one QR code", "Your iPhone and Mac do not need to be on the same Wi-Fi network."],
+  ["Connect your Macs and agents", "Add Codex and Claude Code sources from every Mac you use. Each one stays independently scoped."],
+  ["Scan to pair", "Pair each Mac with your iPhone. They do not need to share the same Wi-Fi network."],
   ["Start with real value", "Your first meaningful card—not another settings screen—completes onboarding."],
 ];
 
@@ -98,6 +104,7 @@ export default async function Home() {
         </a>
         <nav aria-label="Primary navigation">
           <a href="#product">Product</a>
+          <a href="#capabilities">Capabilities</a>
           <a href="#demo">Demo</a>
           <a href="#privacy">Privacy</a>
           <a href="#setup">Get started</a>
@@ -111,16 +118,16 @@ export default async function Home() {
         <div className="hero-copy">
           <div className="eyebrow">
             <span className="live-dot" />
-            THE EDITED FEED FOR YOUR AI WORK
+            THE MOBILE ATTENTION LAYER FOR AI WORK
           </div>
           <h1>
-            Your AI work,
+            Leave your Mac.
             <br />
-            <span>edited down to what matters.</span>
+            <span>Stay in the loop.</span>
           </h1>
           <p className="hero-lede">
-            Zimlo turns Codex and Claude Code activity into a calm, swipeable feed.
-            See one meaningful update at a time—then approve, reply, or keep scrolling.
+            Zimlo brings Codex and Claude Code work from every Mac into one calm, swipeable Feed.
+            Review conclusions, images, video, and files—then act in seconds and get back to your day.
           </p>
           {waitlistLive ? (
             <WaitlistForm source="hero" tone="dark" />
@@ -135,8 +142,8 @@ export default async function Home() {
             </div>
           )}
           <div className="hero-trust">
-            <span>No logs to babysit</span>
-            <span>One card at a time</span>
+            <span>Images, video, and files</span>
+            <span>Every Mac, one Feed</span>
             <span>End-to-end encrypted</span>
           </div>
         </div>
@@ -188,8 +195,8 @@ export default async function Home() {
           </figure>
           <div className="attention-principle">
             <span className="principle-number">01</span>
-            <h3>Scroll through work the way you already browse everything else.</h3>
-            <p>Each card has a conclusion and a clear next move. Open its thread for context, respond in place, or swipe on. Finished work quietly becomes history.</p>
+            <h3>Scroll through work. Open only what deserves your attention.</h3>
+            <p>Each card starts with a conclusion and a clear next move. Open its task for the original input, current state, proof, and conversation—or swipe on. Finished work quietly becomes history.</p>
             <div className="principle-line" />
             <span className="principle-caption">TIKTOK CLARITY · X-SPEED COLLABORATION</span>
           </div>
@@ -210,11 +217,81 @@ export default async function Home() {
         </div>
       </section>
 
+      <section className="capabilities-section" id="capabilities">
+        <div className="capabilities-intro">
+          <span className="section-kicker">RICH OUTPUTS · MANY SOURCES</span>
+          <h2>AI work is more than text.<br />And it does not live on one machine.</h2>
+          <p>
+            Zimlo keeps the result and its origin together. Preview what an agent made, see which Mac and project it came from,
+            and continue on the right task without reconstructing the context.
+          </p>
+        </div>
+
+        <div className="capability-grid">
+          <article className="capability-panel capability-panel--media">
+            <div className="capability-panel-heading">
+              <span>01 / MULTIMODAL RESULTS</span>
+              <h3>See the output in the Feed.</h3>
+              <p>Images open as albums, videos keep their poster and playback context, and files arrive with a useful preview or summary.</p>
+            </div>
+            <div className="media-preview" aria-label="Examples of image, video, and file results in Zimlo">
+              <div className="media-preview-card media-preview-card--image">
+                <div className="media-preview-topline"><span>IMAGE</span><span>4 ASSETS</span></div>
+                <div className="image-preview-art" aria-hidden="true"><i /><i /><i /></div>
+                <strong>Launch visuals are ready</strong>
+                <small>Open the task to review all four images.</small>
+              </div>
+              <div className="media-preview-card media-preview-card--video">
+                <div className="media-preview-topline"><span>VIDEO</span><span>01:24</span></div>
+                <div className="video-preview-art" aria-hidden="true"><span>▶</span></div>
+                <strong>Product walkthrough exported</strong>
+                <small>Poster, playback, and source task stay together.</small>
+              </div>
+              <div className="file-preview-list">
+                <div><span className="file-type">PDF</span><strong>Research brief.pdf</strong><small>2.4 MB</small></div>
+                <div><span className="file-type">ZIP</span><strong>Release assets.zip</strong><small>18.7 MB</small></div>
+              </div>
+            </div>
+          </article>
+
+          <article className="capability-panel capability-panel--sources">
+            <div className="capability-panel-heading">
+              <span>02 / MULTI-MACHINE SOURCES</span>
+              <h3>One phone for every Agent workspace.</h3>
+              <p>Pair multiple Macs and Zimlo merges their work into one attention layer without losing source identity or routing.</p>
+            </div>
+            <div className="source-map" aria-label="Multiple Macs and coding agents connected to one Zimlo Feed">
+              <div className="source-machine source-machine--one">
+                <span className="source-status">ONLINE</span>
+                <strong>MACBOOK PRO</strong>
+                <small>Codex · zimlo</small>
+              </div>
+              <div className="source-machine source-machine--two">
+                <span className="source-status">ONLINE</span>
+                <strong>MAC STUDIO</strong>
+                <small>Claude Code · api</small>
+              </div>
+              <div className="source-machine source-machine--three">
+                <span className="source-status source-status--cached">CACHED</span>
+                <strong>WORK MAC</strong>
+                <small>Codex · client-app</small>
+              </div>
+              <div className="source-lines" aria-hidden="true"><i /><i /><i /></div>
+              <div className="source-destination">
+                <BrandMark small />
+                <span>ONE MOBILE FEED</span>
+                <strong>Correct source.<br />Correct task.<br />Correct next move.</strong>
+              </div>
+            </div>
+          </article>
+        </div>
+      </section>
+
       <section className="demo-section" id="demo">
         <div className="section-intro">
           <span className="section-kicker">WHAT THE FEED ACTUALLY SAYS</span>
           <h2>Real cards.<br />Real next moves.</h2>
-          <p>Not screenshots of a terminal—three kinds of cards Zimlo pushes to your phone: a result to review, an approval to sign off, and a failure with a fix already attached.</p>
+          <p>Not screenshots of a terminal—three kinds of moments Zimlo brings into your Feed: a result to review, an approval to sign off, and a failure that changes the plan.</p>
         </div>
 
         <div className="demo-card-grid">
@@ -231,9 +308,9 @@ export default async function Home() {
                   <li key={line}>{line}</li>
                 ))}
               </ul>
-              <div className="demo-card-actions">
-                <span className="demo-card-action demo-card-action--primary">{card.actions[0]}</span>
-                <span className="demo-card-action">{card.actions[1]}</span>
+              <div className="demo-card-next">
+                <span>NEXT</span>
+                <strong>{card.next}</strong>
                 <span className="demo-card-index" aria-hidden="true">{card.index} / 03</span>
               </div>
             </article>
@@ -244,10 +321,10 @@ export default async function Home() {
       <section className="privacy-section" id="privacy">
         <div className="privacy-copy">
           <span className="section-kicker section-kicker--light">LOCAL SOURCE OF TRUTH</span>
-          <h2>The cloud connects.<br /><em>Your Mac remembers.</em></h2>
+          <h2>The cloud connects.<br /><em>Your Macs stay in control.</em></h2>
           <p>
-            Task text, code, and results never enter Zimlo Cloud. When your Mac is online, Cloudflare relays an
-            already encrypted connection. When it is offline, your phone shows its local cache and queues actions for reconnect.
+            Task content reaches Zimlo Cloud only as end-to-end encrypted data it cannot read. Each Mac stays a local source of truth;
+            when one is temporarily offline, your phone keeps its scoped cache and queues actions for that source to reconnect.
           </p>
           <div className="privacy-badges">
             <span>NO CODE STORAGE</span>
@@ -256,11 +333,11 @@ export default async function Home() {
           </div>
         </div>
 
-        <div className="connection-diagram" aria-label="Connection between your Mac, encrypted relay, and iPhone">
+        <div className="connection-diagram" aria-label="Connection between your Macs, encrypted relay, and iPhone">
           <div className="diagram-node diagram-node--mac">
-            <span className="node-icon">⌘</span>
-            <strong>YOUR MAC</strong>
-            <small>Source of truth</small>
+            <span className="node-icon">⌘×N</span>
+            <strong>YOUR MACS</strong>
+            <small>Independent sources of truth</small>
           </div>
           <div className="diagram-link">
             <span className="packet packet--one">◆</span>
@@ -281,7 +358,7 @@ export default async function Home() {
         <div className="section-intro setup-intro">
           <span className="section-kicker">ZERO COMMAND ONBOARDING</span>
           <h2>Download. Open. Scan.<br />No bridge to understand.</h2>
-          <p>You should never have to run `zimlo start`. Zimlo lives in the menu bar and explains each permission only when it matters.</p>
+          <p>No terminal setup for ordinary use. Zimlo lives in the menu bar and explains each permission only when it matters.</p>
         </div>
         <div className="setup-grid">
           {setupSteps.map(([title, body], index) => (
@@ -299,8 +376,8 @@ export default async function Home() {
       <section className="beta-section" id="beta">
         <div className="beta-orb"><BrandMark /></div>
         <span className="section-kicker">MACOS BETA</span>
-        <h2>Follow the work.<br />Skip the noise.</h2>
-        <p>The macOS menu bar app and iPhone companion are opening to the first group of users.</p>
+        <h2>Leave your Mac.<br />Stay in the loop.</h2>
+        <p>The macOS menu bar app and iPhone companion are opening to the first group of Codex and Claude Code users.</p>
         {waitlistLive ? (
           <WaitlistForm source="beta" tone="acid" />
         ) : (
@@ -313,7 +390,7 @@ export default async function Home() {
           <BrandMark small />
           <span>ZIMLO</span>
         </a>
-        <p>The edited feed for your AI work.</p>
+        <p>The mobile attention layer for your AI work.</p>
         <nav aria-label="Footer navigation">
           <a href="https://github.com/rsgok/zimlo" rel="noopener noreferrer">GitHub</a>
           <a href="/privacy">Privacy policy</a>

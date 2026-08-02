@@ -33,17 +33,39 @@ test("server-renders the finished Zimlo landing page", async () => {
   assert.match(response.headers.get("content-type") ?? "", /^text\/html\b/i);
 
   const html = await response.text();
-  assert.match(html, /<title>Zimlo — The edited feed for your AI work<\/title>/i);
-  assert.match(html, /Your AI work/);
-  assert.match(html, /edited down to what matters/);
-  assert.match(html, /Browse like TikTok/);
-  assert.match(html, /Respond like X/);
+  assert.match(html, /<title>Zimlo — Leave your Mac\. Stay in the loop\.<\/title>/i);
+  assert.match(html, /Leave your Mac/);
+  assert.match(html, /Stay in the loop/);
+  assert.match(html, /Know what needs attention/);
+  assert.match(html, /Approve, reply, or review/);
+  assert.match(html, /Brief a new task/);
+  assert.match(html, /Weak networks do not get the final word/);
+  assert.match(html, /Images, video, and files/);
+  assert.match(html, /Every Mac, one Feed/);
+  assert.match(html, /MULTIMODAL RESULTS/);
+  assert.match(html, /MULTI-MACHINE SOURCES/);
+  assert.match(html, /MACBOOK PRO/);
+  assert.match(html, /MAC STUDIO/);
+  assert.match(html, /WORK MAC/);
   assert.match(html, /zimlo-feed-mobile-en\.png/);
   assert.match(html, /zimlo-feed-desktop-en\.png/);
   assert.match(html, /End-to-end encrypted/);
   assert.match(html, /ZERO COMMAND ONBOARDING/);
   assert.match(html, /Signed Mac download and iPhone TestFlight access will appear here/);
   assert.doesNotMatch(html, /codex-preview|react-loading-skeleton|Your site is taking shape/i);
+});
+
+test("homepage presents rich outputs and multiple machine sources as first-class capabilities", async () => {
+  const worker = await loadWorker();
+  const html = await (await render(worker, "/")).text();
+  assert.match(html, /id="capabilities"/);
+  assert.match(html, /IMAGE/);
+  assert.match(html, /VIDEO/);
+  assert.match(html, /Research brief\.pdf/);
+  assert.match(html, /Release assets\.zip/);
+  assert.match(html, /One phone for every Agent workspace/);
+  assert.match(html, /Correct source/);
+  assert.match(html, /Your Macs stay in control/);
 });
 
 test("hero mocks use neutral labels, not PRODUCT MOCK stamps", async () => {
@@ -71,10 +93,10 @@ test("homepage has a #demo section with real scenario cards", async () => {
   assert.match(html, /id="demo"/);
   assert.match(html, /Real cards/);
   // Result card
-  assert.match(html, /PR #128 is ready to merge/);
+  assert.match(html, /The release candidate is ready to review/);
   assert.match(html, /43 tests passed · 0 unresolved review threads/);
   // Approval card
-  assert.match(html, /Approve a low-risk command\?/);
+  assert.match(html, /Approve this push once\?/);
   // Failure card
   assert.match(html, /Tests failed in the auth flow/);
   assert.match(html, /src\/auth\/session\.test\.ts/);
