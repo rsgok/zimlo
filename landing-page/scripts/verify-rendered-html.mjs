@@ -36,22 +36,22 @@ test("server-renders the finished Zimlo landing page", async () => {
   assert.match(html, /<title>Zimlo — Leave your Mac\. Stay in the loop\.<\/title>/i);
   assert.match(html, /Leave your Mac/);
   assert.match(html, /Stay in the loop/);
-  assert.match(html, /Know what needs attention/);
-  assert.match(html, /Approve, reply, or review/);
-  assert.match(html, /Brief a new task/);
-  assert.match(html, /Weak networks do not get the final word/);
-  assert.match(html, /Images, video, and files/);
-  assert.match(html, /Every Mac, one Feed/);
-  assert.match(html, /MULTIMODAL RESULTS/);
-  assert.match(html, /MULTI-MACHINE SOURCES/);
+  assert.match(html, /What needs you now/);
+  assert.match(html, /Approve · Reply/);
+  assert.match(html, /Review · Brief/);
+  assert.match(html, /reliable reconnect queue/);
+  assert.match(html, /IMAGES · VIDEO · FILES/);
+  assert.match(html, /EVERY MAC · ONE FEED/);
+  assert.match(html, /RICH OUTPUTS/);
+  assert.match(html, /MULTI-MAC ROUTING/);
   assert.match(html, /MACBOOK PRO/);
   assert.match(html, /MAC STUDIO/);
   assert.match(html, /WORK MAC/);
-  assert.match(html, /zimlo-feed-mobile-en\.png/);
-  assert.match(html, /zimlo-feed-desktop-en\.png/);
-  assert.match(html, /End-to-end encrypted/);
-  assert.match(html, /ZERO COMMAND ONBOARDING/);
+  assert.match(html, /3 SOURCES LIVE/);
+  assert.match(html, /END-TO-END ENCRYPTED/);
+  assert.match(html, /ZERO-COMMAND ONBOARDING/);
   assert.match(html, /Signed Mac download and iPhone TestFlight access will appear here/);
+  assert.doesNotMatch(html, /zimlo-feed-(?:mobile|desktop)-en\.png/);
   assert.doesNotMatch(html, /codex-preview|react-loading-skeleton|Your site is taking shape/i);
 });
 
@@ -59,21 +59,21 @@ test("homepage presents rich outputs and multiple machine sources as first-class
   const worker = await loadWorker();
   const html = await (await render(worker, "/")).text();
   assert.match(html, /id="capabilities"/);
-  assert.match(html, /IMAGE/);
-  assert.match(html, /VIDEO/);
-  assert.match(html, /Research brief\.pdf/);
-  assert.match(html, /Release assets\.zip/);
-  assert.match(html, /One phone for every Agent workspace/);
-  assert.match(html, /Correct source/);
-  assert.match(html, /Your Macs stay in control/);
+  assert.match(html, /Images/);
+  assert.match(html, /Video/);
+  assert.match(html, /Files/);
+  assert.match(html, /The feed edits itself/);
+  assert.match(html, /Review what the agent actually made/);
+  assert.match(html, /Every source stays correctly scoped/);
+  assert.match(html, /Pair every Mac you use/);
 });
 
-test("hero mocks use neutral labels, not PRODUCT MOCK stamps", async () => {
+test("hero includes a live product system rather than stale screenshot mocks", async () => {
   const worker = await loadWorker();
   const html = await (await render(worker, "/")).text();
-  assert.match(html, /393 × 852 · ONE CARD AT A TIME/);
-  assert.match(html, /ENGLISH FEED PREVIEW/);
-  assert.match(html, /ENCRYPTED · LOCAL FIRST/);
+  assert.match(html, /ZIMLO · LIVE FEED/);
+  assert.match(html, /A rotating preview of Zimlo Feed cards/);
+  assert.match(html, /LIVE PRODUCT SYSTEM · NO REMOTE SHELL/);
   assert.doesNotMatch(html, /PRODUCT[- ]ACCURATE MOCK|PRODUCT MOCK/);
 });
 
@@ -87,22 +87,19 @@ test("beta area tolerates every release state (loading/closed/error/ready)", asy
   );
 });
 
-test("homepage has a #demo section with real scenario cards", async () => {
+test("homepage has a #demo section with focused attention cards", async () => {
   const worker = await loadWorker();
   const html = await (await render(worker, "/")).text();
   assert.match(html, /id="demo"/);
-  assert.match(html, /Real cards/);
+  assert.match(html, /REAL MOMENTS · CLEAR NEXT MOVES/);
   // Result card
-  assert.match(html, /The release candidate is ready to review/);
-  assert.match(html, /43 tests passed · 0 unresolved review threads/);
+  assert.match(html, /The release candidate is ready/);
+  assert.match(html, /Review the proof/);
   // Approval card
-  assert.match(html, /Approve this push once\?/);
-  // Failure card
-  assert.match(html, /Tests failed in the auth flow/);
-  assert.match(html, /src\/auth\/session\.test\.ts/);
-  // Hero "See how it works" and the beta section both route to #demo
-  assert.match(html, /See how it works<\/a>/);
-  assert.ok((html.match(/href="#demo"/g) ?? []).length >= 2, "expected >=2 links to #demo");
+  assert.match(html, /A production push needs you/);
+  assert.match(html, /Review and decide/);
+  // Primary navigation routes to the live examples.
+  assert.ok((html.match(/href="#demo"/g) ?? []).length >= 1, "expected a link to #demo");
 });
 
 test("footer links to GitHub and the privacy policy", async () => {
@@ -110,7 +107,7 @@ test("footer links to GitHub and the privacy policy", async () => {
   const html = await (await render(worker, "/")).text();
   assert.match(html, /href="https:\/\/github\.com\/rsgok\/zimlo"/);
   assert.match(html, /href="\/privacy"/);
-  assert.match(html, /Privacy policy/);
+  assert.match(html, />Privacy<\/a>/);
 });
 
 test("Geist font variables reach the rendered page", async () => {
