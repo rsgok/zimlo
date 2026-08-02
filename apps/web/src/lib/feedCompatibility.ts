@@ -52,6 +52,7 @@ export function normalizeFeedPost(value: unknown): FeedPost | null {
     : [];
   return {
     id,
+    ...(typeof post.hostId === "string" ? { hostId: post.hostId } : {}),
     projectId: typeof post.projectId === "string" ? post.projectId : null,
     taskId: text(post.taskId, id),
     runId: text(post.runId, id),
@@ -76,6 +77,7 @@ export function normalizeSnapshot(value: Snapshot): Snapshot {
     ? snapshot.userProfile!.avatarId
     : USER_AVATAR_IDS[0];
   return {
+    ...(snapshot.host ? { host: snapshot.host } : {}),
     userProfile: {
       avatarId,
       updatedAt: snapshot.userProfile?.updatedAt ?? "",

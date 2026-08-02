@@ -1,5 +1,7 @@
 import { EventEmitter } from "node:events";
-import type { FeatureCapabilities, FeedPost, PendingAction, ServerMessage, Session, TaskCommand, TaskRecord, TrustedWorkspace, UnifiedEvent } from "@zimlo/protocol";
+import os from "node:os";
+import type { FeatureCapabilities, FeedPost, Host, PendingAction, ServerMessage, Session, TaskCommand, TaskRecord, TrustedWorkspace, UnifiedEvent } from "@zimlo/protocol";
+import { uuidV7 } from "@zimlo/adapters";
 import { projectNameForCwd } from "./project-context.js";
 import { sanitizeEventPayload } from "./sanitization.js";
 import { ZimloStore } from "./store.js";
@@ -9,6 +11,7 @@ import type { CloudService } from "./cloud-service.js";
 
 export class RuntimeHub extends EventEmitter {
   readonly store: ZimloStore;
+  readonly host: Host;
   private readonly push: PushService;
   private readonly cloud: CloudService | undefined;
   lanApprovalsEnabled: boolean;
@@ -16,6 +19,16 @@ export class RuntimeHub extends EventEmitter {
   constructor(store: ZimloStore, cloud?: CloudService) {
     super();
     this.store = store;
+    const existingHostId = store.getMetadata("host_identity_v1");
+    const hostId = existingHostId || `host_${uuidV7()}`;
+    if (!existingHostId) store.setMetadata("host_identity_v1", hostId);
+    const configuredName = process.env.ZIMLO_HOST_NAME?.trim();
+    this.host = {
+      id: hostId,
+      name: (configuredName || os.hostname() || "Mac").slice(0, 120),
+      platform: "macos",
+      lastSeenAt: new Date().toISOString(),
+    };
     this.cloud = cloud;
     this.push = new PushService(store, cloud ?? {
       enabled: false,
@@ -132,6 +145,7 @@ export class RuntimeHub extends EventEmitter {
       .filter((project) => project.primaryPath)
       .map((project) => ({
         id: project.id,
+        hostId: this.host.id,
         label: project.name,
         path: project.primaryPath,
         providers: project.providers,
@@ -143,8 +157,18 @@ export class RuntimeHub extends EventEmitter {
     const snapshot = this.store.snapshot(this.lanApprovalsEnabled, deviceId, this.workspaces());
     return {
       ...snapshot,
+      host: { ...this.host, lastSeenAt: new Date().toISOString() },
       features: this.features(),
-      sessions: snapshot.sessions.map((session) => this.withProject(session)),
+      projects: snapshot.projects.map((project) => ({ ...project, hostId: this.host.id })),
+      sessions: snapshot.sessions.map((session) => ({ ...this.withProject(session), hostId: this.host.id })),
+      posts: snapshot.posts.map((post) => ({ ...post, hostId: this.host.id })),
+      materials: snapshot.materials.map((material) => ({ ...material, hostId: this.host.id })),
+      tasks: snapshot.tasks.map((task) => ({ ...task, hostId: this.host.id })),
+      commands: snapshot.commands.map((command) => ({ ...command, hostId: this.host.id })),
+      actions: snapshot.actions.map((action) => ({ ...action, hostId: this.host.id })),
+      taskPreferences: snapshot.taskPreferences.map((preference) => ({ ...preference, hostId: this.host.id })),
+      trustPolicies: snapshot.trustPolicies.map((policy) => ({ ...policy, hostId: this.host.id })),
+      trustAudit: snapshot.trustAudit.map((entry) => ({ ...entry, hostId: this.host.id })),
     };
   }
 
@@ -153,6 +177,7 @@ export class RuntimeHub extends EventEmitter {
       projectTrustPolicy: true,
       pushNotifications: this.cloud?.pushNotificationsAvailable === true,
       remoteSync: this.cloud?.enabled === true,
+      multiHost: true,
     };
   }
 

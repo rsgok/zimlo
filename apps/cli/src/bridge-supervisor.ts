@@ -3,6 +3,7 @@ import { mkdir } from "node:fs/promises";
 import { createConnection, type NetConnectOpts } from "node:net";
 import { dirname } from "node:path";
 import { spawn } from "node:child_process";
+import { ZIMLO_PROTOCOL_VERSION } from "./version.js";
 
 export interface BridgeSupervisorOptions {
   entrypoint: string;
@@ -67,7 +68,7 @@ export async function bridgeProtocolVersion(socketPath: string | NetConnectOpts,
 export async function ensureBridgeRunning(options: BridgeSupervisorOptions): Promise<boolean> {
   if (await isBridgeSocketReachable(options.socketPath)) {
     const protocolVersion = await bridgeProtocolVersion(options.socketPath);
-    if (protocolVersion === 3) return true;
+    if (protocolVersion === ZIMLO_PROTOCOL_VERSION) return true;
     throw new Error("Zimlo Bridge 版本过旧，请运行 zimlo stop 停止旧进程后重试。");
   }
 

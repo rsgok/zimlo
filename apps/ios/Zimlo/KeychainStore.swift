@@ -2,11 +2,40 @@ import Foundation
 import Security
 
 struct DeviceCredentials: Codable, Hashable {
+    var host: ZimloHost
     var bridgeURL: URL
     var deviceId: String
     var deviceKey: String
     var remoteRelayURL: URL?
     var remoteAccessToken: String?
+
+    private enum CodingKeys: String, CodingKey {
+        case host, bridgeURL, deviceId, deviceKey, remoteRelayURL, remoteAccessToken
+    }
+
+    init(host: ZimloHost, bridgeURL: URL, deviceId: String, deviceKey: String, remoteRelayURL: URL?, remoteAccessToken: String?) {
+        self.host = host
+        self.bridgeURL = bridgeURL
+        self.deviceId = deviceId
+        self.deviceKey = deviceKey
+        self.remoteRelayURL = remoteRelayURL
+        self.remoteAccessToken = remoteAccessToken
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        bridgeURL = try container.decode(URL.self, forKey: .bridgeURL)
+        deviceId = try container.decode(String.self, forKey: .deviceId)
+        deviceKey = try container.decode(String.self, forKey: .deviceKey)
+        remoteRelayURL = try container.decodeIfPresent(URL.self, forKey: .remoteRelayURL)
+        remoteAccessToken = try container.decodeIfPresent(String.self, forKey: .remoteAccessToken)
+        host = try container.decodeIfPresent(ZimloHost.self, forKey: .host) ?? ZimloHost(
+            id: "legacy_\(deviceId)",
+            name: bridgeURL.host ?? "Mac",
+            platform: "macos",
+            lastSeenAt: ""
+        )
+    }
 }
 
 enum KeychainStore {
@@ -17,6 +46,10 @@ enum KeychainStore {
     }
 
     static func load() -> DeviceCredentials? {
+        loadAll().first
+    }
+
+    static func loadAll() -> [DeviceCredentials] {
         let query: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: service,
@@ -26,12 +59,25 @@ enum KeychainStore {
         ]
         var item: CFTypeRef?
         guard SecItemCopyMatching(query as CFDictionary, &item) == errSecSuccess,
-              let data = item as? Data else { return nil }
-        return try? JSONDecoder().decode(DeviceCredentials.self, from: data)
+              let data = item as? Data else { return [] }
+        if let values = try? JSONDecoder().decode([DeviceCredentials].self, from: data) { return values }
+        if let legacy = try? JSONDecoder().decode(DeviceCredentials.self, from: data) { return [legacy] }
+        return []
     }
 
     static func save(_ credentials: DeviceCredentials) throws {
-        let data = try JSONEncoder().encode(credentials)
+        var values = loadAll()
+        values.removeAll { $0.host.id == credentials.host.id }
+        values.insert(credentials, at: 0)
+        try saveAll(values)
+    }
+
+    static func remove(hostId: String) throws {
+        try saveAll(loadAll().filter { $0.host.id != hostId })
+    }
+
+    private static func saveAll(_ values: [DeviceCredentials]) throws {
+        let data = try JSONEncoder().encode(values)
         let base: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: service,

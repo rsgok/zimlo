@@ -195,8 +195,11 @@ export function App() {
               notificationEnabled={bridge.snapshot.features.pushNotifications}
               connected={bridge.connected}
               connectionMode={bridge.connectionMode}
+              hosts={bridge.hosts}
               send={send}
               forgetDevice={bridge.forgetDevice}
+              pairAdditionalHost={bridge.pairAdditionalHost}
+              forgetHost={bridge.forgetHost}
             />
           )}
         </div>

@@ -50,8 +50,8 @@ final class HealthCheckTests: XCTestCase {
         try? JSONDecoder().decode(HealthResponse.self, from: Data(json.utf8))
     }
 
-    func testProtocolVersionThreeIsCompatible() {
-        let health = decode(#"{"ok":true,"version":"0.2.0","protocolVersion":3,"features":{}}"#)
+    func testProtocolVersionFourIsCompatible() {
+        let health = decode(#"{"ok":true,"version":"0.2.0","protocolVersion":4,"features":{}}"#)
         XCTAssertNotNil(health)
         XCTAssertTrue(HealthCheck.isCompatible(protocolVersion: health?.protocolVersion))
     }

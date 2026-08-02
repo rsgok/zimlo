@@ -35,7 +35,7 @@ function descriptor(pid: number): ServiceDescriptor {
     pid,
     port: 4747,
     version: "0.2.0",
-    protocolVersion: 3,
+    protocolVersion: 4,
     startedAt: "2026-07-29T00:00:00.000Z",
     socketPath: "/tmp/bridge.sock",
     logPath: "/tmp/autostart.log",
@@ -54,7 +54,7 @@ async function writeLockOwner(lockPath: string, pid: number): Promise<void> {
 
 const healthyFetch = (async () => ({
   ok: true,
-  json: async () => ({ ok: true, version: "0.2.0", protocolVersion: 3 }),
+  json: async () => ({ ok: true, version: "0.2.0", protocolVersion: 4 }),
 })) as unknown as typeof fetch;
 
 afterEach(() => {
@@ -91,7 +91,7 @@ describe("inspectService", () => {
     });
     expect(inspection.ownership).toBe("verified");
     expect(inspection.health?.ok).toBe(true);
-    expect(inspection.health?.protocolVersion).toBe(3);
+    expect(inspection.health?.protocolVersion).toBe(4);
     expect(inspection.socketReachable).toBe(true);
     expect(inspection.logPath).toBe("/tmp/autostart.log");
   });
@@ -240,7 +240,7 @@ describe("formatServiceInspection", () => {
       pidAlive: true,
       ownership: "verified",
       portReachable: true,
-      health: { ok: true, version: "0.2.0", protocolVersion: 3 },
+      health: { ok: true, version: "0.2.0", protocolVersion: 4 },
       socketExists: true,
       socketReachable: true,
       diagnostics: { at: "2026-07-29T00:00:00.000Z", ok: true, pid: 4242 },
@@ -248,7 +248,7 @@ describe("formatServiceInspection", () => {
     });
     expect(text).toContain("✓ 进程");
     expect(text).toContain("4242");
-    expect(text).toContain("协议 v3");
+    expect(text).toContain("协议 v4");
     expect(text).toContain("✓ Socket");
     expect(text).toContain("/tmp/autostart.log");
   });
@@ -274,14 +274,14 @@ describe("isServiceOperational", () => {
   const healthy: ServiceInspection = {
     descriptor: descriptor(4242), diagnostics: null, manualStop: false,
     pidAlive: true, ownership: "verified", port: 4747, portReachable: true,
-    portOwner: null, health: { ok: true, version: "0.2.0", protocolVersion: 3 },
+    portOwner: null, health: { ok: true, version: "0.2.0", protocolVersion: 4 },
     socketExists: true, socketReachable: true, logPath: null,
   };
 
   it("requires verified ownership, a healthy endpoint, and the expected protocol", () => {
-    expect(isServiceOperational(healthy, 3)).toBe(true);
-    expect(isServiceOperational({ ...healthy, ownership: "unverifiable" }, 3)).toBe(false);
-    expect(isServiceOperational({ ...healthy, health: { ok: false } }, 3)).toBe(false);
+    expect(isServiceOperational(healthy, 4)).toBe(true);
+    expect(isServiceOperational({ ...healthy, ownership: "unverifiable" }, 4)).toBe(false);
+    expect(isServiceOperational({ ...healthy, health: { ok: false } }, 4)).toBe(false);
     expect(isServiceOperational(healthy, 2)).toBe(false);
   });
 });

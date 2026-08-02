@@ -75,8 +75,20 @@ export const SessionStatusSchema = z.enum([
 ]);
 export type SessionStatus = z.infer<typeof SessionStatusSchema>;
 
+// A Host is one Mac running Zimlo Bridge.  It is intentionally separate from
+// a paired client device: one user can view many Hosts from the same iPhone,
+// while every command still has a single, explicit execution destination.
+export const HostSchema = z.object({
+  id: z.string().min(8).max(160),
+  name: z.string().min(1).max(120),
+  platform: z.literal("macos"),
+  lastSeenAt: z.string(),
+});
+export type Host = z.infer<typeof HostSchema>;
+
 export const SessionSchema = z.object({
   id: z.string(),
+  hostId: z.string().optional(),
   projectId: z.string().nullable().optional(),
   provider: ProviderSchema,
   surface: SessionSurfaceSchema,
@@ -108,6 +120,7 @@ export type Decision = z.infer<typeof DecisionSchema>;
 
 export const PendingActionSchema = z.object({
   actionId: z.string(),
+  hostId: z.string().optional(),
   sessionId: z.string(),
   upstreamRequestId: z.string().optional(),
   kind: z.enum(["input", "approval"]),
@@ -146,6 +159,7 @@ export type MaterialStatus = z.infer<typeof MaterialStatusSchema>;
 // and are persisted separately on the Mac.
 export const MaterialSchema = z.object({
   id: z.string().min(12).max(160),
+  hostId: z.string().optional(),
   kind: MaterialKindSchema,
   name: z.string().min(1).max(180),
   mimeType: z.string().min(1).max(120),
@@ -228,6 +242,7 @@ export type SignalTransitionInput = z.infer<typeof SignalTransitionInputSchema>;
 
 export const FeedPostSchema = z.object({
   id: z.string(),
+  hostId: z.string().optional(),
   projectId: z.string().nullable().optional(),
   taskId: z.string(),
   runId: z.string(),
@@ -273,6 +288,7 @@ export type UserProfile = z.infer<typeof UserProfileSchema>;
 
 export const ProjectSchema = z.object({
   id: z.string(),
+  hostId: z.string().optional(),
   name: z.string(),
   primaryPath: z.string(),
   paths: z.array(z.string()),
@@ -297,6 +313,7 @@ export type IntegrationStatus = z.infer<typeof IntegrationStatusSchema>;
 
 export const TaskRecordSchema = z.object({
   id: z.string(),
+  hostId: z.string().optional(),
   runId: z.string(),
   agentId: z.string(),
   sessionId: z.string().nullable(),
@@ -318,6 +335,7 @@ export type TaskCommandState = z.infer<typeof TaskCommandStateSchema>;
 
 export const TaskCommandSchema = z.object({
   id: z.string(),
+  hostId: z.string().optional(),
   idempotencyKey: z.string(),
   kind: z.enum(["create", "follow_up"]),
   provider: ProviderSchema,
@@ -335,6 +353,7 @@ export type TaskCommand = z.infer<typeof TaskCommandSchema>;
 
 export const TrustedWorkspaceSchema = z.object({
   id: z.string(),
+  hostId: z.string().optional(),
   label: z.string(),
   path: z.string(),
   providers: z.array(ProviderSchema),
@@ -358,6 +377,7 @@ export const FeedCardSchema = z.object({
 export type FeedCard = z.infer<typeof FeedCardSchema>;
 
 export const TaskPreferenceSchema = z.object({
+  hostId: z.string().optional(),
   sessionId: z.string(),
   pinnedAt: z.string().nullable(),
   archivedAt: z.string().nullable(),
@@ -390,6 +410,7 @@ export const ApprovalContextSchema = z.object({
 export type ApprovalContext = z.infer<typeof ApprovalContextSchema>;
 
 export const ProjectTrustPolicySchema = z.object({
+  hostId: z.string().optional(),
   projectId: z.string(),
   preset: z.enum(["ask", "safe_automation"]),
   autoAllow: z.array(ApprovalCategorySchema),
@@ -400,6 +421,7 @@ export type ProjectTrustPolicy = z.infer<typeof ProjectTrustPolicySchema>;
 
 export const TrustAuditEntrySchema = z.object({
   id: z.string(),
+  hostId: z.string().optional(),
   projectId: z.string(),
   sessionId: z.string(),
   deviceId: z.string(),
@@ -453,6 +475,7 @@ export const FeatureCapabilitiesSchema = z.object({
   projectTrustPolicy: z.boolean(),
   pushNotifications: z.boolean(),
   remoteSync: z.boolean(),
+  multiHost: z.boolean().optional(),
 });
 export type FeatureCapabilities = z.infer<typeof FeatureCapabilitiesSchema>;
 
@@ -460,15 +483,18 @@ export const FEATURE_CAPABILITIES: FeatureCapabilities = {
   projectTrustPolicy: true,
   pushNotifications: true,
   remoteSync: true,
+  multiHost: true,
 };
 
 export const EMPTY_FEATURE_CAPABILITIES: FeatureCapabilities = {
   projectTrustPolicy: false,
   pushNotifications: false,
   remoteSync: false,
+  multiHost: false,
 };
 
 export const SnapshotSchema = z.object({
+  host: HostSchema.optional(),
   userProfile: UserProfileSchema,
   projects: z.array(ProjectSchema),
   sessions: z.array(SessionSchema),
@@ -493,7 +519,7 @@ export const SnapshotSchema = z.object({
 });
 export type Snapshot = z.infer<typeof SnapshotSchema>;
 
-export const ClientCommandSchema = z.discriminatedUnion("type", [
+const ClientCommandPayloadSchema = z.discriminatedUnion("type", [
   z.object({ type: z.literal("snapshot.request"), afterSequence: z.number().int().optional() }),
   z.object({
     type: z.literal("action.decide"),
@@ -609,6 +635,11 @@ export const ClientCommandSchema = z.discriminatedUnion("type", [
   z.object({ type: z.literal("pairing.create") }),
   z.object({ type: z.literal("lan.approvals.set"), enabled: z.boolean() }),
 ]);
+export const ClientCommandSchema = ClientCommandPayloadSchema.and(z.object({
+  // Client-only routing hint. A Host Bridge accepts it but execution remains
+  // scoped to the authenticated connection, so it cannot redirect commands.
+  hostId: z.string().optional(),
+}));
 export type ClientCommand = z.infer<typeof ClientCommandSchema>;
 
 export type ServerMessage =

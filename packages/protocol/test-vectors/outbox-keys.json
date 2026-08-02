@@ -1,5 +1,5 @@
 {
-  "version": 1,
+  "version": 2,
   "cases": [
     {
       "name": "task.create trims free text",
@@ -15,6 +15,11 @@
       "name": "task.follow_up",
       "input": { "type": "task.follow_up", "sessionId": "s-1", "text": "继续", "idempotencyKey": "k-1" },
       "expected": { "key": "task.follow_up:s-1:继续" }
+    },
+    {
+      "name": "task.follow_up is isolated by host",
+      "input": { "type": "task.follow_up", "hostId": "host-two", "sessionId": "s-1", "text": "继续", "idempotencyKey": "k-1" },
+      "expected": { "key": "host-two:task.follow_up:s-1:继续" }
     },
     {
       "name": "session.message",

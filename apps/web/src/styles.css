@@ -911,6 +911,16 @@ code, pre { font-family: var(--font-mono); }
 .settings-value-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 16px; padding: 14px 16px; }
 .settings-value-row > span { display: grid; gap: 3px; min-width: 0; }
 .settings-value-row small { color: var(--muted); font-size: var(--text-caption); }
+.host-list-card .settings-value-row + .settings-value-row { border-top: 1px solid var(--line); }
+.host-status-dot { width: 9px; height: 9px; background: var(--muted); border-radius: 50%; opacity: .52; }
+.host-status-dot.is-connected { background: var(--sage); box-shadow: 0 0 0 4px color-mix(in srgb, var(--sage) 14%, transparent); opacity: 1; }
+.host-add-row { width: 100%; border: 0; border-top: 1px solid var(--line); background: transparent; color: inherit; text-align: left; cursor: pointer; }
+.host-add-row b { color: var(--sage-text); font-size: 20px; font-weight: 500; }
+.host-remove-button { width: 36px; height: 36px; padding: 0; border: 0; border-radius: 50%; background: transparent; color: var(--muted); font-size: 19px; cursor: pointer; }
+.host-remove-button:hover { background: var(--control); color: var(--coral-text); }
+.host-pair-form { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 8px; padding: 12px 0 4px; border-top: 1px solid var(--line); }
+.host-pair-form input { min-width: 0; min-height: 44px; padding: 0 12px; color: var(--ink); background: var(--control); border: 1px solid var(--line); border-radius: 12px; font: 500 13px var(--font-sans); }
+.host-pair-form p { grid-column: 1 / -1; margin: 0; color: var(--coral-text); font-size: 12px; }
 .settings-switch-row { display: flex; align-items: center; justify-content: space-between; gap: 16px; min-height: 50px; padding: 10px 16px; border-top: 1px solid var(--line); font-size: var(--text-body-sm); font-weight: 750; }
 .settings-switch-row:first-of-type { border-top: 0; }
 .device-card { padding: 0 16px; overflow: hidden; }

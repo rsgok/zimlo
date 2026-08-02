@@ -5,7 +5,7 @@ interface AppTopBarProps {
   title: string;
   connected?: boolean;
   online?: boolean;
-  connectionMode?: "offline" | "local" | "cloud";
+  connectionMode?: "offline" | "local" | "cloud" | "multi";
   detail?: boolean;
   onBack?: () => void;
   action?: ReactNode;
@@ -33,7 +33,7 @@ export function AppTopBar({ title, connected = false, online = true, connectionM
               {!online
                 ? (reconnectPausedOffline ? "离线 · 已暂停重连" : "离线")
                 : connected
-                  ? (connectionMode === "cloud" ? "云端" : "本地")
+                  ? (connectionMode === "multi" ? "多设备" : connectionMode === "cloud" ? "云端" : "本地")
                   : null}
               {reconnecting && (
                 <>

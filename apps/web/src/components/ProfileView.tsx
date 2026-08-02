@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import type { ClientCommand, IntegrationStatus, NotificationSettings, Session, UserProfile } from "@zimlo/protocol";
+import type { ClientCommand, Host, IntegrationStatus, NotificationSettings, Session, UserProfile } from "@zimlo/protocol";
 import type { CodexPluginInfo, DeviceInfo, PairingInfo } from "../hooks/useBridge";
 import { ConfirmDialog } from "./ConfirmDialog";
 import { ProviderBadge } from "./ProviderBadge";
@@ -19,9 +19,12 @@ interface ProfileViewProps {
   pushRegistered?: boolean | undefined;
   notificationEnabled?: boolean | undefined;
   connected?: boolean | undefined;
-  connectionMode?: "offline" | "local" | "cloud" | undefined;
+  connectionMode?: "offline" | "local" | "cloud" | "multi" | undefined;
+  hosts?: Array<Host & { connected: boolean; connectionMode: "offline" | "local" | "cloud"; isLocal: boolean }> | undefined;
   send: (command: ClientCommand) => boolean;
   forgetDevice: () => Promise<void>;
+  pairAdditionalHost?: ((link: string) => Promise<void>) | undefined;
+  forgetHost?: ((hostId: string) => Promise<void>) | undefined;
 }
 
 function integrationStateLabel(state: IntegrationStatus["state"]) {
@@ -35,12 +38,17 @@ function providerLabel(provider: "codex" | "claude") {
   return provider === "codex" ? "Codex" : "Claude Code";
 }
 
-export function ProfileView({ localAdmin, devices, pairing, lanApprovalsEnabled, codexPlugin, integrations, sessions, userProfile, notificationSettings = { enabled: false, approvals: true, failures: true, showTaskTitle: false, updatedAt: "" }, pushRegistered = false, notificationEnabled = true, connected = false, connectionMode = "offline", send, forgetDevice }: ProfileViewProps) {
+export function ProfileView({ localAdmin, devices, pairing, lanApprovalsEnabled, codexPlugin, integrations, sessions, userProfile, notificationSettings = { enabled: false, approvals: true, failures: true, showTaskTitle: false, updatedAt: "" }, pushRegistered = false, notificationEnabled = true, connected = false, connectionMode = "offline", hosts = [], send, forgetDevice, pairAdditionalHost = async () => {}, forgetHost = async () => {} }: ProfileViewProps) {
   const [selectedAvatarId, setSelectedAvatarId] = useState(userProfile.avatarId);
   const [avatarPickerOpen, setAvatarPickerOpen] = useState(false);
   const [pairingOpen, setPairingOpen] = useState(false);
   const [confirmForgetPhone, setConfirmForgetPhone] = useState(false);
   const [confirmRevokeDevice, setConfirmRevokeDevice] = useState<DeviceInfo | null>(null);
+  const [addingHost, setAddingHost] = useState(false);
+  const [hostLink, setHostLink] = useState("");
+  const [hostError, setHostError] = useState<string | null>(null);
+  const [hostConnecting, setHostConnecting] = useState(false);
+  const [hostPendingRemoval, setHostPendingRemoval] = useState<Host | null>(null);
   useEffect(() => setSelectedAvatarId(userProfile.avatarId), [userProfile.avatarId]);
 
   const runtimeSummary = (["codex", "claude"] as const).map((provider) => {
@@ -64,7 +72,7 @@ export function ProfileView({ localAdmin, devices, pairing, lanApprovalsEnabled,
   const pairedDevices = activeDevices.filter((device) => !device.isLocalAdmin);
   const revokedDeviceCount = devices.length - activeDevices.length;
   const connectedPhoneCount = pairedDevices.length;
-  const modeLabel = connected ? (connectionMode === "cloud" ? "云端" : "本地") : "离线";
+  const modeLabel = connected ? (connectionMode === "multi" ? "多设备" : connectionMode === "cloud" ? "云端" : "本地") : "离线";
 
   const openPairing = () => {
     setPairingOpen(true);
@@ -98,6 +106,36 @@ export function ProfileView({ localAdmin, devices, pairing, lanApprovalsEnabled,
             ))}
           </div>
           {localAdmin && <button className="secondary-button settings-wide-action" onClick={() => send({ type: "integrations.cli.install" })}>检查接入</button>}
+        </div>
+      </section>
+
+      <section className="settings-section" aria-labelledby="host-settings-title">
+        <h3 id="host-settings-title">运行设备</h3>
+        <div className="settings-card settings-list-card host-list-card">
+          {hosts.map((host) => (
+            <div className="settings-value-row" key={host.id}>
+              <span><strong>{host.name}</strong><small>{host.connected ? (host.connectionMode === "cloud" ? "远程连接" : "本机连接") : "离线，操作会保留在队列"}</small></span>
+              <i className={`host-status-dot ${host.connected ? "is-connected" : ""}`} aria-label={host.connected ? "在线" : "离线"} />
+              {hosts.length > 1 && !host.isLocal && <button type="button" className="host-remove-button" aria-label={`移除 ${host.name}`} onClick={() => setHostPendingRemoval(host)}>×</button>}
+            </div>
+          ))}
+          {hosts.length === 0 && <p className="empty-setting">还没有连接运行设备</p>}
+          <button type="button" className="settings-value-row host-add-row" onClick={() => { setAddingHost((value) => !value); setHostError(null); }}>
+            <span><strong>连接另一台 Mac</strong><small>粘贴那台 Mac 上生成的连接码</small></span><b aria-hidden="true">＋</b>
+          </button>
+          {addingHost && <form className="host-pair-form" onSubmit={(event) => {
+            event.preventDefault();
+            setHostConnecting(true);
+            setHostError(null);
+            void pairAdditionalHost(hostLink).catch((error: unknown) => {
+              setHostError(error instanceof Error ? error.message : String(error));
+              setHostConnecting(false);
+            });
+          }}>
+            <input value={hostLink} onChange={(event) => setHostLink(event.target.value)} placeholder="粘贴 zimlo 连接码" aria-label="另一台 Mac 的连接码" />
+            <button type="submit" className="secondary-button" disabled={hostConnecting || hostLink.trim().length === 0}>{hostConnecting ? "连接中" : "连接"}</button>
+            {hostError && <p role="alert">{hostError}</p>}
+          </form>}
         </div>
       </section>
 
@@ -232,6 +270,7 @@ export function ProfileView({ localAdmin, devices, pairing, lanApprovalsEnabled,
         send({ type: "device.revoke", deviceId: confirmRevokeDevice.id });
         setConfirmRevokeDevice(null);
       }} onCancel={() => setConfirmRevokeDevice(null)} />}
+      {hostPendingRemoval && <ConfirmDialog title={`移除「${hostPendingRemoval.name}」？`} body="只移除这台 Mac；其他运行设备和聚合 Feed 不受影响。" confirmLabel="移除连接" onConfirm={() => void forgetHost(hostPendingRemoval.id)} onCancel={() => setHostPendingRemoval(null)} />}
     </section>
   );
 }

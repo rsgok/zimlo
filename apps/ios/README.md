@@ -1,10 +1,11 @@
 # Zimlo for iOS
 
-原生 SwiftUI 客户端，复用 Zimlo Bridge protocol v3，不是 WebView 包装。
+原生 SwiftUI 客户端，复用 Zimlo Bridge protocol v4，不是 WebView 包装。
 
 ## 已实现的闭环
 
 - 扫描或粘贴 Mac 配对链接；设备密钥保存在 iOS Keychain。
+- 可在“设置 → 运行设备”继续连接多台 Mac；Feed/Tasks 聚合展示，回复、审批、附件与离线队列精确路由回来源 Mac。
 - X25519 + HKDF + HMAC 配对，以及 XChaCha20-Poly1305 加密 WebSocket。
 - Snapshot 驱动的一页一卡 Feed；左滑 Task Detail、右滑移出 Feed、稳定停留 1 秒标记已读。
 - Feed、Tasks、居中对话入口、Agents、个人设置五键底栏。
@@ -73,7 +74,7 @@ node apps/cli/dist/index.js start
 
 再打开 `apps/ios/Zimlo.xcodeproj`，选择 iPhone 模拟器或已签名真机运行，并使用 Mac 网页 Settings 中生成的配对信息。首次配对默认通过两分钟有效的 Cloudflare 配对房间完成，真机与 Mac 不需要处于同一 LAN；配对后也可在外网继续同步。
 
-Bridge 在局域网使用用户提供的 HTTP / WebSocket 地址，但所有配对证明和应用消息均由 Zimlo protocol v3 自行认证和端到端加密。
+Bridge 在局域网使用用户提供的 HTTP / WebSocket 地址，但所有配对证明和应用消息均由 Zimlo protocol v4 自行认证和端到端加密。
 
 ## 安装到自己的 iPhone
 

@@ -571,11 +571,15 @@ async function devicePairingResult(request: Request, env: Env): Promise<Response
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {
     const url = new URL(request.url);
+    const browserCrossOrigin = url.pathname === "/api/pair" || /^\/v1\/materials\/[^/]+$/u.test(url.pathname);
+    if (request.method === "OPTIONS" && browserCrossOrigin) {
+      return new Response(null, { status: 204, headers: browserCORSHeaders() });
+    }
     if (request.method === "GET" && url.pathname === "/healthz") {
       return Response.json({
         ok: true,
         service: "zimlo-cloud",
-        protocolVersion: 3,
+        protocolVersion: 4,
         storesContent: false,
         storesEncryptedMaterials: Boolean(env.MATERIALS),
         encryptedRemoteSync: true,
@@ -616,12 +620,12 @@ export default {
     if (request.method === "POST" && url.pathname === "/api/pair") {
       const allowed = await env.AUTH_RATE_LIMITER.limit({ key: `pair:${actorKey(request)}` });
       if (!allowed.success) return jsonError(429, "pairing_rate_limited");
-      return beginDevicePairing(request, env);
+      return withBrowserCORS(await beginDevicePairing(request, env));
     }
     if (request.method === "GET" && url.pathname === "/api/pair") {
       const allowed = await env.AUTH_RATE_LIMITER.limit({ key: `pair:${actorKey(request)}` });
       if (!allowed.success) return jsonError(429, "pairing_rate_limited");
-      return devicePairingResult(request, env);
+      return withBrowserCORS(await devicePairingResult(request, env));
     }
     if (request.method === "DELETE" && /^\/v1\/devices\/[^/]+\/push$/u.test(url.pathname)) {
       const encodedDeviceId = url.pathname.slice("/v1/devices/".length, -"/push".length);
@@ -639,7 +643,7 @@ export default {
       return uploadMaterial(request, env, decodeURIComponent(url.pathname.slice("/v1/materials/".length)));
     }
     if ((request.method === "GET" || request.method === "DELETE") && /^\/v1\/materials\/[^/]+$/u.test(url.pathname)) {
-      return deviceMaterial(request, env, decodeURIComponent(url.pathname.slice("/v1/materials/".length)));
+      return withBrowserCORS(await deviceMaterial(request, env, decodeURIComponent(url.pathname.slice("/v1/materials/".length))));
     }
     if ((request.method === "GET" || request.method === "DELETE" || request.method === "PUT") && /^\/v1\/materials\/[^/]+\/[^/]+$/u.test(url.pathname)) {
       const [, , , encodedDeviceId, encodedMaterialId] = url.pathname.split("/");
@@ -662,5 +666,20 @@ export default {
     await env.DB.prepare("DELETE FROM push_audit WHERE created_at < ?").bind(cutoff).run();
   },
 };
+
+function browserCORSHeaders(): Record<string, string> {
+  return {
+    "access-control-allow-origin": "*",
+    "access-control-allow-methods": "GET, POST, DELETE, OPTIONS",
+    "access-control-allow-headers": "authorization, content-type",
+    "access-control-max-age": "86400",
+  };
+}
+
+function withBrowserCORS(response: Response): Response {
+  const next = new Response(response.body, response);
+  for (const [key, value] of Object.entries(browserCORSHeaders())) next.headers.set(key, value);
+  return next;
+}
 
 export { PairingRoom, RelayRoom };

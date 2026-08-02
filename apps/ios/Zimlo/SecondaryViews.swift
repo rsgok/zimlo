@@ -737,6 +737,7 @@ private struct AgentEditorView: View {
 
 private enum SettingsSheet: String, Identifiable {
     case avatars
+    case pairing
     var id: String { rawValue }
 }
 
@@ -896,6 +897,7 @@ struct SettingsView: View {
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     @State private var presentedSheet: SettingsSheet?
     @State private var showingForgetConfirmation = false
+    @State private var hostPendingRemoval: HostConnectionStatus?
 
     var body: some View {
         ScrollView {
@@ -903,6 +905,7 @@ struct SettingsView: View {
                 profileSummary
                 if model.snapshot.features.pushNotifications { notificationsSection }
                 connectionSection
+                hostsSection
                 runtimeSection
                 forgetButton
             }
@@ -920,7 +923,31 @@ struct SettingsView: View {
                     .presentationDetents([.medium, .large])
                     .presentationDragIndicator(.visible)
                     .presentationBackground(ZColor.paper)
+            case .pairing:
+                PairingView(
+                    model: model,
+                    onCancel: { presentedSheet = nil },
+                    onPaired: { presentedSheet = nil },
+                    showsExistingError: false
+                )
+                .environment(\.colorScheme, .dark)
             }
+        }
+        .confirmationDialog(
+            "移除 \(hostPendingRemoval?.host.name ?? "这台 Mac")？",
+            isPresented: Binding(
+                get: { hostPendingRemoval != nil },
+                set: { if !$0 { hostPendingRemoval = nil } }
+            ),
+            titleVisibility: .visible
+        ) {
+            Button("移除连接", role: .destructive) {
+                if let hostId = hostPendingRemoval?.id { model.forgetHost(hostId) }
+                hostPendingRemoval = nil
+            }
+            Button("取消", role: .cancel) { hostPendingRemoval = nil }
+        } message: {
+            Text("只会移除这台 Mac，其他设备和聚合 Feed 不受影响。")
         }
     }
 
@@ -1081,6 +1108,63 @@ struct SettingsView: View {
         }
     }
 
+    private var hostsSection: some View {
+        settingsSection("运行设备") {
+            ForEach(Array(model.bridge.hosts.enumerated()), id: \.element.id) { index, status in
+                if index > 0 { Divider().overlay(ZColor.line) }
+                HStack(spacing: 11) {
+                    Image(systemName: "desktopcomputer")
+                        .foregroundStyle(status.connected ? ZColor.sageText : ZColor.muted)
+                        .frame(width: 20)
+                    VStack(alignment: .leading, spacing: 3) {
+                        Text(status.host.name)
+                            .font(ZFont.subheadline.weight(.semibold))
+                            .lineLimit(1)
+                        Text(hostConnectionLabel(status))
+                            .font(ZFont.caption2)
+                            .foregroundStyle(ZColor.muted)
+                    }
+                    Spacer()
+                    Circle()
+                        .fill(status.connected ? ZColor.sage : ZColor.coralText)
+                        .frame(width: 7, height: 7)
+                    Button {
+                        hostPendingRemoval = status
+                    } label: {
+                        Image(systemName: "ellipsis")
+                            .frame(width: 44, height: 44)
+                            .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel("管理 \(status.host.name)")
+                }
+                .frame(minHeight: 54)
+            }
+            if !model.bridge.hosts.isEmpty { Divider().overlay(ZColor.line) }
+            Button { presentedSheet = .pairing } label: {
+                HStack(spacing: 11) {
+                    settingsLabel("连接另一台 Mac", systemImage: "plus.circle.fill")
+                    Spacer()
+                    Image(systemName: "chevron.right")
+                        .font(ZFont.caption2)
+                        .foregroundStyle(ZColor.muted)
+                }
+                .frame(minHeight: 48)
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+        }
+    }
+
+    private func hostConnectionLabel(_ status: HostConnectionStatus) -> String {
+        guard status.connected else { return "离线 · 内容保留" }
+        switch status.mode {
+        case "local": return "本地连接"
+        case "cloud": return "云端连接"
+        default: return "已连接"
+        }
+    }
+
     @ViewBuilder
     private var runtimeChips: some View {
         ForEach(availableProviders) { provider in
@@ -1142,6 +1226,7 @@ struct SettingsView: View {
     private var connectionModeLabel: String? {
         guard model.bridge.connected else { return nil }
         switch model.bridge.connectionMode {
+        case "multi": return "多设备"
         case "cloud": return "云端"
         case "local": return "本地"
         default: return nil

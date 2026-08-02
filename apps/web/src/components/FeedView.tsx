@@ -263,6 +263,7 @@ export function FeedView({ projects, posts, materials = [], sessions, actions, c
             project={contextProjectId(item) ? projectById.get(contextProjectId(item)!) : undefined}
             onOpenProject={onOpenProject}
             interactionMode={interactionMode}
+            send={send}
           /> : item.type === "action" ? <ActionFeedCard
             action={item.action}
             session={sessionById.get(item.action.sessionId)}

@@ -102,6 +102,7 @@ final class AppModel: ObservableObject {
     @Published private(set) var pendingRouteSessionId: String?
 
     private var bridgeObserver: AnyCancellable?
+    private var hostSnapshots: [String: Snapshot] = [:]
     private var outbox: [OutboxEntry] = []
     private var outboxRetryTask: Task<Void, Never>?
     private var snapshotSaveTask: Task<Void, Never>?
@@ -120,7 +121,7 @@ final class AppModel: ObservableObject {
             from: UserDefaults.standard.data(forKey: outboxKey) ?? Data()
         )) ?? []
         bridgeObserver = bridge.objectWillChange.sink { [weak self] _ in self?.objectWillChange.send() }
-        bridge.onMessage = { [weak self] message in self?.apply(message) }
+        bridge.onMessage = { [weak self] hostId, message in self?.apply(message, hostId: hostId) }
         NotificationManager.shared.onRegistration = { [weak self] token, publicKey in
             guard let self else { return }
             #if DEBUG
@@ -128,7 +129,7 @@ final class AppModel: ObservableObject {
             #else
             let environment = "production"
             #endif
-            _ = self.sendDurable(ClientCommand(type: "notification.device.register", [
+            _ = self.sendDurableToAll(ClientCommand(type: "notification.device.register", [
                 "token": .string(token),
                 "publicKey": .string(publicKey),
                 "environment": .string(environment),
@@ -153,17 +154,18 @@ final class AppModel: ObservableObject {
             let status = await NotificationManager.shared.authorizationStatus()
             self?.notificationPermission = Self.notificationPermissionLabel(status)
         }
-        bridge.onSecureConnection = { [weak self] in
+        bridge.onSecureConnection = { [weak self] hostId in
             guard let self else { return }
-            self.flushOutbox()
+            self.flushOutbox(hostId: hostId)
             // Re-registering with APNs after a new pairing also publishes the
             // freshly rotated push-route public key to this Mac.
             Task { _ = await NotificationManager.shared.refreshRegistration() }
             _ = self.bridge.send(ClientCommand(type: "snapshot.request", [
                 "afterSequence": .number(Double(self.snapshot.sequence)),
+                "hostId": .string(hostId),
             ]))
             if let sessionId = self.selectedSession?.id {
-                _ = self.bridge.send(ClientCommand(type: "session.events.request", ["sessionId": .string(sessionId)]))
+                _ = self.bridge.send(self.routed(ClientCommand(type: "session.events.request", ["sessionId": .string(sessionId)])))
             }
         }
         outboxRetryTask = Task { [weak self] in
@@ -284,7 +286,7 @@ final class AppModel: ObservableObject {
         if snapshot.sessions.contains(where: { $0.id == sessionId }) {
             openTask(sessionId: sessionId)
         } else if bridge.connected {
-            _ = bridge.send(ClientCommand(type: "snapshot.request", [
+            _ = bridge.sendToAll(ClientCommand(type: "snapshot.request", [
                 "afterSequence": .number(Double(snapshot.sequence)),
             ]))
             showNotice("正在向 Mac 请求最新任务列表")
@@ -415,7 +417,7 @@ final class AppModel: ObservableObject {
     }
 
     func updateNotificationSettings(_ settings: NotificationSettings) {
-        _ = sendDurable(ClientCommand(type: "notification.settings.update", [
+        _ = sendDurableToAll(ClientCommand(type: "notification.settings.update", [
             "settings": .object([
                 "enabled": .bool(settings.enabled),
                 "approvals": .bool(settings.approvals),
@@ -479,7 +481,7 @@ final class AppModel: ObservableObject {
     func updateAvatar(_ id: String) {
         snapshot.userProfile.avatarId = id
         scheduleSnapshotSave()
-        _ = sendDurable(ClientCommand(type: "user.profile.update", ["avatarId": .string(id)]))
+        _ = sendDurableToAll(ClientCommand(type: "user.profile.update", ["avatarId": .string(id)]))
     }
 
     func updateAgent(project: Project, displayName: String, avatar: String, bio: String, provider: Provider?) {
@@ -579,7 +581,7 @@ final class AppModel: ObservableObject {
         guard let index = outbox.firstIndex(where: { $0.id == entry.id }) else { return }
         outbox[index].lastError = nil
         persistOutbox()
-        _ = bridge.send(entry.command)
+        _ = bridge.send(routed(entry.command))
         showNotice(bridge.connected ? "已重新发送，等待 Bridge 确认" : "尚未连接 Mac，将在重连后自动发送")
     }
 
@@ -633,7 +635,7 @@ final class AppModel: ObservableObject {
         }
         isForgettingDevice = true
         let idempotencyKey = UUID().uuidString
-        guard sendDurable(ClientCommand(type: "notification.device.unregister", [
+        guard sendDurableToAll(ClientCommand(type: "notification.device.unregister", [
             "idempotencyKey": .string(idempotencyKey),
         ])) else {
             isForgettingDevice = false
@@ -667,6 +669,7 @@ final class AppModel: ObservableObject {
         forgetDeviceTask = nil
         NotificationManager.shared.resetRouteKey()
         bridge.forgetDevice()
+        hostSnapshots.removeAll()
         snapshot = .empty
         let pendingSave = snapshotSaveTask
         pendingSave?.cancel()
@@ -699,14 +702,35 @@ final class AppModel: ObservableObject {
         }
     }
 
+    func forgetHost(_ hostId: String) {
+        let removedSessionIds = Set(hostSnapshots[hostId]?.sessions.map(\.id) ?? snapshot.sessions.filter { $0.hostId == hostId }.map(\.id))
+        bridge.forgetHost(hostId)
+        hostSnapshots.removeValue(forKey: hostId)
+        outbox.removeAll { $0.command.values["hostId"]?.stringValue == hostId }
+        persistOutbox()
+        snapshot = mergeHostSnapshots()
+        events = events.filter { !removedSessionIds.contains($0.key) }
+        if let selectedSession, removedSessionIds.contains(selectedSession.id) { self.selectedSession = nil }
+        if selectedProject?.hostId == hostId { selectedProject = nil }
+        if bridge.hosts.isEmpty {
+            snapshot = .empty
+            events = [:]
+            selectedSession = nil
+            selectedProject = nil
+        }
+        scheduleSnapshotSave(after: .zero)
+        showNotice("已移除这台 Mac")
+    }
+
     func send(_ command: ClientCommand) -> Bool {
-        if bridge.send(command) { return true }
+        if bridge.send(routed(command)) { return true }
         showNotice("Bridge 尚未连接，请稍后重试")
         return false
     }
 
     @discardableResult
-    private func sendDurable(_ command: ClientCommand) -> Bool {
+    private func sendDurable(_ input: ClientCommand) -> Bool {
+        let command = routed(input)
         let key = SemanticKey.make(command)
         // 状态覆盖类指令：同一语义键只保留最新一条；feed.dismiss.set 同理（最新状态胜出）。
         let replaceable = ["user.profile.update", "agent.profile.update", "trust.policy.update",
@@ -724,8 +748,9 @@ final class AppModel: ObservableObject {
             showNotice("这条指令已在队列中，不会重复发送")
             return bridge.send(outbox[index].command) || true
         }
+        let hostId = command.values["hostId"]?.stringValue ?? "unscoped"
         let entry = OutboxEntry(
-            id: command.type == "task.command.cancel" ? key : (command.idempotencyKey ?? UUID().uuidString),
+            id: command.type == "task.command.cancel" ? key : "\(hostId):\(command.idempotencyKey ?? UUID().uuidString)",
             semanticKey: key,
             command: command,
             enqueuedAt: now(),
@@ -743,13 +768,27 @@ final class AppModel: ObservableObject {
         return true
     }
 
+    @discardableResult
+    private func sendDurableToAll(_ input: ClientCommand) -> Bool {
+        let hostIds = bridge.hosts.map(\.id)
+        guard !hostIds.isEmpty else { return sendDurable(input) }
+        var persisted = true
+        for hostId in hostIds {
+            var command = input
+            command.values["hostId"] = .string(hostId)
+            persisted = sendDurable(command) && persisted
+        }
+        return persisted
+    }
+
     // 只有用户主动撰写的发送才播轻触；已读标记、设置同步等被动指令不打扰。
     private static let hapticSendTypes: Set<String> = [
         "task.create", "task.follow_up", "session.message", "action.decide",
     ]
 
-    func uploadAndRegister(_ prepared: PreparedMobileMaterial) async throws -> Material {
-        let transport = try await bridge.uploadMaterial(prepared)
+    func uploadAndRegister(_ prepared: PreparedMobileMaterial, hostId: String? = nil) async throws -> Material {
+        let targetHostId = hostId ?? routed(ClientCommand(type: "material.register")).values["hostId"]?.stringValue
+        let transport = try await bridge.uploadMaterial(prepared, hostId: targetHostId)
         var material: [String: JSONValue] = [
             "id": .string(prepared.material.id), "kind": .string(prepared.material.kind),
             "name": .string(prepared.material.name), "mimeType": .string(prepared.material.mimeType),
@@ -759,12 +798,18 @@ final class AppModel: ObservableObject {
         if let width = prepared.material.width { material["width"] = .number(Double(width)) }
         if let height = prepared.material.height { material["height"] = .number(Double(height)) }
         if let duration = prepared.material.durationMs { material["durationMs"] = .number(Double(duration)) }
+        if let targetHostId {
+            material["hostId"] = .string(targetHostId)
+        }
         let persisted = sendDurable(ClientCommand(type: "material.register", [
             "material": .object(material), "transport": .string(transport),
             "encryptionKey": .string(prepared.encryptionKey), "idempotencyKey": .string(UUID().uuidString),
+            "hostId": targetHostId.map(JSONValue.string) ?? .null,
         ]))
         guard persisted else { throw MaterialError.message("无法保存物料队列，请重试") }
-        return prepared.material
+        var result = prepared.material
+        result.hostId = targetHostId
+        return result
     }
 
     func localURL(for material: Material) async throws -> URL {
@@ -778,16 +823,17 @@ final class AppModel: ObservableObject {
         return true
     }
 
-    private func flushOutbox() {
+    private func flushOutbox(hostId: String? = nil) {
         guard bridge.connected, !outbox.isEmpty else { return }
-        for entry in outbox {
+        for entry in outbox where hostId == nil || entry.command.values["hostId"]?.stringValue == hostId {
             _ = bridge.send(entry.command)
         }
     }
 
-    private func acknowledge(_ message: ServerEnvelope) {
+    private func acknowledge(_ message: ServerEnvelope, hostId: String) {
         let previousCount = outbox.count
         outbox.removeAll { entry in
+            if let commandHostId = entry.command.values["hostId"]?.stringValue, commandHostId != hostId { return false }
             switch message.type {
             case "task.command.updated":
                 guard let command = message.command else { return false }
@@ -851,7 +897,23 @@ final class AppModel: ObservableObject {
         if outbox.count != previousCount { persistOutbox() }
     }
 
-    private func apply(_ message: ServerEnvelope) {
+    private func apply(_ incoming: ServerEnvelope, hostId: String) {
+        var message = incoming
+        if var project = message.project { project.hostId = hostId; message.project = project }
+        if var session = message.session { session.hostId = hostId; message.session = session }
+        if var post = message.post { post.hostId = hostId; message.post = post }
+        if var task = message.task { task.hostId = hostId; message.task = task }
+        if var command = message.command { command.hostId = hostId; message.command = command }
+        if var material = message.material { material.hostId = hostId; message.material = material }
+        if var action = message.action { action.hostId = hostId; message.action = action }
+        if var preference = message.preference { preference.hostId = hostId; message.preference = preference }
+        if var policy = message.policy { policy.hostId = hostId; message.policy = policy }
+        if let policies = message.policies {
+            message.policies = policies.map { item in var item = item; item.hostId = hostId; return item }
+        }
+        if let audit = message.audit {
+            message.audit = audit.map { item in var item = item; item.hostId = hostId; return item }
+        }
         var snapshotChanged = false
         var shouldRefreshSnapshotCache = false
         // 审批的服务端确认在 acknowledge 之前判定：确认成功才播成功触觉（本地操作不播）。
@@ -861,11 +923,14 @@ final class AppModel: ObservableObject {
                 $0.command.type == "action.decide" && $0.command.values["actionId"] == .string(actionId)
             }
         }
-        acknowledge(message)
+        acknowledge(message, hostId: hostId)
         if approvalConfirmed { Haptics.serverConfirmed() }
         switch message.type {
         case "session.snapshot":
-            if let snapshot = message.snapshot {
+            if var snapshot = message.snapshot {
+                snapshot = scoped(snapshot, hostId: hostId)
+                hostSnapshots[hostId] = snapshot
+                snapshot = mergeHostSnapshots()
                 // A full snapshot is a successful sync boundary. Persist it
                 // even when its contents are unchanged so offline freshness
                 // reflects the last verified connection, not the last mutation.
@@ -947,6 +1012,7 @@ final class AppModel: ObservableObject {
             if message.ok == false, let sessionId = message.sessionId {
                 markOutboxFailed(message.message ?? "服务端拒绝") {
                     ["task.follow_up", "session.message"].contains($0.command.type)
+                        && $0.command.values["hostId"] == .string(hostId)
                         && $0.command.values["sessionId"] == .string(sessionId)
                 }
             }
@@ -955,7 +1021,125 @@ final class AppModel: ObservableObject {
         default:
             break
         }
+        if snapshotChanged, message.type != "session.snapshot" {
+            captureHostIncrementalState(hostId: hostId, messageType: message.type)
+            snapshot = mergeHostSnapshots()
+        }
         if snapshotChanged || shouldRefreshSnapshotCache { scheduleSnapshotSave() }
+    }
+
+    private func captureHostIncrementalState(hostId: String, messageType: String) {
+        var local = hostSnapshots[hostId] ?? scoped(.empty, hostId: hostId)
+        local.host = local.host ?? bridge.hosts.first(where: { $0.id == hostId })?.host
+        local.projects = snapshot.projects.filter { $0.hostId == hostId }
+        local.sessions = snapshot.sessions.filter { $0.hostId == hostId }
+        local.posts = snapshot.posts.filter { $0.hostId == hostId }
+        local.tasks = snapshot.tasks.filter { $0.hostId == hostId }
+        local.commands = snapshot.commands.filter { $0.hostId == hostId }
+        local.materials = snapshot.materials.filter { $0.hostId == hostId }
+        local.workspaces = snapshot.workspaces.filter { $0.hostId == hostId }
+        local.actions = snapshot.actions.filter { $0.hostId == hostId }
+        let sessionIds = Set(local.sessions.map(\.id))
+        local.taskPreferences = snapshot.taskPreferences.filter { $0.hostId == hostId }
+        local.trustPolicies = snapshot.trustPolicies.filter { $0.hostId == hostId }
+        local.trustAudit = snapshot.trustAudit.filter { $0.hostId == hostId }
+        local.seenPostIds = snapshot.seenPostIds
+        local.dismissedFeedItemIds = snapshot.dismissedFeedItemIds
+        local.taskTimelineCursors = snapshot.taskTimelineCursors.filter { sessionIds.contains($0.key) }
+        if messageType == "user.profile.updated" { local.userProfile = snapshot.userProfile }
+        if messageType == "notification.settings.updated" { local.notificationSettings = snapshot.notificationSettings }
+        if messageType == "notification.device.updated" { local.pushDevices = snapshot.pushDevices }
+        if messageType == "lan.approvals.changed" { local.lanApprovalsEnabled = snapshot.lanApprovalsEnabled }
+        hostSnapshots[hostId] = local
+    }
+
+    private func scoped(_ value: Snapshot, hostId: String) -> Snapshot {
+        var value = value
+        value.host = value.host ?? bridge.hosts.first(where: { $0.id == hostId })?.host
+        value.projects = value.projects.map { item in var item = item; item.hostId = hostId; return item }
+        value.sessions = value.sessions.map { item in var item = item; item.hostId = hostId; return item }
+        value.posts = value.posts.map { item in var item = item; item.hostId = hostId; return item }
+        value.tasks = value.tasks.map { item in var item = item; item.hostId = hostId; return item }
+        value.commands = value.commands.map { item in var item = item; item.hostId = hostId; return item }
+        value.materials = value.materials.map { item in var item = item; item.hostId = hostId; return item }
+        value.workspaces = value.workspaces.map { item in var item = item; item.hostId = hostId; return item }
+        value.actions = value.actions.map { item in var item = item; item.hostId = hostId; return item }
+        value.taskPreferences = value.taskPreferences.map { item in var item = item; item.hostId = hostId; return item }
+        value.trustPolicies = value.trustPolicies.map { item in var item = item; item.hostId = hostId; return item }
+        value.trustAudit = value.trustAudit.map { item in var item = item; item.hostId = hostId; return item }
+        return value
+    }
+
+    private func mergeHostSnapshots() -> Snapshot {
+        let values = hostSnapshots.values.sorted {
+            ($0.host?.lastSeenAt ?? "") > ($1.host?.lastSeenAt ?? "")
+        }
+        guard let primary = values.first else { return snapshot }
+        let newestProfile = values.max { $0.userProfile.updatedAt < $1.userProfile.updatedAt }?.userProfile ?? primary.userProfile
+        let newestNotifications = values.max { $0.notificationSettings.updatedAt < $1.notificationSettings.updatedAt }?.notificationSettings ?? primary.notificationSettings
+        func unique(_ values: [String]) -> [String] { Array(Set(values)).sorted() }
+        let cursors = values.reduce(into: [String: String]()) { result, value in
+            result.merge(value.taskTimelineCursors) { _, incoming in incoming }
+        }
+        return Snapshot(
+            host: primary.host,
+            userProfile: newestProfile,
+            projects: values.flatMap(\.projects),
+            sessions: values.flatMap(\.sessions),
+            posts: values.flatMap(\.posts).sorted { $0.createdAt > $1.createdAt },
+            tasks: values.flatMap(\.tasks),
+            commands: values.flatMap(\.commands),
+            materials: values.flatMap(\.materials),
+            workspaces: values.flatMap(\.workspaces),
+            seenPostIds: unique(values.flatMap(\.seenPostIds)),
+            dismissedFeedItemIds: unique(values.flatMap(\.dismissedFeedItemIds)),
+            taskTimelineCursors: cursors,
+            taskPreferences: values.flatMap(\.taskPreferences),
+            actions: values.flatMap(\.actions),
+            trustPolicies: values.flatMap(\.trustPolicies),
+            trustAudit: values.flatMap(\.trustAudit),
+            notificationSettings: newestNotifications,
+            pushDevices: values.flatMap(\.pushDevices),
+            features: FeatureCapabilities(
+                projectTrustPolicy: values.contains { $0.features.projectTrustPolicy },
+                pushNotifications: values.contains { $0.features.pushNotifications },
+                remoteSync: values.contains { $0.features.remoteSync },
+                multiHost: true
+            ),
+            sequence: values.map(\.sequence).max() ?? 0,
+            lanApprovalsEnabled: values.contains { $0.lanApprovalsEnabled }
+        )
+    }
+
+    private func routed(_ input: ClientCommand) -> ClientCommand {
+        if case .string = input.values["hostId"] { return input }
+        func string(_ key: String) -> String? {
+            guard case .string(let value) = input.values[key] else { return nil }
+            return value
+        }
+        var hostId: String?
+        if let sessionId = string("sessionId") {
+            hostId = snapshot.sessions.first(where: { $0.id == sessionId })?.hostId
+        } else if let projectId = string("projectId") {
+            hostId = snapshot.projects.first(where: { $0.id == projectId })?.hostId
+        } else if let workspaceId = string("workspaceId") {
+            hostId = snapshot.workspaces.first(where: { $0.id == workspaceId })?.hostId
+        } else if let postId = string("postId") {
+            hostId = snapshot.posts.first(where: { $0.id == postId })?.hostId
+        } else if let actionId = string("actionId") {
+            hostId = snapshot.actions.first(where: { $0.actionId == actionId })?.hostId
+        } else if let itemId = string("itemId") {
+            if itemId.hasPrefix("post:") {
+                hostId = snapshot.posts.first(where: { $0.id == String(itemId.dropFirst(5)) })?.hostId
+            } else if itemId.hasPrefix("action:") {
+                hostId = snapshot.actions.first(where: { $0.actionId == String(itemId.dropFirst(7)) })?.hostId
+            }
+        }
+        hostId = hostId ?? bridge.hosts.first(where: { $0.connected })?.id ?? bridge.hosts.first?.id
+        guard let hostId else { return input }
+        var output = input
+        output.values["hostId"] = .string(hostId)
+        return output
     }
 
     /// Coalesces message bursts, then moves JSON encoding and atomic disk IO

@@ -106,13 +106,15 @@ zimlo open                          # 打开本机管理页
 
 Codex GUI 插件调用 Zimlo MCP 时也可以按需拉起本机 Bridge，不要求用户先运行命令。
 
-启动后的健康检查使用 protocol v3，并通过 capability 增量声明新能力：
+启动后的健康检查使用 protocol v4，并通过 capability 增量声明新能力：
 
 ```bash
 curl http://127.0.0.1:4747/healthz
 ```
 
-响应中的 `features.projectTrustPolicy`、`features.pushNotifications`、`features.remoteSync` 为 `true` 时，客户端才显示相应入口。协议 v3 客户端遇到旧 Bridge 时会明确提示升级，不会进入无限重连。
+响应中的 `features.projectTrustPolicy`、`features.pushNotifications`、`features.remoteSync`、`features.multiHost` 为 `true` 时，客户端才显示相应入口。协议 v4 客户端遇到旧 Bridge 时会明确提示升级，不会进入无限重连。
+
+同一个 iOS/Web 客户端可以配对多台 Mac。每台 Mac 拥有稳定的 `hostId` 和独立端到端加密通道；客户端只在本地合并 Feed、任务和离线快照，回复、审批、附件与 outbox 会按来源 `hostId` 精确回到对应 Mac。设置页的“运行设备”可查看连接状态并继续添加 Mac。
 
 ## 手机离开局域网后如何工作
 

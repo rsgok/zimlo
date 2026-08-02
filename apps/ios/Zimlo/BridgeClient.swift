@@ -1,17 +1,20 @@
 import CryptoKit
+import Combine
 import Foundation
 import Network
 import UIKit
 
 @MainActor
-final class BridgeClient: ObservableObject {
+final class HostBridgeClient: ObservableObject {
     @Published private(set) var connected = false
-    @Published private(set) var pairingRequired = KeychainStore.load() == nil
+    @Published private(set) var pairingRequired: Bool
     @Published private(set) var error: String?
     @Published private(set) var connectionMode = "offline"
 
     var onMessage: ((ServerEnvelope) -> Void)?
     var onSecureConnection: (() -> Void)?
+    var onPaired: ((DeviceCredentials) -> Void)?
+    var onCredentialsInvalidated: (() -> Void)?
     // 可注入随机源，测试退避序列时固定。
     var backoffRandom: () -> Double = { Double.random(in: 0..<1) }
 
@@ -21,7 +24,7 @@ final class BridgeClient: ObservableObject {
     private var startupTask: Task<Void, Never>?
     private var startupGeneration: UInt64?
     private var connectionGeneration: UInt64 = 0
-    private var credentials: DeviceCredentials?
+    private(set) var credentials: DeviceCredentials?
     private var clientTX: Data?
     private var serverTX: Data?
     private var sendCounter: UInt64 = 0
@@ -33,12 +36,19 @@ final class BridgeClient: ObservableObject {
     private var networkMonitor: NWPathMonitor?
     private var networkAvailable = true
 
+    init(credentials: DeviceCredentials? = nil) {
+        self.credentials = credentials
+        pairingRequired = credentials == nil
+    }
+
+    var hostId: String? { credentials?.host.id }
+
     func start() {
         intentionallyStopped = false
         reconnectAttempt = 0
         startNetworkMonitor()
         guard socket == nil, !connected, startupTask == nil else { return }
-        guard let credentials = KeychainStore.load() else {
+        guard let credentials else {
             pairingRequired = true
             return
         }
@@ -112,7 +122,6 @@ final class BridgeClient: ObservableObject {
 
     func forgetDevice() {
         stop()
-        KeychainStore.clear()
         credentials = nil
         pairingRequired = true
         error = nil
@@ -132,11 +141,10 @@ final class BridgeClient: ObservableObject {
         do {
             let credentials = try await performPairing(pairingURL)
             guard accepts(generation: generation) else { return }
-            try KeychainStore.save(credentials)
-            guard accepts(generation: generation) else { return }
             self.credentials = credentials
             pairingRequired = false
             error = nil
+            onPaired?(credentials)
             connect(remote: prefersRemote(credentials), expectedGeneration: generation)
         } catch {
             guard accepts(generation: generation) else { return }
@@ -459,8 +467,8 @@ final class BridgeClient: ObservableObject {
             connectionTask = nil
             failedSocket.cancel()
             socket = nil
-            KeychainStore.clear()
             credentials = nil
+            onCredentialsInvalidated?()
             pairingRequired = true
             intentionallyStopped = true
             error = "设备身份已失效或被撤销，请重新配对"
@@ -601,6 +609,7 @@ final class BridgeClient: ObservableObject {
             throw ZimloCryptoError.invalidProof
         }
         return DeviceCredentials(
+            host: result.host,
             bridgeURL: bridgeURL,
             deviceId: result.deviceId,
             deviceKey: ZimloCrypto.base64URL(ZimloCrypto.deviceKey(pairKey: pairKey, secret: secret)),
@@ -650,7 +659,7 @@ final class BridgeClient: ObservableObject {
         let (data, response) = try await URLSession.shared.data(for: request)
         guard let http = response as? HTTPURLResponse, http.statusCode == 200,
               let value = try JSONSerialization.jsonObject(with: data) as? [String: Any],
-              value["protocolVersion"] as? Int == 3 else {
+              value["protocolVersion"] as? Int == 4 else {
             throw PairingError.incompatibleVersion
         }
     }
@@ -661,6 +670,166 @@ final class BridgeClient: ObservableObject {
         case .string(let text): return Data(text.utf8)
         @unknown default: throw PairingError.invalidResponse
         }
+    }
+}
+
+struct HostConnectionStatus: Identifiable, Hashable {
+    var host: ZimloHost
+    var connected: Bool
+    var mode: String
+    var id: String { host.id }
+}
+
+/// Multi-Host facade. Each Mac keeps an independent end-to-end encrypted
+/// channel and device grant; the facade only aggregates connection state and
+/// routes a command to the Host that owns its session/project/workspace.
+@MainActor
+final class BridgeClient: ObservableObject {
+    @Published private(set) var connected = false
+    @Published private(set) var pairingRequired = KeychainStore.loadAll().isEmpty
+    @Published private(set) var error: String?
+    @Published private(set) var connectionMode = "offline"
+    @Published private(set) var hosts: [HostConnectionStatus] = []
+
+    var onMessage: ((String, ServerEnvelope) -> Void)?
+    var onSecureConnection: ((String) -> Void)?
+    var backoffRandom: () -> Double = { Double.random(in: 0..<1) }
+
+    private var channels: [String: HostBridgeClient] = [:]
+    private var subscriptions: [String: Set<AnyCancellable>] = [:]
+
+    func start() {
+        let credentials = KeychainStore.loadAll()
+        pairingRequired = credentials.isEmpty
+        for value in credentials {
+            let channel = channels[value.host.id] ?? HostBridgeClient(credentials: value)
+            attach(channel, credentials: value)
+            channel.start()
+        }
+        refreshState()
+    }
+
+    func stop() {
+        channels.values.forEach { $0.stop() }
+        refreshState()
+    }
+
+    func retryNow() {
+        channels.values.forEach { $0.retryNow() }
+    }
+
+    func pair(using pairingURL: URL) async {
+        error = nil
+        let channel = HostBridgeClient()
+        channel.backoffRandom = backoffRandom
+        channel.onPaired = { [weak self, weak channel] credentials in
+            guard let self, let channel else { return }
+            do {
+                try KeychainStore.save(credentials)
+                self.attach(channel, credentials: credentials)
+                self.pairingRequired = false
+                self.refreshState()
+            } catch {
+                self.error = "无法安全保存这台 Mac 的连接信息"
+                channel.stop()
+            }
+        }
+        await channel.pair(using: pairingURL)
+        if let value = channel.error { error = value }
+    }
+
+    func send(_ command: ClientCommand) -> Bool {
+        let requestedHost: String?
+        if case .string(let hostId) = command.values["hostId"] { requestedHost = hostId }
+        else { requestedHost = nil }
+        if let requestedHost {
+            return channels[requestedHost]?.send(command) ?? false
+        }
+        if let only = channels.values.filter(\.connected).first { return only.send(command) }
+        return false
+    }
+
+    @discardableResult
+    func sendToAll(_ command: ClientCommand) -> Bool {
+        var sent = false
+        for (hostId, channel) in channels where channel.connected {
+            var routed = command
+            routed.values["hostId"] = .string(hostId)
+            sent = channel.send(routed) || sent
+        }
+        return sent
+    }
+
+    func uploadMaterial(_ prepared: PreparedMobileMaterial, hostId: String? = nil) async throws -> String {
+        guard let channel = channel(hostId: hostId) else { throw MaterialError.message("目标 Mac 当前不可用") }
+        return try await channel.uploadMaterial(prepared)
+    }
+
+    func downloadMaterial(_ material: Material) async throws -> URL {
+        guard let channel = channel(hostId: material.hostId) else { throw MaterialError.message("来源 Mac 当前不可用") }
+        return try await channel.downloadMaterial(material)
+    }
+
+    func forgetDevice() {
+        channels.values.forEach { $0.forgetDevice() }
+        channels.removeAll()
+        subscriptions.removeAll()
+        KeychainStore.clear()
+        pairingRequired = true
+        error = nil
+        refreshState()
+    }
+
+    func forgetHost(_ hostId: String) {
+        channels.removeValue(forKey: hostId)?.forgetDevice()
+        subscriptions.removeValue(forKey: hostId)
+        try? KeychainStore.remove(hostId: hostId)
+        pairingRequired = channels.isEmpty
+        refreshState()
+    }
+
+    private func channel(hostId: String?) -> HostBridgeClient? {
+        if let hostId { return channels[hostId] }
+        return channels.values.first(where: \.connected) ?? channels.values.first
+    }
+
+    private func attach(_ channel: HostBridgeClient, credentials: DeviceCredentials) {
+        let hostId = credentials.host.id
+        if let previous = channels[hostId], previous !== channel { previous.stop() }
+        channels[hostId] = channel
+        channel.backoffRandom = backoffRandom
+        channel.onMessage = { [weak self] message in self?.onMessage?(hostId, message) }
+        channel.onSecureConnection = { [weak self] in
+            self?.refreshState()
+            self?.onSecureConnection?(hostId)
+        }
+        channel.onCredentialsInvalidated = { [weak self] in
+            try? KeychainStore.remove(hostId: hostId)
+            self?.refreshState()
+        }
+        var values = Set<AnyCancellable>()
+        channel.$connected.sink { [weak self] _ in self?.refreshState() }.store(in: &values)
+        channel.$connectionMode.sink { [weak self] _ in self?.refreshState() }.store(in: &values)
+        channel.$error.sink { [weak self] value in
+            if let value { self?.error = value }
+            self?.refreshState()
+        }.store(in: &values)
+        subscriptions[hostId] = values
+        refreshState()
+    }
+
+    private func refreshState() {
+        hosts = channels.compactMap { hostId, channel in
+            guard let host = channel.credentials?.host else { return nil }
+            return HostConnectionStatus(host: host, connected: channel.connected, mode: channel.connectionMode)
+        }.sorted { lhs, rhs in
+            if lhs.connected != rhs.connected { return lhs.connected }
+            return lhs.host.name.localizedStandardCompare(rhs.host.name) == .orderedAscending
+        }
+        connected = hosts.contains(where: \.connected)
+        pairingRequired = hosts.isEmpty
+        let activeModes = Set(hosts.filter(\.connected).map(\.mode))
+        connectionMode = activeModes.isEmpty ? "offline" : activeModes.count > 1 ? "multi" : activeModes.first ?? "offline"
     }
 }
 
@@ -697,6 +866,7 @@ private struct PairingPending: Codable {
 }
 
 private struct PairResponse: Codable {
+    var host: ZimloHost
     var deviceId: String
     var serverProof: String
     var cloud: PairCloud?

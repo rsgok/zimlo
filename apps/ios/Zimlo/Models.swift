@@ -59,6 +59,13 @@ struct UserProfile: Codable, Hashable {
     var updatedAt: String
 }
 
+struct ZimloHost: Codable, Hashable, Identifiable {
+    var id: String
+    var name: String
+    var platform: String
+    var lastSeenAt: String
+}
+
 struct AgentProfile: Codable, Hashable {
     var displayName: String
     var avatar: String
@@ -69,6 +76,7 @@ struct AgentProfile: Codable, Hashable {
 
 struct Project: Codable, Hashable, Identifiable {
     var id: String
+    var hostId: String? = nil
     var name: String
     var primaryPath: String
     var paths: [String]
@@ -93,6 +101,7 @@ struct SessionCapabilities: Codable, Hashable {
 
 struct AgentSession: Codable, Hashable, Identifiable {
     var id: String
+    var hostId: String? = nil
     var projectId: String?
     var provider: Provider
     var surface: String
@@ -124,6 +133,7 @@ struct AgentSession: Codable, Hashable, Identifiable {
 
 struct FeedPost: Codable, Hashable, Identifiable {
     var id: String
+    var hostId: String? = nil
     var projectId: String?
     var taskId: String
     var runId: String
@@ -153,6 +163,7 @@ struct FeedContent: Codable, Hashable {
 
 struct Material: Codable, Hashable, Identifiable {
     var id: String
+    var hostId: String? = nil
     var kind: String
     var name: String
     var mimeType: String
@@ -189,6 +200,7 @@ struct ApprovalContext: Codable, Hashable {
 
 struct PendingAction: Codable, Hashable, Identifiable {
     var actionId: String
+    var hostId: String? = nil
     var sessionId: String
     var upstreamRequestId: String?
     var kind: String
@@ -204,6 +216,7 @@ struct PendingAction: Codable, Hashable, Identifiable {
 }
 
 struct ProjectTrustPolicy: Codable, Hashable, Identifiable {
+    var hostId: String? = nil
     var projectId: String
     var preset: String
     var autoAllow: [String]
@@ -214,6 +227,7 @@ struct ProjectTrustPolicy: Codable, Hashable, Identifiable {
 
 struct TrustAuditEntry: Codable, Hashable, Identifiable {
     var id: String
+    var hostId: String? = nil
     var projectId: String
     var sessionId: String
     var deviceId: String
@@ -247,15 +261,17 @@ struct FeatureCapabilities: Codable, Hashable {
     var projectTrustPolicy: Bool
     var pushNotifications: Bool
     var remoteSync: Bool
+    var multiHost: Bool
 
     private enum CodingKeys: String, CodingKey {
-        case projectTrustPolicy, pushNotifications, remoteSync
+        case projectTrustPolicy, pushNotifications, remoteSync, multiHost
     }
 
-    init(projectTrustPolicy: Bool, pushNotifications: Bool, remoteSync: Bool) {
+    init(projectTrustPolicy: Bool, pushNotifications: Bool, remoteSync: Bool, multiHost: Bool = false) {
         self.projectTrustPolicy = projectTrustPolicy
         self.pushNotifications = pushNotifications
         self.remoteSync = remoteSync
+        self.multiHost = multiHost
     }
 
     init(from decoder: Decoder) throws {
@@ -263,11 +279,13 @@ struct FeatureCapabilities: Codable, Hashable {
         projectTrustPolicy = try container.decodeIfPresent(Bool.self, forKey: .projectTrustPolicy) ?? false
         pushNotifications = try container.decodeIfPresent(Bool.self, forKey: .pushNotifications) ?? false
         remoteSync = try container.decodeIfPresent(Bool.self, forKey: .remoteSync) ?? false
+        multiHost = try container.decodeIfPresent(Bool.self, forKey: .multiHost) ?? false
     }
 }
 
 struct TaskRecord: Codable, Hashable, Identifiable {
     var id: String
+    var hostId: String? = nil
     var runId: String
     var agentId: String
     var sessionId: String?
@@ -278,6 +296,7 @@ struct TaskRecord: Codable, Hashable, Identifiable {
 
 struct TaskCommand: Codable, Hashable, Identifiable {
     var id: String
+    var hostId: String? = nil
     var idempotencyKey: String
     var kind: String
     var provider: Provider
@@ -294,6 +313,7 @@ struct TaskCommand: Codable, Hashable, Identifiable {
 
 struct TrustedWorkspace: Codable, Hashable, Identifiable {
     var id: String
+    var hostId: String? = nil
     var label: String
     var path: String
     var providers: [Provider]
@@ -301,6 +321,7 @@ struct TrustedWorkspace: Codable, Hashable, Identifiable {
 }
 
 struct TaskPreference: Codable, Hashable, Identifiable {
+    var hostId: String? = nil
     var sessionId: String
     var pinnedAt: String?
     var archivedAt: String?
@@ -323,6 +344,7 @@ struct UnifiedEvent: Codable, Hashable, Identifiable {
 }
 
 struct Snapshot: Codable, Hashable {
+    var host: ZimloHost?
     var userProfile: UserProfile
     var projects: [Project]
     var sessions: [AgentSession]
@@ -345,6 +367,7 @@ struct Snapshot: Codable, Hashable {
     var lanApprovalsEnabled: Bool
 
     static let empty = Snapshot(
+        host: nil,
         userProfile: UserProfile(avatarId: "user-01", updatedAt: ""),
         projects: [], sessions: [], posts: [], tasks: [], commands: [], materials: [], workspaces: [],
         seenPostIds: [], dismissedFeedItemIds: [], taskTimelineCursors: [:],
@@ -357,6 +380,7 @@ struct Snapshot: Codable, Hashable {
     )
 
     enum CodingKeys: String, CodingKey {
+        case host
         case userProfile, projects, sessions, posts, tasks, commands, materials, workspaces
         case seenPostIds, dismissedFeedItemIds, taskTimelineCursors, taskPreferences
         case actions, trustPolicies, trustAudit, notificationSettings, pushDevices, features
@@ -364,7 +388,7 @@ struct Snapshot: Codable, Hashable {
     }
 
     init(
-        userProfile: UserProfile, projects: [Project], sessions: [AgentSession],
+        host: ZimloHost? = nil, userProfile: UserProfile, projects: [Project], sessions: [AgentSession],
         posts: [FeedPost], tasks: [TaskRecord], commands: [TaskCommand], materials: [Material],
         workspaces: [TrustedWorkspace], seenPostIds: [String],
         dismissedFeedItemIds: [String], taskTimelineCursors: [String: String],
@@ -374,6 +398,7 @@ struct Snapshot: Codable, Hashable {
         features: FeatureCapabilities,
         sequence: Int, lanApprovalsEnabled: Bool
     ) {
+        self.host = host
         self.userProfile = userProfile
         self.projects = projects
         self.sessions = sessions
@@ -398,6 +423,7 @@ struct Snapshot: Codable, Hashable {
 
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
+        host = try c.decodeIfPresent(ZimloHost.self, forKey: .host)
         userProfile = try c.decodeIfPresent(UserProfile.self, forKey: .userProfile) ?? Snapshot.empty.userProfile
         projects = try c.decodeIfPresent([Project].self, forKey: .projects) ?? []
         sessions = try c.decodeIfPresent([AgentSession].self, forKey: .sessions) ?? []

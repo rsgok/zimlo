@@ -16,7 +16,7 @@ final class MainAppRouteTests: XCTestCase {
             pid: 123,
             port: 5252,
             version: "0.2.0",
-            protocolVersion: 3,
+            protocolVersion: 4,
             startedAt: "2026-08-01T00:00:00.000Z",
             socketPath: "/tmp/zimlo.sock",
             logPath: nil

@@ -1,15 +1,18 @@
-import type { Snapshot } from "@zimlo/protocol";
+import type { Host, Snapshot } from "@zimlo/protocol";
 
 export interface DeviceCredentials {
+  host: Host;
   deviceId: string;
   deviceKey: string;
+  bridgeURL?: string;
   remoteRelayURL?: string;
   remoteAccessToken?: string;
 }
 
 const DATABASE = "zimlo";
 const STORE = "credentials";
-const RECORD = "bridge-device";
+const LEGACY_RECORD = "bridge-device";
+const RECORD = "bridge-hosts-v1";
 const STATE_STORE = "state";
 const SNAPSHOT_RECORD = "latest-snapshot";
 
@@ -26,21 +29,49 @@ function database(): Promise<IDBDatabase> {
 }
 
 export async function readCredentials(): Promise<DeviceCredentials | null> {
+  return (await readAllCredentials())[0] ?? null;
+}
+
+export async function readAllCredentials(): Promise<DeviceCredentials[]> {
   const db = await database();
   return new Promise((resolve, reject) => {
-    const transaction = db.transaction(STORE, "readonly");
-    const request = transaction.objectStore(STORE).get(RECORD);
-    request.onsuccess = () => resolve(request.result as DeviceCredentials | null ?? null);
+    const transaction = db.transaction(STORE, "readwrite");
+    const store = transaction.objectStore(STORE);
+    const request = store.get(RECORD);
+    request.onsuccess = () => {
+      const current = Array.isArray(request.result) ? request.result as DeviceCredentials[] : [];
+      if (current.length) return resolve(current);
+      const legacy = store.get(LEGACY_RECORD);
+      legacy.onsuccess = () => {
+        const value = legacy.result as Partial<DeviceCredentials> | null;
+        if (!value?.deviceId || !value.deviceKey) return resolve([]);
+        const migrated = [{
+          ...value,
+          host: value.host ?? {
+            id: `legacy_${value.deviceId}`,
+            name: "Mac",
+            platform: "macos",
+            lastSeenAt: "",
+          },
+        } as DeviceCredentials];
+        store.put(migrated, RECORD);
+        store.delete(LEGACY_RECORD);
+        resolve(migrated);
+      };
+      legacy.onerror = () => reject(legacy.error);
+    };
     request.onerror = () => reject(request.error);
     transaction.oncomplete = () => db.close();
   });
 }
 
 export async function saveCredentials(credentials: DeviceCredentials): Promise<void> {
+  const values = await readAllCredentials();
+  const next = [credentials, ...values.filter((value) => value.host.id !== credentials.host.id)];
   const db = await database();
   await new Promise<void>((resolve, reject) => {
     const transaction = db.transaction(STORE, "readwrite");
-    transaction.objectStore(STORE).put(credentials, RECORD);
+    transaction.objectStore(STORE).put(next, RECORD);
     transaction.oncomplete = () => resolve();
     transaction.onerror = () => reject(transaction.error);
   });
@@ -52,7 +83,20 @@ export async function clearCredentials(): Promise<void> {
   await new Promise<void>((resolve, reject) => {
     const transaction = db.transaction([STORE, STATE_STORE], "readwrite");
     transaction.objectStore(STORE).delete(RECORD);
+    transaction.objectStore(STORE).delete(LEGACY_RECORD);
     transaction.objectStore(STATE_STORE).delete(SNAPSHOT_RECORD);
+    transaction.oncomplete = () => resolve();
+    transaction.onerror = () => reject(transaction.error);
+  });
+  db.close();
+}
+
+export async function removeCredentials(hostId: string): Promise<void> {
+  const values = (await readAllCredentials()).filter((value) => value.host.id !== hostId);
+  const db = await database();
+  await new Promise<void>((resolve, reject) => {
+    const transaction = db.transaction(STORE, "readwrite");
+    transaction.objectStore(STORE).put(values, RECORD);
     transaction.oncomplete = () => resolve();
     transaction.onerror = () => reject(transaction.error);
   });

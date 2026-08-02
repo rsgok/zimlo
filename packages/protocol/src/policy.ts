@@ -104,40 +104,44 @@ export function compareFeedItems(left: FeedOrderable, right: FeedOrderable): num
 export type SemanticCommandFields = { type: string } & Record<string, unknown>;
 
 export function semanticCommandKey(command: SemanticCommandFields): string {
+  const host = textField(command, "hostId");
+  let localKey: string;
   switch (command.type) {
     case "task.create":
-      return withMaterialIds(`${command.type}:${textField(command, "provider")}:${textField(command, "workspaceId")}:${textField(command, "text")}`, command.materialIds);
+      localKey = withMaterialIds(`${command.type}:${textField(command, "provider")}:${textField(command, "workspaceId")}:${textField(command, "text")}`, command.materialIds); break;
     case "task.follow_up":
     case "session.message":
-      return withMaterialIds(`${command.type}:${textField(command, "sessionId")}:${textField(command, "text")}`, command.materialIds);
+      localKey = withMaterialIds(`${command.type}:${textField(command, "sessionId")}:${textField(command, "text")}`, command.materialIds); break;
     case "material.register":
-      return `${command.type}:${textField(recordField(command, "material"), "id")}`;
+      localKey = `${command.type}:${textField(recordField(command, "material"), "id")}`; break;
     case "task.command.retry":
-      return `${command.type}:${textField(command, "commandId")}`;
+      localKey = `${command.type}:${textField(command, "commandId")}`; break;
     case "task.command.cancel":
-      return `${command.type}:${textField(command, "commandId") || textField(command, "idempotencyKey")}`;
+      localKey = `${command.type}:${textField(command, "commandId") || textField(command, "idempotencyKey")}`; break;
     case "action.decide":
-      return `${command.type}:${textField(command, "actionId")}:${textField(command, "decisionId")}:${textField(command, "confirmationPhrase")}:${sortedInput(command.input)}`;
+      localKey = `${command.type}:${textField(command, "actionId")}:${textField(command, "decisionId")}:${textField(command, "confirmationPhrase")}:${sortedInput(command.input)}`; break;
     case "feed.dismiss":
     case "feed.dismiss.set":
-      return `${command.type}:${textField(command, "itemId")}`;
+      localKey = `${command.type}:${textField(command, "itemId")}`; break;
     case "feed.seen":
-      return `${command.type}:${textField(command, "postId")}`;
+      localKey = `${command.type}:${textField(command, "postId")}`; break;
     case "task.timeline.seen":
-      return `${command.type}:${textField(command, "sessionId")}:${textField(command, "itemId")}`;
+      localKey = `${command.type}:${textField(command, "sessionId")}:${textField(command, "itemId")}`; break;
     case "agent.profile.update":
     case "trust.policy.update":
-      return `${command.type}:${textField(command, "projectId")}`;
+      localKey = `${command.type}:${textField(command, "projectId")}`; break;
     case "user.profile.update":
     case "notification.settings.update":
     case "notification.device.register":
     case "notification.device.unregister":
-      return command.type;
+      localKey = command.type; break;
     default: {
       const { type: _, ...fields } = command;
-      return `${command.type}:${stableStringify(fields)}`;
+      delete fields.hostId;
+      localKey = `${command.type}:${stableStringify(fields)}`;
     }
   }
+  return host ? `${host}:${localKey}` : localKey;
 }
 
 function withMaterialIds(base: string, value: unknown): string {

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { EMPTY_FEATURE_CAPABILITIES, type ClientCommand, type IntegrationStatus, type ServerMessage, type Snapshot, type UnifiedEvent } from "@zimlo/protocol";
+import { EMPTY_FEATURE_CAPABILITIES, type ClientCommand, type Host, type IntegrationStatus, type ServerMessage, type Snapshot, type UnifiedEvent } from "@zimlo/protocol";
 import {
   createKeyPair,
   decryptFrame,
@@ -15,8 +15,9 @@ import {
 } from "@zimlo/protocol/crypto";
 import {
   clearCredentials,
+  readAllCredentials,
   readCachedSnapshot,
-  readCredentials,
+  removeCredentials,
   saveCachedSnapshot,
   saveCredentials,
   type DeviceCredentials,
@@ -35,6 +36,7 @@ import {
   type CommandOutboxEntry,
 } from "../lib/commandOutbox";
 import { ReconnectController } from "../lib/reconnect";
+import { commandHostId, mergeHostSnapshots, type HostSnapshot } from "../lib/multiHost";
 
 const EMPTY_SNAPSHOT: Snapshot = {
   userProfile: { avatarId: "user-01", updatedAt: "" },
@@ -59,6 +61,13 @@ const EMPTY_SNAPSHOT: Snapshot = {
   sequence: 0,
   lanApprovalsEnabled: false,
 };
+
+const HOST_BROADCAST_COMMANDS = new Set<ClientCommand["type"]>([
+  "user.profile.update",
+  "notification.settings.update",
+  "notification.device.register",
+  "notification.device.unregister",
+]);
 
 export interface DeviceInfo {
   id: string;
@@ -92,7 +101,7 @@ interface BridgeState {
   codexPlugin: CodexPluginInfo | null;
   integrations: IntegrationStatus[];
   connected: boolean;
-  connectionMode: "offline" | "local" | "cloud";
+  connectionMode: "offline" | "local" | "cloud" | "multi";
   pairingRequired: boolean;
   localAdmin: boolean;
   error: string | null;
@@ -107,6 +116,7 @@ interface BridgeState {
   reconnectPausedOffline: boolean;
   /** 当前快照的落盘/到达时间，断线时展示"数据更新于 X 分钟前" */
   snapshotSavedAt: string | null;
+  hosts: Array<Host & { connected: boolean; connectionMode: "offline" | "local" | "cloud"; isLocal: boolean }>;
 }
 
 function isLocalHost(): boolean {
@@ -114,7 +124,12 @@ function isLocalHost(): boolean {
 }
 
 async function pairFromFragment(): Promise<DeviceCredentials | null> {
-  const params = new URLSearchParams(window.location.hash.slice(1));
+  if (!window.location.hash) return null;
+  return pairFromURL(new URL(window.location.href));
+}
+
+async function pairFromURL(pairingURL: URL): Promise<DeviceCredentials | null> {
+  const params = new URLSearchParams(pairingURL.hash.slice(1));
   const pairingId = params.get("pairingId");
   const secretText = params.get("secret");
   const bridgeKeyText = params.get("bridgeKey");
@@ -123,7 +138,8 @@ async function pairFromFragment(): Promise<DeviceCredentials | null> {
   const secret = fromBase64Url(secretText);
   const pair = createKeyPair();
   const pairKey = derivePairKey(pair.privateKey, fromBase64Url(bridgeKeyText), secret);
-  let response = await fetch("/api/pair", {
+  const endpoint = new URL("/api/pair", pairingURL.origin);
+  let response = await fetch(endpoint, {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify({
@@ -144,17 +160,20 @@ async function pairFromFragment(): Promise<DeviceCredentials | null> {
         pairingToken,
         requestId: pending.requestId,
       });
-      response = await fetch(`/api/pair?${query.toString()}`);
+      response = await fetch(`${endpoint.toString()}?${query.toString()}`);
     } while (response.status === 202 && Date.now() < deadline);
   }
   if (!response.ok) throw new Error("配对链接已过期、已使用或校验失败。请在 Mac 上重新生成。");
   const result = await response.json() as {
+    host: Host;
     deviceId: string;
     serverProof: string;
     cloud?: { relayURL: string; accessToken: string };
   };
   if (!verifyProof(pairKey, `server:${result.deviceId}`, result.serverProof)) throw new Error("Bridge 配对证明无效。");
   const credentials: DeviceCredentials = {
+    host: result.host,
+    bridgeURL: pairingURL.origin,
     deviceId: result.deviceId,
     deviceKey: toBase64Url(deriveDeviceKey(pairKey, secret)),
     ...(result.cloud ? {
@@ -167,17 +186,21 @@ async function pairFromFragment(): Promise<DeviceCredentials | null> {
   return credentials;
 }
 
-async function loadCredentials(): Promise<{ credentials: DeviceCredentials | null; localAdmin: boolean }> {
+async function loadCredentials(): Promise<{ credentials: DeviceCredentials[]; localAdmin: boolean }> {
   const paired = await pairFromFragment();
-  if (paired) return { credentials: paired, localAdmin: false };
-  const existing = await readCredentials();
-  if (existing) return { credentials: existing, localAdmin: isLocalHost() && existing.deviceId.startsWith("local_") };
-  if (!isLocalHost()) return { credentials: null, localAdmin: false };
-  const response = await fetch("/api/local-bootstrap");
-  if (!response.ok) throw new Error("无法建立本机管理身份。");
-  const credentials = await response.json() as DeviceCredentials;
-  await saveCredentials(credentials);
-  return { credentials, localAdmin: true };
+  let existing = await readAllCredentials();
+  if (paired) existing = await readAllCredentials();
+  if (isLocalHost() && !existing.some((value) => value.deviceId.startsWith("local_"))) {
+    const response = await fetch("/api/local-bootstrap");
+    if (!response.ok) throw new Error("无法建立本机管理身份。");
+    const local = await response.json() as DeviceCredentials;
+    await saveCredentials(local);
+    existing = await readAllCredentials();
+  }
+  return {
+    credentials: existing,
+    localAdmin: existing.some((value) => value.deviceId.startsWith("local_")),
+  };
 }
 
 function upsertById<T extends { id: string }>(values: T[], value: T): T[] {
@@ -211,8 +234,9 @@ function snapshotSatisfies(command: ClientCommand, snapshot: Snapshot): boolean 
 export function useBridge() {
   const outboxRef = useRef<CommandOutboxEntry[]>(readCommandOutbox());
   const rawSendRef = useRef<(command: ClientCommand) => boolean>(() => false);
-  const reconnectRef = useRef<ReconnectController | null>(null);
+  const retryReconnectRef = useRef<() => void>(() => {});
   const snapshotPersistRef = useRef<{ timer: number | null; latest: Snapshot | null }>({ timer: null, latest: null });
+  const snapshotRef = useRef<Snapshot>(EMPTY_SNAPSHOT);
   const [state, setState] = useState<BridgeState>({
     snapshot: EMPTY_SNAPSHOT,
     events: {},
@@ -232,6 +256,7 @@ export function useBridge() {
     nextRetryAt: null,
     reconnectPausedOffline: false,
     snapshotSavedAt: null,
+    hosts: [],
   });
   const sendRef = useRef<(command: ClientCommand) => boolean>(() => false);
 
@@ -252,7 +277,7 @@ export function useBridge() {
     const idempotencyKey = outboxEntryIdempotencyKey(entry);
     if (entry.state !== "queued" && idempotencyKey) {
       // 先把撤回意图加入持久 outbox；只有落盘成功后才移除原指令。
-      if (!sendRef.current({ type: "task.command.cancel", idempotencyKey })) return false;
+      if (!sendRef.current({ type: "task.command.cancel", idempotencyKey, hostId: entry.command.hostId })) return false;
     }
     replaceOutbox(removeAcknowledged(outboxRef.current, (candidate) => candidate.id === entryId));
     return true;
@@ -274,37 +299,22 @@ export function useBridge() {
     replaceOutbox(removeAcknowledged(outboxRef.current, (candidate) => candidate.id === entryId));
   }, [replaceOutbox]);
 
-  const retryReconnectNow = useCallback(() => reconnectRef.current?.retryNow(), []);
+  const retryReconnectNow = useCallback(() => retryReconnectRef.current(), []);
 
   useEffect(() => {
     let disposed = false;
-    let socket: WebSocket | null = null;
-    let credentialsValue: DeviceCredentials | null = null;
-    let nextMode: "local" | "cloud" = "local";
+    let credentialsValues: DeviceCredentials[] = [];
+    const sockets = new Map<string, WebSocket>();
+    const senders = new Map<string, (command: ClientCommand) => boolean>();
+    const controllers = new Map<string, ReconnectController>();
+    const nextModes = new Map<string, "local" | "cloud">();
+    const connectedHosts = new Set<string>();
+    const snapshotsByHost = new Map<string, HostSnapshot>();
 
-    const controller = new ReconnectController(
-      {
-        connect: () => {
-          if (credentialsValue) connect(credentialsValue, nextMode);
-        },
-        isOnline: () => navigator.onLine,
-        setTimeout: (callback, delayMs) => window.setTimeout(callback, delayMs),
-        clearTimeout: (id) => window.clearTimeout(id),
-        random: Math.random,
-      },
-      () => Boolean(credentialsValue?.remoteRelayURL && credentialsValue?.remoteAccessToken),
-      (reconnect) => setState((current) => ({
-        ...current,
-        reconnectAttempt: reconnect.attempt,
-        nextRetryAt: reconnect.nextRetryAt,
-        reconnectPausedOffline: reconnect.pausedOffline,
-      })),
-    );
-    reconnectRef.current = controller;
-
-    const acknowledge = (message: ServerMessage) => {
+    const acknowledge = (message: ServerMessage, sourceHostId: string) => {
       const next = removeAcknowledged(outboxRef.current, (entry) => {
         const command = entry.command;
+        if (command.hostId && command.hostId !== sourceHostId) return false;
         switch (message.type) {
           case "task.command.updated":
             if (command.type === "task.command.retry") return message.command.id === command.commandId;
@@ -350,13 +360,26 @@ export function useBridge() {
       if (next.length !== outboxRef.current.length) replaceOutbox(next);
     };
 
+    rawSendRef.current = (command) => {
+      const hostId = commandHostId(command, snapshotRef.current, credentialsValues[0]?.host.id);
+      const sender = hostId ? senders.get(hostId) : undefined;
+      return sender?.(command) ?? false;
+    };
+
     sendRef.current = (command) => {
-      if (!isDurableCommand(command)) {
-        const sent = rawSendRef.current(command);
+      if (!command.hostId && HOST_BROADCAST_COMMANDS.has(command.type) && credentialsValues.length > 1) {
+        return credentialsValues
+          .map((credentials) => sendRef.current({ ...command, hostId: credentials.host.id } as ClientCommand))
+          .every(Boolean);
+      }
+      const hostId = commandHostId(command, snapshotRef.current, credentialsValues[0]?.host.id);
+      const routed = hostId ? { ...command, hostId } as ClientCommand : command;
+      if (!isDurableCommand(routed)) {
+        const sent = rawSendRef.current(routed);
         if (!sent) setState((current) => ({ ...current, notice: "Bridge 尚未连接，请稍后重试。" }));
         return sent;
       }
-      const queued = enqueueCommand(outboxRef.current, command);
+      const queued = enqueueCommand(outboxRef.current, routed);
       if (!saveCommandOutbox(queued.entries)) {
         setState((current) => ({ ...current, error: "无法在本机保存这条指令，请保留当前页面后重试。" }));
         return false;
@@ -385,8 +408,19 @@ export function useBridge() {
       return true;
     };
 
-    const applyMessage = (message: ServerMessage) => {
-      acknowledge(message);
+    const applyMessage = (incoming: ServerMessage, host: Host) => {
+      let message = incoming;
+      switch (incoming.type) {
+        case "project.updated": message = { ...incoming, project: { ...incoming.project, hostId: host.id } }; break;
+        case "session.updated": message = { ...incoming, session: { ...incoming.session, hostId: host.id } }; break;
+        case "feed.posted": message = { ...incoming, post: { ...incoming.post, hostId: host.id } }; break;
+        case "task.updated": message = { ...incoming, task: { ...incoming.task, hostId: host.id } }; break;
+        case "task.command.updated": message = { ...incoming, command: { ...incoming.command, hostId: host.id } }; break;
+        case "material.updated": message = { ...incoming, material: { ...incoming.material, hostId: host.id } }; break;
+        case "action.upsert": message = { ...incoming, action: { ...incoming.action, hostId: host.id } }; break;
+        default: break;
+      }
+      acknowledge(message, host.id);
       switch (message.type) {
         case "session.message.result":
           if (!message.ok) markOutboxFailed((entry) => entry.command.type === "session.message" && entry.command.sessionId === message.sessionId, message.message);
@@ -395,90 +429,93 @@ export function useBridge() {
           break;
       }
       setState((current) => {
+        const mutateHostSnapshot = (update: (value: Snapshot) => Snapshot): Snapshot => {
+          const source = snapshotsByHost.get(host.id)?.snapshot ?? normalizeSnapshot({ ...EMPTY_SNAPSHOT, host });
+          snapshotsByHost.set(host.id, { host, snapshot: update(source) });
+          return mergeHostSnapshots([...snapshotsByHost.values()]);
+        };
         switch (message.type) {
           case "session.snapshot":
-            return { ...current, snapshot: normalizeSnapshot(message.snapshot), error: null, snapshotSavedAt: new Date().toISOString() };
+            snapshotsByHost.set(host.id, { host: message.snapshot.host ?? host, snapshot: normalizeSnapshot(message.snapshot) });
+            return { ...current, snapshot: mergeHostSnapshots([...snapshotsByHost.values()]), error: null, snapshotSavedAt: new Date().toISOString() };
           case "project.updated":
-            return { ...current, snapshot: { ...current.snapshot, projects: upsertById(current.snapshot.projects, message.project) } };
+            return { ...current, snapshot: mutateHostSnapshot((value) => ({ ...value, projects: upsertById(value.projects, message.project) })) };
           case "user.profile.updated":
-            return { ...current, snapshot: { ...current.snapshot, userProfile: message.userProfile } };
+            return { ...current, snapshot: mutateHostSnapshot((value) => ({ ...value, userProfile: message.userProfile })) };
           case "session.updated":
-            return { ...current, snapshot: { ...current.snapshot, sessions: upsertById(current.snapshot.sessions, message.session) } };
+            return { ...current, snapshot: mutateHostSnapshot((value) => ({ ...value, sessions: upsertById(value.sessions, message.session) })) };
           case "session.removed":
             return {
               ...current,
-              snapshot: {
-                ...current.snapshot,
-                sessions: current.snapshot.sessions.filter((session) => session.id !== message.sessionId),
-                cards: current.snapshot.cards.filter((card) => card.sessionId !== message.sessionId),
-                posts: current.snapshot.posts.filter((post) => post.sessionId !== message.sessionId),
-                actions: current.snapshot.actions.filter((action) => action.sessionId !== message.sessionId),
-              },
+              snapshot: mutateHostSnapshot((value) => ({
+                ...value,
+                sessions: value.sessions.filter((session) => session.id !== message.sessionId),
+                cards: value.cards.filter((card) => card.sessionId !== message.sessionId),
+                posts: value.posts.filter((post) => post.sessionId !== message.sessionId),
+                actions: value.actions.filter((action) => action.sessionId !== message.sessionId),
+              })),
             };
           case "card.upsert":
-            return { ...current, snapshot: { ...current.snapshot, cards: upsertById(current.snapshot.cards, message.card) } };
+            return { ...current, snapshot: mutateHostSnapshot((value) => ({ ...value, cards: upsertById(value.cards, message.card) })) };
         case "feed.posted": {
             const post = normalizeFeedPost(message.post);
             return post
-              ? { ...current, snapshot: { ...current.snapshot, posts: upsertById(current.snapshot.posts, post) } }
+              ? { ...current, snapshot: mutateHostSnapshot((value) => ({ ...value, posts: upsertById(value.posts, post) })) }
               : current;
           }
           case "task.updated":
-            return { ...current, snapshot: { ...current.snapshot, tasks: upsertById(current.snapshot.tasks, message.task) } };
+            return { ...current, snapshot: mutateHostSnapshot((value) => ({ ...value, tasks: upsertById(value.tasks, message.task) })) };
           case "task.command.updated":
-            return { ...current, snapshot: { ...current.snapshot, commands: upsertById(current.snapshot.commands, message.command) } };
+            return { ...current, snapshot: mutateHostSnapshot((value) => ({ ...value, commands: upsertById(value.commands, message.command) })) };
           case "material.updated":
-            return { ...current, snapshot: { ...current.snapshot, materials: upsertById(current.snapshot.materials, message.material) } };
+            return { ...current, snapshot: mutateHostSnapshot((value) => ({ ...value, materials: upsertById(value.materials, message.material) })) };
           case "feed.seen.updated":
-            return current.snapshot.seenPostIds.includes(message.postId)
+            return snapshotsByHost.get(host.id)?.snapshot.seenPostIds.includes(message.postId)
               ? current
-              : { ...current, snapshot: { ...current.snapshot, seenPostIds: [...current.snapshot.seenPostIds, message.postId] } };
+              : { ...current, snapshot: mutateHostSnapshot((value) => ({ ...value, seenPostIds: [...value.seenPostIds, message.postId] })) };
           case "feed.dismissed.updated":
-            return current.snapshot.dismissedFeedItemIds.includes(message.itemId)
+            return snapshotsByHost.get(host.id)?.snapshot.dismissedFeedItemIds.includes(message.itemId)
               ? current
-              : { ...current, snapshot: { ...current.snapshot, dismissedFeedItemIds: [...current.snapshot.dismissedFeedItemIds, message.itemId] } };
+              : { ...current, snapshot: mutateHostSnapshot((value) => ({ ...value, dismissedFeedItemIds: [...value.dismissedFeedItemIds, message.itemId] })) };
           case "task.timeline.seen.updated":
-            return { ...current, snapshot: { ...current.snapshot, taskTimelineCursors: { ...current.snapshot.taskTimelineCursors, [message.sessionId]: message.itemId } } };
+            return { ...current, snapshot: mutateHostSnapshot((value) => ({ ...value, taskTimelineCursors: { ...value.taskTimelineCursors, [message.sessionId]: message.itemId } })) };
           case "task.preference.updated":
-            return { ...current, snapshot: { ...current.snapshot, taskPreferences: upsertById(current.snapshot.taskPreferences.map((preference) => ({ ...preference, id: preference.sessionId })), { ...message.preference, id: message.preference.sessionId }).map(({ id: _id, ...preference }) => preference) } };
+            return { ...current, snapshot: mutateHostSnapshot((value) => ({ ...value, taskPreferences: upsertById(value.taskPreferences.map((preference) => ({ ...preference, id: preference.sessionId })), { ...message.preference, id: message.preference.sessionId }).map(({ id: _id, ...preference }) => preference) })) };
           case "trust.policy.updated":
             return {
               ...current,
-              snapshot: {
-                ...current.snapshot,
+              snapshot: mutateHostSnapshot((value) => ({
+                ...value,
                 trustPolicies: upsertById(
-                  current.snapshot.trustPolicies.map((policy) => ({ ...policy, id: policy.projectId })),
+                  value.trustPolicies.map((policy) => ({ ...policy, id: policy.projectId })),
                   { ...message.policy, id: message.policy.projectId },
                 ).map(({ id: _id, ...policy }) => policy),
-              },
+              })),
             };
           case "trust.policies":
-            return { ...current, snapshot: { ...current.snapshot, trustPolicies: message.policies, trustAudit: message.audit } };
+            return { ...current, snapshot: mutateHostSnapshot((value) => ({ ...value, trustPolicies: message.policies, trustAudit: message.audit })) };
           case "notification.settings.updated":
-            return { ...current, snapshot: { ...current.snapshot, notificationSettings: message.settings } };
+            return { ...current, snapshot: mutateHostSnapshot((value) => ({ ...value, notificationSettings: message.settings })) };
           case "notification.device.updated":
             return {
               ...current,
-              snapshot: {
-                ...current.snapshot,
+              snapshot: mutateHostSnapshot((value) => ({
+                ...value,
                 pushDevices: message.registration ? [message.registration] : [],
-              },
+              })),
             };
           case "action.upsert": {
             if (isInternalZimloAction(message.action)) {
               return {
                 ...current,
-                snapshot: {
-                  ...current.snapshot,
-                  actions: current.snapshot.actions.filter((action) => action.actionId !== message.action.actionId),
-                },
+                snapshot: mutateHostSnapshot((value) => ({ ...value, actions: value.actions.filter((action) => action.actionId !== message.action.actionId) })),
               };
             }
             const actions = upsertById(
-              current.snapshot.actions.map((action) => ({ ...action, id: action.actionId })),
+              (snapshotsByHost.get(host.id)?.snapshot.actions ?? []).map((action) => ({ ...action, id: action.actionId })),
               { ...message.action, id: message.action.actionId },
             ).map(({ id: _id, ...action }) => action);
-            return { ...current, snapshot: { ...current.snapshot, actions } };
+            return { ...current, snapshot: mutateHostSnapshot((value) => ({ ...value, actions })) };
           }
           case "event.upsert": {
             if (!current.events[message.event.sessionId]) return current;
@@ -491,13 +528,13 @@ export function useBridge() {
           case "pairing.created":
             return { ...current, pairing: message };
           case "lan.approvals.changed":
-            return { ...current, snapshot: { ...current.snapshot, lanApprovalsEnabled: message.enabled } };
+            return { ...current, snapshot: mutateHostSnapshot((value) => ({ ...value, lanApprovalsEnabled: message.enabled })) };
           case "codex.plugin.status":
             return { ...current, codexPlugin: message, notice: message.detail };
           case "integrations.status":
             return { ...current, integrations: message.integrations };
           case "capabilities.changed":
-            return { ...current, snapshot: { ...current.snapshot, sessions: current.snapshot.sessions.map((session) => session.id === message.sessionId ? { ...session, capabilities: message.capabilities } : session) } };
+            return { ...current, snapshot: mutateHostSnapshot((value) => ({ ...value, sessions: value.sessions.map((session) => session.id === message.sessionId ? { ...session, capabilities: message.capabilities } : session) })) };
           case "action.result":
           case "task.command.cancel.result":
           case "session.message.result":
@@ -508,17 +545,19 @@ export function useBridge() {
       });
     };
 
-    const connect = (credentials: DeviceCredentials, mode: "local" | "cloud" = "local") => {
+    const connect = (credentials: DeviceCredentials, controller: ReconnectController, mode: "local" | "cloud" = "local") => {
       if (disposed) return;
+      sockets.get(credentials.host.id)?.close();
       const remote = mode === "cloud";
       const url = new URL(
         remote ? "/v1/sync/device" : "/ws",
-        remote ? credentials.remoteRelayURL : window.location.href,
+        remote ? credentials.remoteRelayURL : credentials.bridgeURL ?? window.location.href,
       );
       url.protocol = url.protocol === "https:" ? "wss:" : "ws:";
-      socket = remote
+      const socket = remote
         ? new WebSocket(url, ["zimlo-relay-v1", `zimlo-token.${credentials.remoteAccessToken}`])
         : new WebSocket(url);
+      sockets.set(credentials.host.id, socket);
       let clientTx: Uint8Array | null = null;
       let serverTx: Uint8Array | null = null;
       let sendCounter = 0;
@@ -528,7 +567,7 @@ export function useBridge() {
       const deviceKey = fromBase64Url(credentials.deviceKey);
       const aad = `zimlo-ws-v1:${credentials.deviceId}`;
 
-      rawSendRef.current = (command) => {
+      const hostSend = (command: ClientCommand) => {
         if (!socket || socket.readyState !== WebSocket.OPEN || !clientTx) {
           return false;
         }
@@ -537,6 +576,7 @@ export function useBridge() {
         socket.send(JSON.stringify({ type: "secure", counter, ciphertext: encryptFrame(clientTx, counter, command, aad) }));
         return true;
       };
+      senders.set(credentials.host.id, hostSend);
       socket.onopen = () => socket?.send(JSON.stringify({
         type: "auth",
         deviceId: credentials.deviceId,
@@ -552,11 +592,18 @@ export function useBridge() {
             clientTx = keys.clientTx;
             serverTx = keys.serverTx;
             controller.notifyConnected();
-            setState((current) => ({ ...current, connected: true, connectionMode: mode, error: null }));
+            connectedHosts.add(credentials.host.id);
+            setState((current) => ({
+              ...current,
+              connected: true,
+              connectionMode: connectedHosts.size > 1 ? "multi" : mode,
+              error: null,
+              hosts: current.hosts.map((host) => host.id === credentials.host.id ? { ...host, connected: true, connectionMode: mode } : host),
+            }));
             // 重连重放：失败条目等用户处理，其余按原幂等键重发。
             const replayed = patchOutboxEntries(outboxRef.current, (entry) => entry.state !== "failed", (entry) => ({ ...entry, state: "sent" as const }));
             for (const entry of replayed) {
-              if (entry.state === "sent") rawSendRef.current(entry.command);
+              if (entry.state === "sent" && commandHostId(entry.command, snapshotRef.current, credentialsValues[0]?.host.id) === credentials.host.id) hostSend(entry.command);
             }
             if (replayed !== outboxRef.current) replaceOutbox(replayed);
             return;
@@ -565,33 +612,76 @@ export function useBridge() {
           if (value.counter !== receiveCounter) throw new Error("检测到消息重放或丢帧，连接已中止。");
           const message = decryptFrame<ServerMessage>(serverTx, value.counter, value.ciphertext, aad);
           receiveCounter += 1;
-          applyMessage(message);
+          applyMessage(message, credentials.host);
         } catch (error) {
           setState((current) => ({ ...current, error: error instanceof Error ? error.message : String(error) }));
           socket?.close();
         }
       };
       socket.onclose = (event) => {
-        rawSendRef.current = () => false;
-        setState((current) => ({
+        senders.delete(credentials.host.id);
+        connectedHosts.delete(credentials.host.id);
+        if (event.code === 1008) {
+          void removeCredentials(credentials.host.id);
+          credentialsValues = credentialsValues.filter((value) => value.host.id !== credentials.host.id);
+          snapshotsByHost.delete(credentials.host.id);
+          replaceOutbox(outboxRef.current.filter((entry) => entry.command.hostId !== credentials.host.id));
+        }
+        setState((current) => {
+          const hosts = current.hosts.map((host) => host.id === credentials.host.id ? { ...host, connected: false, connectionMode: "offline" as const } : host);
+          const retainedHosts = event.code === 1008 ? hosts.filter((host) => host.id !== credentials.host.id) : hosts;
+          const remaining = retainedHosts.filter((host) => connectedHosts.has(host.id));
+          return {
           ...current,
-          connected: false,
-          connectionMode: "offline",
+          connected: connectedHosts.size > 0,
+          connectionMode: remaining.length > 1 ? "multi" : remaining[0]?.connectionMode ?? "offline",
+          hosts: retainedHosts,
+          pairingRequired: retainedHosts.length === 0,
+          ...(event.code === 1008 ? { snapshot: mergeHostSnapshots([...snapshotsByHost.values()]) } : {}),
           ...(event.code === 1008 ? { error: "设备身份已失效或被撤销，请重新配对。" } : {}),
-        }));
+        }; });
         if (!disposed && event.code !== 1008) {
           const hasRemote = Boolean(credentials.remoteRelayURL && credentials.remoteAccessToken);
-          nextMode = hasRemote ? (mode === "local" ? "cloud" : "local") : "local";
+          nextModes.set(credentials.host.id, hasRemote ? (mode === "local" ? "cloud" : "local") : "local");
           controller.notifyDisconnected();
         }
       };
     };
 
-    const onForeground = () => {
-      if (document.visibilityState === "visible") controller.notifyForeground();
+    const startHost = (credentials: DeviceCredentials, preferredMode: "local" | "cloud") => {
+      nextModes.set(credentials.host.id, preferredMode);
+      let controller: ReconnectController;
+      controller = new ReconnectController(
+        {
+          connect: () => connect(credentials, controller, nextModes.get(credentials.host.id) ?? preferredMode),
+          isOnline: () => navigator.onLine,
+          setTimeout: (callback, delayMs) => window.setTimeout(callback, delayMs),
+          clearTimeout: (id) => window.clearTimeout(id),
+          random: Math.random,
+        },
+        () => Boolean(credentials.remoteRelayURL && credentials.remoteAccessToken),
+        (reconnect) => {
+          if (credentials.host.id !== credentialsValues[0]?.host.id) return;
+          setState((current) => ({
+            ...current,
+            reconnectAttempt: reconnect.attempt,
+            nextRetryAt: reconnect.nextRetryAt,
+            reconnectPausedOffline: reconnect.pausedOffline,
+          }));
+        },
+      );
+      controllers.set(credentials.host.id, controller);
+      retryReconnectRef.current = () => {
+        for (const value of controllers.values()) value.retryNow();
+      };
+      connect(credentials, controller, preferredMode);
     };
-    const onOnline = () => controller.notifyOnline();
-    const onOffline = () => controller.notifyOffline();
+
+    const onForeground = () => {
+      if (document.visibilityState === "visible") for (const controller of controllers.values()) controller.notifyForeground();
+    };
+    const onOnline = () => { for (const controller of controllers.values()) controller.notifyOnline(); };
+    const onOffline = () => { for (const controller of controllers.values()) controller.notifyOffline(); };
     document.addEventListener("visibilitychange", onForeground);
     window.addEventListener("online", onOnline);
     window.addEventListener("offline", onOffline);
@@ -605,11 +695,21 @@ export function useBridge() {
       return loadCredentials();
     }).then(({ credentials, localAdmin }) => {
       if (disposed) return;
-      credentialsValue = credentials;
-      setState((current) => ({ ...current, localAdmin, pairingRequired: !credentials }));
-      if (credentials) {
-        nextMode = "local";
-        connect(credentials, "local");
+      credentialsValues = credentials;
+      setState((current) => ({
+        ...current,
+        localAdmin,
+        pairingRequired: credentials.length === 0,
+        hosts: credentials.map((value) => ({
+          ...value.host,
+          connected: false,
+          connectionMode: "offline",
+          isLocal: value.deviceId.startsWith("local_"),
+        })),
+      }));
+      for (const value of credentials) {
+        const canUseLocal = (isLocalHost() && value.deviceId.startsWith("local_")) || !value.remoteRelayURL;
+        startHost(value, canUseLocal ? "local" : "cloud");
       }
     }).catch((error: unknown) => {
       setState((current) => ({ ...current, pairingRequired: true, error: error instanceof Error ? error.message : String(error) }));
@@ -618,17 +718,18 @@ export function useBridge() {
     return () => {
       disposed = true;
       rawSendRef.current = () => false;
-      controller.dispose();
-      reconnectRef.current = null;
+      for (const controller of controllers.values()) controller.dispose();
+      retryReconnectRef.current = () => {};
       document.removeEventListener("visibilitychange", onForeground);
       window.removeEventListener("online", onOnline);
       window.removeEventListener("offline", onOffline);
-      socket?.close();
+      for (const socket of sockets.values()) socket.close();
     };
   }, [markOutboxFailed, replaceOutbox]);
 
   // 快照落盘节流：1.5s trailing debounce，最多每 1.5s 全量序列化一次；卸载时 flush。
   useEffect(() => {
+    snapshotRef.current = state.snapshot;
     if (state.snapshot.sequence === 0) return;
     const persist = snapshotPersistRef.current;
     persist.latest = state.snapshot;
@@ -657,6 +758,22 @@ export function useBridge() {
     clearDeviceLocalData();
     window.location.reload();
   }, []);
+  const pairAdditionalHost = useCallback(async (value: string) => {
+    let pairingURL: URL;
+    try {
+      pairingURL = new URL(value.trim());
+    } catch {
+      throw new Error("连接码格式不正确，请从另一台 Mac 重新复制。");
+    }
+    const credentials = await pairFromURL(pairingURL);
+    if (!credentials) throw new Error("连接码不完整，请从另一台 Mac 重新复制。");
+    window.location.reload();
+  }, []);
+  const forgetHost = useCallback(async (hostId: string) => {
+    await removeCredentials(hostId);
+    replaceOutbox(outboxRef.current.filter((entry) => entry.command.hostId !== hostId));
+    window.location.reload();
+  }, [replaceOutbox]);
   return {
     ...state,
     send,
@@ -667,5 +784,7 @@ export function useBridge() {
     retryOutboxEntry,
     removeOutboxEntry,
     retryReconnectNow,
+    pairAdditionalHost,
+    forgetHost,
   };
 }

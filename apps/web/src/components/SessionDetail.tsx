@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import type { ClientCommand, FeedPost, Material, PendingAction, Project, Session, TaskCommand, TaskRecord, UnifiedEvent, UserAvatarId } from "@zimlo/protocol";
 import { AppTopBar } from "./AppTopBar";
 import { ActionPanel } from "./ActionPanel";
@@ -8,6 +8,7 @@ import { ProviderBadge, ProviderIcon } from "./ProviderBadge";
 import { conciseTaskInput, sessionLocation } from "./sessionPresentation";
 import { AgentAvatar, UserAvatar } from "./UserAvatar";
 import { useModalFocus } from "./useModalFocus";
+import { initialMaterialURL, materialURL } from "../lib/materialAccess";
 
 interface SessionDetailProps {
   session: Session;
@@ -391,10 +392,7 @@ export function SessionDetail({ session, project, events, actions, posts, comman
                   {(item.command.materialIds ?? []).length > 0 && <div className="timeline-materials">
                     {(item.command.materialIds ?? []).flatMap((id) => {
                       const material = materials.find((candidate) => candidate.id === id);
-                      return material ? [<a key={id} href={`/api/materials/${encodeURIComponent(id)}/content`} target="_blank" rel="noreferrer">
-                        <span>{material.kind === "image" ? "IMG" : material.kind === "video" ? "VIDEO" : material.kind === "pdf" ? "PDF" : "FILE"}</span>
-                        <strong>{material.name}</strong>
-                      </a>] : [];
+                      return material ? [<TimelineMaterialLink key={id} material={material} send={send} />] : [];
                     })}
                   </div>}
                   {item.command.error && <div className="timeline-command-error"><FormattedText text={item.command.error} compact /></div>}
@@ -430,4 +428,17 @@ export function SessionDetail({ session, project, events, actions, posts, comman
       </section>
     </div>
   );
+}
+
+function TimelineMaterialLink({ material, send }: { material: Material; send: (command: ClientCommand) => boolean }) {
+  const [url, setURL] = useState(() => initialMaterialURL(material));
+  useEffect(() => {
+    let active = true;
+    void materialURL(material, send).then((value) => { if (active) setURL(value); }).catch(() => {});
+    return () => { active = false; };
+  }, [material, send]);
+  return <a href={url} target="_blank" rel="noreferrer">
+    <span>{material.kind === "image" ? "IMG" : material.kind === "video" ? "VIDEO" : material.kind === "pdf" ? "PDF" : "FILE"}</span>
+    <strong>{material.name}</strong>
+  </a>;
 }

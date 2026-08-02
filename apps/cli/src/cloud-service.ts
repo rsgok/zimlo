@@ -8,6 +8,7 @@ import {
 } from "node:crypto";
 import { toBase64Url } from "@zimlo/protocol/crypto";
 import type { PushRouteEnvelope } from "@zimlo/protocol/crypto";
+import type { Host } from "@zimlo/protocol";
 import type { ZimloStore } from "./store.js";
 
 interface CloudIdentity {
@@ -40,6 +41,7 @@ export interface CloudPairingRequest {
 }
 
 export interface CloudPairingResponse {
+  host: Host;
   deviceId: string;
   serverProof: string;
   cloud?: DeviceCloudCredentials;

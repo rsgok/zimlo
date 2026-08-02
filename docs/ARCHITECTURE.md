@@ -110,6 +110,10 @@ Cloudflare Worker 负责鉴权和路由，D1 只保存 Mac 安装公钥、设备
 
 Mac 安装身份使用 P-256 签名，私钥只保存在权限为 `0600` 的本机 SQLite metadata；每台手机的随机云访问令牌只在可信配对时下发，Cloudflare 只保存 SHA-256 哈希。撤销设备会同时撤销本地 Bridge 身份和云端记录。
 
+## 多 Mac 聚合
+
+每个 Bridge 在自己的 SQLite metadata 中持久化稳定 `hostId`。同一个客户端可保存多组 Keychain/IndexedDB 凭据，并同时维持多条独立的 LAN 或 Cloud relay 加密连接；云端仍按 Mac 安装隔离，既不建立跨 Mac 明文数据库，也不合并任务正文。客户端将每个 Snapshot 的 session、project、post、material、action 与 command 标记为来源 Host 后再合并展示，所有写命令和物料 HTTP 传输都依据 `hostId` 路由。全局头像、通知偏好和 APNs 注册会广播到已配对 Host，幂等语义键同样带 Host 前缀，避免不同机器之间误去重。
+
 ## 图片、视频与文档
 
 物料字节不进入 WebSocket。WebSocket 只传 material id、安全元数据、任务引用和状态，因此一个视频上传不会阻塞审批、回复与实时状态。局域网设备通过带设备 HMAC 证明的 HTTP 直传 Bridge；远程设备先用每个文件独立的 AES-256-GCM 密钥加密，再把密文放入独立的 `zimlo-materials` R2 临时桶。密钥只走端到端加密的 Bridge 消息，Cloudflare 看不到文件名、MIME、任务 id 或明文。Mac 校验大小、格式特征和 SHA-256 后以 `0600` 保存，并删除成功中转对象；R2 的 24 小时生命周期负责清理断线残留。
@@ -142,7 +146,7 @@ Feed 展示在策略之上再加一层“页面会话固定序列”（apps/web 
 - `startup-diagnostics.json`：最近一次启动结果（成功，或 `port_in_use` / `config_corrupt` / `runtime_missing` / `startup_failed` 加消息），由 `zimlo status` 与 `zimlo doctor` 展示。
 - `manual-stop`：`zimlo stop` 写入的手动停止标记。契约：只有 macOS App 的自动管理（启动拉起、崩溃自动重启、监控循环）尊重它；`zimlo start` 启动时清除（输入 start 本身就是手动动作）；`zimlo mcp` 自动拉起 Bridge 时忽略。
 
-`zimlo stop` 校验描述文件的 PID 归属后发送 SIGTERM，拒绝停止无法确认归属的进程。macOS 复用 4747 端口上已有服务前会先探测 /healthz 并要求 `protocolVersion == 2`；崩溃自动重启按 1/2/4/8/16/30 秒退避，两分钟滑动窗口内失败五次熔断，等待用户在菜单栏手动重试；EADDRINUSE、配置损坏与运行时缺失是终止型故障，不自动重启，端口占用尽力显示进程名与 PID。
+`zimlo stop` 校验描述文件的 PID 归属后发送 SIGTERM，拒绝停止无法确认归属的进程。macOS 复用 4747 端口上已有服务前会先探测 /healthz 并要求 `protocolVersion == 4`；崩溃自动重启按 1/2/4/8/16/30 秒退避，两分钟滑动窗口内失败五次熔断，等待用户在菜单栏手动重试；EADDRINUSE、配置损坏与运行时缺失是终止型故障，不自动重启，端口占用尽力显示进程名与 PID。
 
 ## 本地 API 与集成探测
 

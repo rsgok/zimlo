@@ -1,6 +1,6 @@
 import type { ClientCommand, Material, MaterialKind } from "@zimlo/protocol";
 import { fromBase64Url, makeProof, randomBytes, toBase64Url } from "@zimlo/protocol/crypto";
-import { readCredentials } from "./credentials";
+import { readAllCredentials } from "./credentials";
 
 export const MATERIAL_LIMITS: Record<MaterialKind, number> = {
   image: 8 * 1024 * 1024,
@@ -38,10 +38,11 @@ export function validateFile(file: File): { kind: MaterialKind } | { error: stri
   return { kind };
 }
 
-export async function uploadMaterial(file: File): Promise<PreparedMaterial> {
+export async function uploadMaterial(file: File, hostId?: string): Promise<PreparedMaterial> {
   const validation = validateFile(file);
   if ("error" in validation) throw new Error(validation.error);
-  const credentials = await readCredentials();
+  const allCredentials = await readAllCredentials();
+  const credentials = allCredentials.find((value) => value.host.id === hostId) ?? allCredentials[0];
   if (!credentials) throw new Error("请先连接 Mac");
   const id = `material_${crypto.randomUUID().replaceAll("-", "")}`;
   const plaintext = new Uint8Array(await file.arrayBuffer());
@@ -60,9 +61,9 @@ export async function uploadMaterial(file: File): Promise<PreparedMaterial> {
   encrypted.set(nonce);
   encrypted.set(ciphertext, nonce.length);
   const local = ["localhost", "127.0.0.1", "::1", "[::1]"].includes(window.location.hostname);
-  const transport = local ? "local" : "cloud";
-  const endpoint = local
-    ? new URL(`/api/materials/${encodeURIComponent(id)}/blob`, window.location.href)
+  const transport = (local && credentials.deviceId.startsWith("local_")) || !credentials.remoteRelayURL ? "local" : "cloud";
+  const endpoint = transport === "local"
+    ? new URL(`/api/materials/${encodeURIComponent(id)}/blob`, credentials.bridgeURL ?? window.location.href)
     : credentials.remoteRelayURL
       ? new URL(`/v1/materials/${encodeURIComponent(id)}`, credentials.remoteRelayURL)
       : null;
@@ -82,6 +83,7 @@ export async function uploadMaterial(file: File): Promise<PreparedMaterial> {
   const now = new Date().toISOString();
   const material: Omit<Material, "status" | "error"> = {
     id,
+    hostId: credentials.host.id,
     kind: validation.kind,
     name: file.name.slice(0, 180),
     mimeType: normalizedMimeType(file, validation.kind),
@@ -96,6 +98,7 @@ export async function uploadMaterial(file: File): Promise<PreparedMaterial> {
     localPreviewURL: URL.createObjectURL(file),
     registerCommand: {
       type: "material.register",
+      hostId: credentials.host.id,
       material,
       transport,
       encryptionKey: toBase64Url(key),

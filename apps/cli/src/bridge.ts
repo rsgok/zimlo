@@ -168,7 +168,7 @@ export class BridgeServer {
       if (!isLoopbackAddress(request.ip)) return reply.code(403).send(loopbackOnly());
       try {
         const device = this.devices.localAdmin();
-        return { deviceId: device.id, deviceKey: device.keyBase64 };
+        return { host: this.runtime.host, deviceId: device.id, deviceKey: device.keyBase64 };
       } catch (error) {
         return sendApiError(reply, classifyLocalApiError(error, "bootstrap_unavailable", "本机管理设备初始化失败。"));
       }
@@ -233,6 +233,7 @@ export class BridgeServer {
         if (!result) return reply.code(410).send({ error: "Pairing expired, used, or invalid" });
         const cloud = await this.cloud.provisionDevice(result.device.id);
         return {
+          host: this.runtime.host,
           deviceId: result.device.id,
           serverProof: result.serverProof,
           ...(cloud ? { cloud } : {}),
@@ -728,6 +729,7 @@ export class BridgeServer {
         }
         const cloud = await this.cloud.provisionDevice(result.device.id);
         await this.cloud.completePairing(pairing.pairingId, pending.requestId, {
+          host: this.runtime.host,
           deviceId: result.device.id,
           serverProof: result.serverProof,
           ...(cloud ? { cloud } : {}),

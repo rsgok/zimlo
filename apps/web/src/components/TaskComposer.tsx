@@ -93,7 +93,8 @@ export function TaskComposer({ workspaces, projects, initialProjectId = null, se
       return { ...rest, state: "uploading" };
     }));
     try {
-      const prepared = await uploadMaterial(file);
+      const targetHostId = session?.hostId ?? selectedWorkspace?.hostId ?? initialProject?.hostId;
+      const prepared = await uploadMaterial(file, targetHostId);
       materialURLs.current.add(prepared.localPreviewURL);
       if (!send(prepared.registerCommand)) throw new Error("物料登记未能保存，请重试");
       setMaterials((current) => current.map((item) => item.id === id ? { ...item, state: "ready", prepared } : item));

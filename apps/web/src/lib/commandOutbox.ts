@@ -53,7 +53,9 @@ export function commandSemanticKey(command: ClientCommand): string {
 
 function commandId(command: ClientCommand): string {
   if (command.type === "task.command.cancel") return commandSemanticKey(command);
-  if ("idempotencyKey" in command && command.idempotencyKey !== undefined) return command.idempotencyKey;
+  if ("idempotencyKey" in command && command.idempotencyKey !== undefined) {
+    return command.hostId ? `${command.hostId}:${command.idempotencyKey}` : command.idempotencyKey;
+  }
   return `${command.type}:${crypto.randomUUID()}`;
 }
 

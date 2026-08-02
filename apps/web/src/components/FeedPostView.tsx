@@ -1,9 +1,10 @@
 import { memo, useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import type { FeedPost, Material, Project, Session } from "@zimlo/protocol";
+import type { ClientCommand, FeedPost, Material, Project, Session } from "@zimlo/protocol";
 import { FormattedText } from "./FormattedText";
 import { AgentAvatar } from "./UserAvatar";
 import { relativeTime, useNow } from "../lib/nowTicker";
+import { initialMaterialURL, materialURL } from "../lib/materialAccess";
 
 interface FeedPostViewProps {
   post: FeedPost;
@@ -12,6 +13,7 @@ interface FeedPostViewProps {
   project: Project | undefined;
   onOpenProject: (projectId: string) => void;
   interactionMode?: "swipe" | "desktop";
+  send?: ((command: ClientCommand) => boolean) | undefined;
 }
 
 interface MediaPreview {
@@ -21,7 +23,7 @@ interface MediaPreview {
   mimeType: string;
 }
 
-export const FeedPostView = memo(function FeedPostView({ post, materials = [], session, project, onOpenProject, interactionMode = "swipe" }: FeedPostViewProps) {
+export const FeedPostView = memo(function FeedPostView({ post, materials = [], session, project, onOpenProject, interactionMode = "swipe", send = () => false }: FeedPostViewProps) {
   const now = useNow();
   const content = post.content ?? { type: "text" as const };
   const [mediaPreview, setMediaPreview] = useState<MediaPreview | null>(null);
@@ -37,7 +39,7 @@ export const FeedPostView = memo(function FeedPostView({ post, materials = [], s
         <span className="post-time">{relativeTime(post.createdAt, now)}</span>
       </div>
 
-      {content.type !== "text" && <FeedMediaCard post={{ ...post, content }} materials={materials} onPreview={setMediaPreview} />}
+      {content.type !== "text" && <FeedMediaCard post={{ ...post, content }} materials={materials} onPreview={setMediaPreview} send={send} />}
       <div className={`post-copy ${content.type !== "text" ? "post-copy-media" : ""}`}>
         <h2>{post.headline}</h2>
         <div className="post-takeaway"><FormattedText text={post.takeaway} compact /></div>
@@ -60,13 +62,14 @@ export const FeedPostView = memo(function FeedPostView({ post, materials = [], s
   && previous.session === next.session
   && previous.project === next.project
   && previous.onOpenProject === next.onOpenProject
+  && previous.send === next.send
   && previous.interactionMode === next.interactionMode,
 );
 
-function FeedMediaCard({ post, materials, onPreview }: { post: FeedPost; materials: Material[]; onPreview: (preview: MediaPreview) => void }) {
+function FeedMediaCard({ post, materials, onPreview, send }: { post: FeedPost; materials: Material[]; onPreview: (preview: MediaPreview) => void; send: (command: ClientCommand) => boolean }) {
   const content = post.content ?? { type: "text" as const };
   const byId = new Map(materials.map((material) => [material.id, material]));
-  const src = (id: string) => `/api/materials/${encodeURIComponent(id)}/content`;
+  const asset = (material: Material) => <MaterialAssetURL material={material} send={send} />;
   if (content.type === "image_album") {
     const values = content.materialIds.flatMap((id) => {
       const material = byId.get(id);
@@ -76,34 +79,80 @@ function FeedMediaCard({ post, materials, onPreview }: { post: FeedPost; materia
       {values.map((material) => <div
         className="feed-image-preview"
         key={material.id}
-      ><img src={src(material.id)} alt={material.name} loading="lazy" /></div>)}
+      >{asset(material)}</div>)}
       {values.length > 1 && <div className="feed-image-dots" aria-hidden="true">{values.map((material) => <i key={material.id} />)}</div>}
     </div>;
   }
   if (content.type === "video") {
     const material = byId.get(content.materialId);
     const poster = content.posterMaterialId ? byId.get(content.posterMaterialId) : undefined;
-    return material?.status === "ready" ? <InlineFeedVideo
-      src={src(material.id)}
-      poster={poster ? src(poster.id) : undefined}
-      name={material.name}
-    /> : <MissingMaterial />;
+    return material?.status === "ready" ? <ResolvedVideo material={material} poster={poster} send={send} /> : <MissingMaterial />;
   }
   if (content.type === "document") {
     const material = byId.get(content.materialId);
     if (!material || material.status !== "ready") return <MissingMaterial />;
     if (material.mimeType.startsWith("text/") || material.mimeType === "application/json") {
-      return <InlineDocumentReader material={material} url={src(material.id)} />;
+      return <ResolvedDocument material={material} send={send} />;
     }
     if (material.kind === "pdf" || material.mimeType === "application/pdf") return <article className="feed-pdf-reader" aria-label={`阅读 ${material.name}`}>
-      <iframe src={src(material.id)} title={material.name} />
-      <button type="button" onPointerDown={(event) => event.stopPropagation()} onClick={() => onPreview({ kind: "document", url: src(material.id), name: material.name, mimeType: material.mimeType })}>全屏阅读</button>
+      <MaterialFrame material={material} send={send} />
+      <ResolvedPreviewButton material={material} send={send} onPreview={onPreview} />
     </article>;
-    return <button type="button" className="feed-document" onPointerDown={(event) => event.stopPropagation()} onClick={() => onPreview({ kind: "document", url: src(material.id), name: material.name, mimeType: material.mimeType })}>
-      <span className="feed-document-icon">FILE</span><span><strong>{material.name}</strong><small>{content.summary ?? post.takeaway}</small></span><span aria-hidden="true">↗</span>
-    </button>;
+    return <ResolvedDocumentButton material={material} send={send} summary={content.summary ?? post.takeaway} onPreview={onPreview} />;
   }
   return null;
+}
+
+function useResolvedMaterialURL(material: Material, send: (command: ClientCommand) => boolean): string {
+  const [url, setURL] = useState(() => initialMaterialURL(material));
+  useEffect(() => {
+    let active = true;
+    void materialURL(material, send).then((value) => {
+      if (active) setURL(value);
+    }).catch(() => {});
+    return () => { active = false; };
+  }, [material, send]);
+  return url;
+}
+
+function MaterialAssetURL({ material, send }: { material: Material; send: (command: ClientCommand) => boolean }) {
+  const url = useResolvedMaterialURL(material, send);
+  return <img src={url} alt={material.name} loading="lazy" />;
+}
+
+function ResolvedVideo({ material, poster, send }: { material: Material; poster?: Material | undefined; send: (command: ClientCommand) => boolean }) {
+  const src = useResolvedMaterialURL(material, send);
+  const posterURL = poster ? initialMaterialURL(poster) : undefined;
+  const [resolvedPoster, setResolvedPoster] = useState(posterURL);
+  useEffect(() => {
+    if (!poster) { setResolvedPoster(undefined); return; }
+    let active = true;
+    void materialURL(poster, send).then((value) => { if (active) setResolvedPoster(value); }).catch(() => {});
+    return () => { active = false; };
+  }, [poster, send]);
+  return <InlineFeedVideo src={src} poster={resolvedPoster} name={material.name} />;
+}
+
+function ResolvedDocument({ material, send }: { material: Material; send: (command: ClientCommand) => boolean }) {
+  const url = useResolvedMaterialURL(material, send);
+  return <InlineDocumentReader material={material} url={url} />;
+}
+
+function MaterialFrame({ material, send }: { material: Material; send: (command: ClientCommand) => boolean }) {
+  const url = useResolvedMaterialURL(material, send);
+  return <iframe src={url} title={material.name} />;
+}
+
+function ResolvedPreviewButton({ material, send, onPreview }: { material: Material; send: (command: ClientCommand) => boolean; onPreview: (preview: MediaPreview) => void }) {
+  const url = useResolvedMaterialURL(material, send);
+  return <button type="button" onPointerDown={(event) => event.stopPropagation()} onClick={() => onPreview({ kind: "document", url, name: material.name, mimeType: material.mimeType })}>全屏阅读</button>;
+}
+
+function ResolvedDocumentButton({ material, send, summary, onPreview }: { material: Material; send: (command: ClientCommand) => boolean; summary: string; onPreview: (preview: MediaPreview) => void }) {
+  const url = useResolvedMaterialURL(material, send);
+  return <button type="button" className="feed-document" onPointerDown={(event) => event.stopPropagation()} onClick={() => onPreview({ kind: "document", url, name: material.name, mimeType: material.mimeType })}>
+    <span className="feed-document-icon">FILE</span><span><strong>{material.name}</strong><small>{summary}</small></span><span aria-hidden="true">↗</span>
+  </button>;
 }
 
 function InlineFeedVideo({ src, poster, name }: { src: string; poster?: string | undefined; name: string }) {

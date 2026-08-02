@@ -93,35 +93,38 @@ enum SemanticKey {
             guard case .string(let value) = command.values[key] else { return "" }
             return value.trimmingCharacters(in: .whitespacesAndNewlines)
         }
+        let host = field("hostId")
+        let localKey: String
         switch command.type {
         case "task.create":
-            return "\(command.type):\(field("provider")):\(field("workspaceId")):\(field("text"))"
+            localKey = "\(command.type):\(field("provider")):\(field("workspaceId")):\(field("text"))"
         case "task.follow_up", "session.message":
-            return "\(command.type):\(field("sessionId")):\(field("text"))"
+            localKey = "\(command.type):\(field("sessionId")):\(field("text"))"
         case "task.command.retry":
-            return "\(command.type):\(field("commandId"))"
+            localKey = "\(command.type):\(field("commandId"))"
         case "task.command.cancel":
             let target = field("commandId").isEmpty ? field("idempotencyKey") : field("commandId")
-            return "\(command.type):\(target)"
+            localKey = "\(command.type):\(target)"
         case "action.decide":
-            return "\(command.type):\(field("actionId")):\(field("decisionId")):\(field("confirmationPhrase")):\(sortedInput(command.values["input"]))"
+            localKey = "\(command.type):\(field("actionId")):\(field("decisionId")):\(field("confirmationPhrase")):\(sortedInput(command.values["input"]))"
         case "feed.dismiss", "feed.dismiss.set":
-            return "\(command.type):\(field("itemId"))"
+            localKey = "\(command.type):\(field("itemId"))"
         case "feed.seen":
-            return "\(command.type):\(field("postId"))"
+            localKey = "\(command.type):\(field("postId"))"
         case "task.timeline.seen":
-            return "\(command.type):\(field("sessionId")):\(field("itemId"))"
+            localKey = "\(command.type):\(field("sessionId")):\(field("itemId"))"
         case "agent.profile.update", "trust.policy.update":
-            return "\(command.type):\(field("projectId"))"
+            localKey = "\(command.type):\(field("projectId"))"
         case "user.profile.update", "notification.settings.update",
              "notification.device.register", "notification.device.unregister":
-            return command.type
+            localKey = command.type
         default:
             // 未知类型：递归按 key 码元序排序的确定性 JSON（不含 type，已在键前缀中）。
             var fields = command.values
             fields.removeValue(forKey: "type")
-            return "\(command.type):\(stableStringify(.object(fields)))"
+            localKey = "\(command.type):\(stableStringify(.object(fields)))"
         }
+        return host.isEmpty ? localKey : "\(host):\(localKey)"
     }
 
     // action.decide 的 input 记录：只取字符串值，按 key 码元序排列成 JSON 对数组。

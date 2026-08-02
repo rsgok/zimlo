@@ -101,7 +101,7 @@ describe("feed-priority vectors", () => {
 describe("outbox-keys vectors", () => {
   interface KeyCase { name: string; input: Record<string, unknown> & { type: string }; expected: { key: string } }
   const { version, cases } = readVectors<KeyCase>("outbox-keys.json");
-  it("declares version 1", () => expect(version).toBe(1));
+  it("declares version 2", () => expect(version).toBe(2));
   for (const testCase of cases) {
     it(testCase.name, () => {
       expect(semanticCommandKey(testCase.input)).toBe(testCase.expected.key);

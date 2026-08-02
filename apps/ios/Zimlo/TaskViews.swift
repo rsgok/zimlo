@@ -835,7 +835,7 @@ struct NewTaskView: View {
         do {
             let value = try await MaterialPolicy.prepare(data: data, name: name, mimeType: mimeType)
             prepared = value
-            _ = try await model.uploadAndRegister(value)
+            _ = try await model.uploadAndRegister(value, hostId: targetHostId)
             preparedMaterials.append(value)
         } catch {
             if let prepared, !failedMaterials.contains(where: { $0.id == prepared.id }) {
@@ -851,7 +851,7 @@ struct NewTaskView: View {
         materialError = nil
         defer { uploadsInFlight -= 1 }
         do {
-            _ = try await model.uploadAndRegister(prepared)
+            _ = try await model.uploadAndRegister(prepared, hostId: targetHostId)
             failedMaterials.removeAll { $0.id == prepared.id }
             if !preparedMaterials.contains(where: { $0.id == prepared.id }) {
                 preparedMaterials.append(prepared)
@@ -864,5 +864,9 @@ struct NewTaskView: View {
     private func formatBytes(_ bytes: Int) -> String {
         if bytes >= 1_024 * 1_024 { return String(format: "%.1fMB", Double(bytes) / 1_024 / 1_024) }
         return "\(max(1, bytes / 1_024))KB"
+    }
+
+    private var targetHostId: String? {
+        session?.hostId ?? model.snapshot.workspaces.first(where: { $0.id == lastWorkspace })?.hostId
     }
 }

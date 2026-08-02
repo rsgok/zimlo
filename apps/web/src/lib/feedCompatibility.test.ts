@@ -46,6 +46,7 @@ describe("Feed compatibility", () => {
     expect(snapshot.taskPreferences).toEqual([]);
     expect(snapshot.userProfile.avatarId).toBe("user-01");
     expect(snapshot.features).toEqual({
+      multiHost: false,
       projectTrustPolicy: false,
       pushNotifications: false,
       remoteSync: false,
