@@ -21,25 +21,25 @@ export async function generateMetadata(): Promise<Metadata> {
 
   return {
     metadataBase,
-    title: "Zimlo — Leave your Mac. Stay in the loop.",
+    title: "Zimlo — Your Agents keep working. Your iPhone keeps you in control.",
     description:
-      "Bring Codex and Claude Code work from every Mac into one Feed. Review conclusions, images, video, and files, then act in seconds.",
+      "An iPhone attention layer for Codex and Claude Code: a TikTok-style main Feed, an X-style profile for every session, and first-class image, video, document, and file artifacts.",
     icons: {
       icon: "/favicon.svg",
       shortcut: "/favicon.svg",
       apple: "/apple-touch-icon.png",
     },
     openGraph: {
-      title: "Zimlo — Leave your Mac. Stay in the loop.",
-      description: "One Feed for Codex and Claude Code across every Mac—including images, video, files, approvals, and results.",
+      title: "Zimlo — Your Agents keep working. Your iPhone keeps you in control.",
+      description: "A TikTok-style Agent Feed, X-style Task Profiles, and rich artifacts—on iPhone, across every Mac.",
       type: "website",
       locale: "en_US",
-      images: [{ url: "/og.png", width: 1200, height: 630, alt: "Zimlo — Leave your Mac. Stay in the loop." }],
+      images: [{ url: "/og.png", width: 1200, height: 630, alt: "Zimlo for iPhone" }],
     },
     twitter: {
       card: "summary_large_image",
-      title: "Zimlo — Leave your Mac. Stay in the loop.",
-      description: "One Feed for Codex and Claude Code across every Mac—including images, video, files, approvals, and results.",
+      title: "Zimlo — Your Agents keep working. Your iPhone keeps you in control.",
+      description: "A TikTok-style Agent Feed, X-style Task Profiles, and rich artifacts—on iPhone, across every Mac.",
       images: ["/og.png"],
     },
   };

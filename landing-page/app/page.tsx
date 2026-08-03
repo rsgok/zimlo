@@ -1,312 +1,170 @@
 import { BetaDownload } from "./BetaDownload";
+import { ArtifactShowcase, FeatureTour, FlagshipExperience, HeroPhone } from "./IOSShowcase";
 import { MotionController } from "./MotionController";
 import { WaitlistForm } from "./WaitlistForm";
 import { isWaitlistLive } from "./waitlist-live";
 
-const liveSignals = [
-  {
-    status: "RESULT",
-    agent: "CODEX · MACBOOK PRO",
-    time: "NOW",
-    title: "Release candidate ready to review",
-    body: "43 tests passed. No unresolved review threads.",
-    accent: "result",
-    footer: "Open proof or continue the task",
-  },
-  {
-    status: "MEDIA",
-    agent: "CLAUDE CODE · MAC STUDIO",
-    time: "1 MIN",
-    title: "Launch assets exported",
-    body: "4 images · 1 walkthrough · 2 source files",
-    accent: "media",
-    footer: "Preview every output in the Feed",
-  },
-  {
-    status: "APPROVAL",
-    agent: "CODEX · WORK MAC",
-    time: "2 MIN",
-    title: "Approve this production push once?",
-    body: "Target and risk are attached to the original task.",
-    accent: "approval",
-    footer: "Approve or decline in one tap",
-  },
-];
-
-const storySteps = [
-  {
-    number: "01",
-    kicker: "EDITORIAL FEED",
-    title: "The feed edits itself.",
-    body: "Agents publish the conclusion, proof, and next move. Routine logs and tool chatter never compete for your attention.",
-    chips: ["Results", "Approvals", "Failures"],
-  },
-  {
-    number: "02",
-    kicker: "RICH OUTPUTS",
-    title: "Review what the agent actually made.",
-    body: "Images open as albums, videos keep their poster and playback context, and files stay attached to the task that produced them.",
-    chips: ["Images", "Video", "Files"],
-  },
-  {
-    number: "03",
-    kicker: "MULTI-MAC ROUTING",
-    title: "Every source stays correctly scoped.",
-    body: "Pair every Mac you use. Zimlo merges Codex and Claude Code work into one Feed while preserving the machine, project, and task behind each action.",
-    chips: ["MacBook Pro", "Mac Studio", "Work Mac"],
-  },
-];
-
-const demoCards = [
-  {
-    type: "RESULT",
-    agent: "CODEX",
-    title: "The release candidate is ready",
-    body: "Tests, review status, and the meaningful diff are edited into one card.",
-    next: "Review the proof",
-  },
-  {
-    type: "MEDIA",
-    agent: "CLAUDE CODE",
-    title: "The product walkthrough is exported",
-    body: "Watch the video, browse the image set, or download the source package in context.",
-    next: "Open 7 outputs",
-  },
-  {
-    type: "APPROVAL",
-    agent: "CODEX",
-    title: "A production push needs you",
-    body: "Purpose, target, source machine, and risk stay visible before you decide.",
-    next: "Review and decide",
-  },
+const capabilities = [
+  ["01", "TikTok-style Feed", "Full-screen, one-card paging for only the results, decisions, failures, and approvals that deserve you."],
+  ["02", "X-style Task Profile", "Task input, current state, latest conclusion, next action, and the human–Agent conversation in one session profile."],
+  ["03", "Rich Artifact viewers", "Image albums, inline video, readable Markdown and text, embedded PDFs, source files, and Quick Look."],
+  ["04", "Approvals + input", "Review purpose, target, source, and risk; approve, decline, or answer the Agent without leaving the task."],
+  ["05", "Create + continue", "Start new work or reply in context with text, voice, photos, video, PDFs, and working files."],
+  ["06", "Task management", "Search, filter, pin, archive, retry, resume, and group sessions by what needs you next."],
+  ["07", "Project Agents", "Keep project identity, avatar, workspace, default runtime, and active tasks together."],
+  ["08", "Multi-Mac sources", "Bring Codex and Claude Code from every Mac into one iPhone while preserving the correct source."],
+  ["09", "Offline outbox", "Draft recovery, persistent queues, reconnect retries, and idempotency protect every mobile action."],
+  ["10", "Secure pairing", "Scan a QR code, keep device keys locally, and route only end-to-end encrypted content through the cloud."],
+  ["11", "Smart notifications", "Open the exact task from a notification and keep a recoverable route when a session is still syncing."],
+  ["12", "Caught-up by design", "Know when nothing needs you. New actionable work resurfaces without turning the Feed into an activity log."],
 ];
 
 const setupSteps = [
-  ["Download", "Open the macOS menu bar app."],
-  ["Connect", "Pair every Mac and Agent source."],
-  ["Scan", "Bring the unified Feed to iPhone."],
+  ["01", "Install the companion", "Zimlo stays quietly beside Codex and Claude Code on each Mac."],
+  ["02", "Pair your iPhone", "Scan once. Device keys stay on your devices."],
+  ["03", "Leave the desk", "Review, approve, reply, and brief new work from the mobile Feed."],
 ];
 
 function BrandMark({ small = false }: { small?: boolean }) {
-  return (
-    <span className={small ? "brand-mark brand-mark--small" : "brand-mark"} aria-hidden="true">
-      <span>✦</span>
-    </span>
-  );
-}
-
-function ArrowIcon() {
-  return <span aria-hidden="true">↗</span>;
-}
-
-function ProductDemo({ compact = false }: { compact?: boolean }) {
-  return (
-    <div className={compact ? "v2-product-demo v2-product-demo--compact" : "v2-product-demo"}>
-      <div className="v2-window-bar" aria-hidden="true">
-        <span><i /><i /><i /></span>
-        <strong>ZIMLO · LIVE FEED</strong>
-        <small>END-TO-END ENCRYPTED</small>
-      </div>
-      <div className="v2-workbench">
-        <aside className="v2-source-rail" aria-label="Connected Agent sources">
-          <span className="v2-source-label">SOURCES</span>
-          <div className="v2-source v2-source--active">
-            <i />
-            <strong>MacBook Pro</strong>
-            <small>Codex · zimlo</small>
-          </div>
-          <div className="v2-source">
-            <i />
-            <strong>Mac Studio</strong>
-            <small>Claude Code · api</small>
-          </div>
-          <div className="v2-source">
-            <i />
-            <strong>Work Mac</strong>
-            <small>Codex · client</small>
-          </div>
-        </aside>
-
-        <div className="v2-feed-canvas">
-          <div className="v2-feed-header">
-            <div>
-              <span>ONE FEED</span>
-              <strong>What needs you now</strong>
-            </div>
-            <span className="v2-live-status"><i /> 3 SOURCES LIVE</span>
-          </div>
-          <div className="v2-card-viewport" aria-label="A rotating preview of Zimlo Feed cards">
-            {liveSignals.map((signal, index) => (
-              <article className={`v2-live-card v2-live-card--${signal.accent}`} style={{ "--card-order": index } as React.CSSProperties} key={signal.title}>
-                <div className="v2-live-card-topline">
-                  <span>{signal.status}</span>
-                  <small>{signal.time}</small>
-                </div>
-                <span className="v2-live-card-agent">{signal.agent}</span>
-                <h3>{signal.title}</h3>
-                <p>{signal.body}</p>
-                {signal.accent === "media" && (
-                  <div className="v2-media-row" aria-hidden="true">
-                    <i>IMG</i><i>▶</i><i>PDF</i><i>ZIP</i>
-                  </div>
-                )}
-                <div className="v2-card-next"><span>NEXT</span><strong>{signal.footer}</strong><b>→</b></div>
-              </article>
-            ))}
-          </div>
-        </div>
-      </div>
-      <div className="v2-demo-glow" aria-hidden="true" />
-    </div>
-  );
+  return <span className={small ? "brand-mark brand-mark--small" : "brand-mark"} aria-hidden="true"><span>✦</span></span>;
 }
 
 export default async function Home() {
   const waitlistLive = await isWaitlistLive();
 
   return (
-    <main className="v2-page">
+    <main className="ios-site">
       <MotionController />
 
-      <header className="v2-header">
-        <a className="brand" href="#top" aria-label="Zimlo home">
-          <BrandMark small />
-          <span>ZIMLO</span>
-        </a>
+      <header className="ios-site-header">
+        <a className="brand" href="#top" aria-label="Zimlo home"><BrandMark small /><span>ZIMLO</span></a>
         <nav aria-label="Primary navigation">
-          <a href="#product">Product</a>
-          <a href="#demo">Demo</a>
+          <a href="#flagship">Experience</a>
+          <a href="#artifacts">Artifacts</a>
+          <a href="#capabilities">Everything</a>
           <a href="#privacy">Privacy</a>
-          <a href="#setup">Get started</a>
         </nav>
-        <a className="v2-header-cta" href="#beta">Mac Beta <ArrowIcon /></a>
+        <a className="ios-header-cta" href="#beta">Join Beta <span aria-hidden="true">↗</span></a>
       </header>
 
-      <section className="v2-hero" id="top">
-        <div className="v2-hero-copy">
-          <div className="v2-eyebrow"><i /> THE MOBILE ATTENTION LAYER FOR AI WORK</div>
-          <h1><span>Leave your Mac.</span><em>Stay in the loop.</em></h1>
-          <p>One encrypted Feed for Codex and Claude Code across every Mac—results, approvals, images, video, and files.</p>
+      <section className="ios-hero" id="top">
+        <div className="ios-hero-copy">
+          <div className="ios-kicker"><i /> ZIMLO FOR IPHONE</div>
+          <h1>Your Agents<br />keep working.<br /><em>Your iPhone</em><br />keeps you in control.</h1>
+          <p>A mobile attention layer for Codex and Claude Code—built around a TikTok-style main Feed and an X-style profile for every session.</p>
           {waitlistLive ? (
             <WaitlistForm source="hero" tone="dark" />
           ) : (
-            <div className="v2-hero-actions">
-              <a className="v2-button v2-button--primary" href="#beta">Join the Mac Beta <ArrowIcon /></a>
-              <a className="v2-button v2-button--ghost" href="#product">Watch the Feed work <span aria-hidden="true">↓</span></a>
+            <div className="ios-hero-actions">
+              <a className="ios-button ios-button--acid" href="#beta">Join the iPhone Beta <span aria-hidden="true">↗</span></a>
+              <a className="ios-button ios-button--line" href="#flagship">See the experience <span aria-hidden="true">↓</span></a>
             </div>
           )}
-          <div className="v2-metrics" aria-label="Core experience targets">
-            <div><strong>3s</strong><span>Know</span></div>
-            <div><strong>10s</strong><span>Act</span></div>
-            <div><strong>20s</strong><span>Brief</span></div>
+          <div className="ios-speed-promise" aria-label="Core mobile experience targets">
+            <span><strong>3s</strong><small>know what matters</small></span>
+            <span><strong>10s</strong><small>review or act</small></span>
+            <span><strong>20s</strong><small>brief new work</small></span>
           </div>
         </div>
 
-        <div className="v2-hero-product" aria-label="Animated Zimlo product preview">
-          <ProductDemo />
-          <span className="v2-float-chip v2-float-chip--media"><i>▶</i> VIDEO READY</span>
-          <span className="v2-float-chip v2-float-chip--source"><i /> MAC STUDIO JOINED</span>
+        <div className="ios-hero-stage" aria-label="Zimlo running on iPhone">
+          <div className="ios-hero-halo" aria-hidden="true"><i /><i /><i /></div>
+          <div className="ios-hero-source ios-hero-source--one" aria-hidden="true"><i /> CODEX <small>MacBook Pro</small></div>
+          <div className="ios-hero-source ios-hero-source--two" aria-hidden="true"><i /> CLAUDE CODE <small>Mac Studio</small></div>
+          <HeroPhone />
+          <span className="ios-hero-note ios-hero-note--one">FULL-SCREEN FEED <i>↗</i></span>
+          <span className="ios-hero-note ios-hero-note--two">ARTIFACTS INSIDE <i>04</i></span>
         </div>
-
-        <div className="v2-scroll-cue" aria-hidden="true"><span>SCROLL TO FOLLOW THE SIGNAL</span><i /></div>
+        <div className="ios-hero-principle"><span>IPHONE RUNS THE EXPERIENCE</span><i>✦</i><span>MACS RUN THE WORK</span></div>
       </section>
 
-      <div className="v2-ticker" aria-hidden="true">
-        <div>
-          <span>RESULTS, NOT LOGS</span><i>✦</i><span>IMAGES · VIDEO · FILES</span><i>✦</i><span>EVERY MAC · ONE FEED</span><i>✦</i>
-          <span>RESULTS, NOT LOGS</span><i>✦</i><span>IMAGES · VIDEO · FILES</span><i>✦</i><span>EVERY MAC · ONE FEED</span><i>✦</i>
+      <section className="ios-flagship" id="flagship">
+        <div className="ios-section-copy" data-reveal>
+          <span>THE TWO EXPERIENCES WE ARE PROUD OF</span>
+          <h2>From a signal<br />to its whole story.</h2>
+          <p>The main Feed stays brutally focused. One gesture opens the session behind it—with all the context, artifacts, and conversation intact.</p>
         </div>
-      </div>
-
-      <section className="v2-story" id="product">
-        <div className="v2-section-heading" data-reveal>
-          <span>ONE FEED · THREE PROMISES</span>
-          <h2>Follow the work.<br />Never babysit it.</h2>
-          <p>Zimlo keeps the result, its source, and the next action together—without turning your phone into another terminal.</p>
-        </div>
-
-        <div className="v2-story-layout">
-          <div className="v2-story-visual" data-reveal>
-            <ProductDemo compact />
-            <div className="v2-story-caption"><i /> LIVE PRODUCT SYSTEM · NO REMOTE SHELL</div>
-          </div>
-          <div className="v2-story-steps" id="capabilities">
-            {storySteps.map((step) => (
-              <article className="v2-story-step" data-reveal key={step.number}>
-                <span className="v2-story-number">{step.number}</span>
-                <span className="v2-story-kicker">{step.kicker}</span>
-                <h3>{step.title}</h3>
-                <p>{step.body}</p>
-                <div>{step.chips.map((chip) => <span key={chip}>{chip}</span>)}</div>
-              </article>
-            ))}
-          </div>
+        <div data-reveal><FlagshipExperience /></div>
+        <div className="ios-flagship-notes">
+          <article data-reveal><span>01 · MAIN FEED</span><h3>TikTok rhythm.<br />Only useful cards.</h3><p>Full-screen vertical paging gives each result one moment of attention. There are no prompts, raw logs, heartbeats, or dashboard noise.</p><div><b>RESULTS</b><b>APPROVALS</b><b>FAILURES</b><b>MEDIA</b></div></article>
+          <article data-reveal><span>02 · TASK PROFILE</span><h3>X-style conversation.<br />Real task context.</h3><p>See what you asked, what changed, what needs you now, and every meaningful human–Agent turn. Expand proof only when you need it.</p><div><b>TASK INPUT</b><b>LATEST CONCLUSION</b><b>NEXT ACTION</b><b>TIMELINE</b></div></article>
         </div>
       </section>
 
-      <section className="v2-demo-section" id="demo">
-        <div className="v2-section-heading v2-section-heading--dark" data-reveal>
-          <span>REAL MOMENTS · CLEAR NEXT MOVES</span>
-          <h2>Open only what<br />deserves attention.</h2>
-          <p>Each card starts with the changed reality, shows the proof, and ends with one obvious next action.</p>
+      <section className="ios-artifacts" id="artifacts">
+        <div className="ios-section-copy ios-section-copy--dark" data-reveal>
+          <span>ARTIFACTS ARE FIRST-CLASS</span>
+          <h2>Don’t read that a file exists.<br /><em>Open the actual work.</em></h2>
+          <p>Every output remains attached to the Agent, source Mac, and session that produced it. Switch the preview below to see how each artifact lives on iPhone.</p>
         </div>
-        <div className="v2-demo-grid">
-          {demoCards.map((card, index) => (
-            <article className="v2-demo-card" data-reveal style={{ "--reveal-delay": `${index * 90}ms` } as React.CSSProperties} key={card.title}>
-              <div className="v2-demo-topline"><span>{card.type}</span><small>{card.agent}</small><i /></div>
-              <h3>{card.title}</h3>
-              <p>{card.body}</p>
-              <div className="v2-demo-action"><span>NEXT</span><strong>{card.next}</strong><b>↗</b></div>
+        <div data-reveal><ArtifactShowcase /></div>
+        <div className="ios-artifact-input" data-reveal>
+          <span>IT WORKS BOTH WAYS</span>
+          <h3>Send artifacts back to the Agent, too.</h3>
+          <p>Attach photos, video, PDF, Markdown, text, CSV, JSON, Office documents, and source packages when creating or continuing a task.</p>
+          <div><b>PHOTO</b><b>VIDEO</b><b>PDF</b><b>DOC</b><b>DATA</b><b>SOURCE</b><i>UP TO 10 PER TASK</i></div>
+        </div>
+      </section>
+
+      <section className="ios-tour-section" id="demo">
+        <div className="ios-section-copy" data-reveal>
+          <span>TOUR THE REAL MOBILE PRODUCT</span>
+          <h2>Not a companion viewer.<br />A complete control surface.</h2>
+          <p>Explore the core iPhone surfaces. Each one is modeled on the product’s real interaction and information hierarchy.</p>
+        </div>
+        <div data-reveal><FeatureTour /></div>
+      </section>
+
+      <section className="ios-capabilities" id="capabilities">
+        <div className="ios-capabilities-head" data-reveal>
+          <span>EVERYTHING IN THE SYSTEM</span>
+          <h2>The full mobile<br />attention loop.</h2>
+          <p>From the first important signal to the next instruction—and through every network interruption in between.</p>
+        </div>
+        <div className="ios-capability-grid">
+          {capabilities.map(([number, title, body], index) => (
+            <article data-reveal style={{ "--reveal-delay": `${(index % 3) * 70}ms` } as React.CSSProperties} key={number}>
+              <span>{number}</span><i>↗</i><h3>{title}</h3><p>{body}</p>
             </article>
           ))}
         </div>
       </section>
 
-      <section className="v2-privacy" id="privacy">
-        <div className="v2-privacy-copy" data-reveal>
-          <span>LOCAL SOURCES OF TRUTH</span>
-          <h2>The cloud connects.<br /><em>It cannot read.</em></h2>
-          <p>Each Mac owns its Agent data. Zimlo Cloud relays only end-to-end encrypted content, while your phone keeps a source-scoped cache and reliable reconnect queue.</p>
-          <div><span>NO CODE STORAGE</span><span>NO PROMPT STORAGE</span><span>NO REMOTE SHELL</span></div>
+      <section className="ios-routing" id="privacy">
+        <div className="ios-routing-copy" data-reveal>
+          <span>MULTIPLE MACS · ONE IPHONE</span>
+          <h2>The phone is the product.<br /><em>Macs are its sources.</em></h2>
+          <p>Each Mac remains the source of truth for its own Agent work. Zimlo keeps machine, project, runtime, and session identity intact as everything arrives on one iPhone.</p>
+          <div><b>END-TO-END ENCRYPTED</b><b>NO REMOTE SHELL</b><b>NO READABLE CLOUD CONTENT</b></div>
         </div>
-        <div className="v2-route-map" data-reveal aria-label="Encrypted connections from multiple Macs to one iPhone">
-          <div className="v2-route-sources">
-            <span><i /> MACBOOK PRO <small>CODEX</small></span>
-            <span><i /> MAC STUDIO <small>CLAUDE CODE</small></span>
-            <span><i /> WORK MAC <small>CODEX</small></span>
+        <div className="ios-routing-map" data-reveal aria-label="Multiple Mac Agent sources connecting securely to one iPhone">
+          <div className="ios-routing-phone"><BrandMark /><strong>YOUR IPHONE</strong><small>ONE ATTENTION LAYER</small></div>
+          <div className="ios-routing-lines" aria-hidden="true"><i /><i /><i /></div>
+          <div className="ios-routing-sources">
+            <span><i />MACBOOK PRO<b>CODEX · ZIMLO</b></span>
+            <span><i />MAC STUDIO<b>CLAUDE CODE · API</b></span>
+            <span><i />WORK MAC<b>CODEX · CLIENT</b></span>
           </div>
-          <div className="v2-route-line" aria-hidden="true"><i /><i /><i /></div>
-          <div className="v2-route-phone"><BrandMark small /><span>YOUR IPHONE</span><strong>Approve · Reply<br />Review · Brief</strong></div>
-          <small className="v2-relay-label">ENCRYPTED RELAY · ZERO CONTENT ACCESS</small>
         </div>
       </section>
 
-      <section className="v2-setup" id="setup">
-        <div className="v2-section-heading" data-reveal>
-          <span>ZERO-COMMAND ONBOARDING</span>
-          <h2>Three steps.<br />Then real work.</h2>
-        </div>
-        <div className="v2-setup-grid">
-          {setupSteps.map(([title, body], index) => (
-            <article data-reveal style={{ "--reveal-delay": `${index * 90}ms` } as React.CSSProperties} key={title}>
-              <span>0{index + 1}</span><h3>{title}</h3><p>{body}</p><i aria-hidden="true">→</i>
-            </article>
-          ))}
-        </div>
+      <section className="ios-setup" id="setup">
+        <div className="ios-section-copy" data-reveal><span>ZERO-COMMAND ONBOARDING</span><h2>Three steps.<br />Then leave the desk.</h2></div>
+        <div>{setupSteps.map(([number, title, body]) => <article data-reveal key={number}><span>{number}</span><h3>{title}</h3><p>{body}</p><i>→</i></article>)}</div>
       </section>
 
-      <section className="v2-cta" id="beta">
-        <div className="v2-cta-orbit" aria-hidden="true"><i /><i /><i /></div>
+      <section className="ios-beta" id="beta">
+        <div className="ios-beta-orbit" aria-hidden="true"><i /><i /><i /></div>
         <BrandMark />
-        <span>MACOS BETA</span>
-        <h2>Leave your Mac.<br />Stay in the loop.</h2>
-        <p>The first group of Codex and Claude Code users can join now.</p>
+        <span>IPHONE-FIRST BETA</span>
+        <h2>Put your Agents<br />in your pocket.</h2>
+        <p>Install the lightweight Mac companion, pair your iPhone, and keep the work moving from anywhere.</p>
         {waitlistLive ? <WaitlistForm source="beta" tone="acid" /> : <BetaDownload />}
       </section>
 
-      <footer className="v2-footer">
+      <footer className="ios-footer">
         <a className="brand" href="#top"><BrandMark small /><span>ZIMLO</span></a>
-        <p>The mobile attention layer for AI work.</p>
+        <p>The iPhone attention layer for AI work.</p>
         <nav aria-label="Footer navigation"><a href="https://github.com/rsgok/zimlo" rel="noopener noreferrer">GitHub</a><a href="/privacy">Privacy</a></nav>
         <span>© 2026 Zimlo</span>
       </footer>
