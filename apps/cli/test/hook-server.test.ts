@@ -18,7 +18,7 @@ function setup() {
   const broker = new ActionBroker(runtime);
   const socketPath = join(directory, "run", "bridge.sock");
   const server = new HookServer(runtime, broker, socketPath, new AgentToolService(runtime));
-  return { store, runtime, socketPath, server };
+  return { store, runtime, broker, socketPath, server };
 }
 
 interface TestableHookServer {
@@ -107,6 +107,56 @@ describe("Hook approval routing", () => {
       expect(await expired).toBe(actionId);
       expect(store.getAction(actionId)?.state).toBe("expired");
       await response;
+    } finally {
+      store.close();
+    }
+  });
+
+  it("round-trips Codex request_user_input with stable question ids", async () => {
+    const { store, runtime, broker, server } = setup();
+    try {
+      const pending = new Promise<{ actionId: string; sessionId: string }>((resolve) => {
+        const listener = (message: unknown) => {
+          const value = message as { type?: string; action?: { actionId: string; sessionId: string; state: string } };
+          if (value.type === "action.upsert" && value.action?.state === "pending") {
+            runtime.off("message", listener);
+            resolve(value.action);
+          }
+        };
+        runtime.on("message", listener);
+      });
+      const response = handleRequest(server, {
+        id: "input-codex",
+        provider: "codex",
+        surface: "gui",
+        payload: {
+          session_id: "thread-input",
+          cwd: "/tmp/project",
+          hook_event_name: "PreToolUse",
+          tool_name: "request_user_input",
+          tool_input: {
+            questions: [{ id: "hook_strategy", header: "策略", question: "采用哪个 Hook 策略？" }],
+          },
+        },
+      });
+      const action = await pending;
+      expect(broker.decide({
+        deviceId: "device-a",
+        actionId: action.actionId,
+        sessionId: action.sessionId,
+        decisionId: "submit-input",
+        idempotencyKey: "input-decision-a",
+        input: { answer: "最小 Hook" },
+      }).ok).toBe(true);
+      expect(await response).toMatchObject({
+        output: {
+          hookSpecificOutput: {
+            hookEventName: "PreToolUse",
+            permissionDecision: "allow",
+            updatedInput: { answers: { hook_strategy: "最小 Hook" } },
+          },
+        },
+      });
     } finally {
       store.close();
     }

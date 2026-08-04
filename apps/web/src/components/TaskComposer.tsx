@@ -5,6 +5,7 @@ import { ProviderBadge } from "./ProviderBadge";
 import { AgentAvatar } from "./UserAvatar";
 import { useModalFocus } from "./useModalFocus";
 import { VoiceInput } from "./VoiceInput";
+import { AppIcon } from "./AppIcon";
 import { formatMaterialSize, labelForKind, uploadMaterial, validateFile, type PreparedMaterial } from "../lib/materials";
 
 interface TaskComposerProps {
@@ -16,6 +17,8 @@ interface TaskComposerProps {
   onClose: () => void;
   onSubmitted?: () => void;
 }
+
+type NewTaskStep = "input" | "agent" | "runtime";
 
 export function defaultWorkspaceId(workspaces: TrustedWorkspace[], preferredId?: string, savedId?: string | null): string {
   if (preferredId && workspaces.some((workspace) => workspace.id === preferredId)) return preferredId;
@@ -40,7 +43,8 @@ export function TaskComposer({ workspaces, projects, initialProjectId = null, se
   const [text, setText] = useState(savedDraft);
   const [projectQuery, setProjectQuery] = useState("");
   const [voiceNotice, setVoiceNotice] = useState<string | null>(null);
-  const [choosingAgent, setChoosingAgent] = useState(false);
+  const [step, setStep] = useState<NewTaskStep>("input");
+  const [runtimeConfirmed, setRuntimeConfirmed] = useState(false);
   const [materials, setMaterials] = useState<Array<{
     id: string;
     file: File;
@@ -145,10 +149,14 @@ export function TaskComposer({ workspaces, projects, initialProjectId = null, se
     if (nextDefault && nextWorkspace.providers.includes(nextDefault)) setProvider(nextDefault);
     else if (!nextWorkspace.providers.includes(provider) && nextWorkspace.providers[0]) setProvider(nextWorkspace.providers[0]);
     setProjectQuery("");
-    setChoosingAgent(false);
+    setRuntimeConfirmed(false);
+    setStep("runtime");
   };
 
-  const canSubmit = Boolean((session || workspaceId) && text.trim() && materials.every((item) => item.state === "ready"));
+  const contentReady = Boolean(text.trim() && materials.every((item) => item.state === "ready"));
+  const canSubmit = session
+    ? contentReady
+    : Boolean(workspaceId && contentReady && runtimeConfirmed && availableProviders.includes(provider));
   const submit = () => {
     if (!canSubmit || sending.current) return;
     sending.current = true;
@@ -169,41 +177,72 @@ export function TaskComposer({ workspaces, projects, initialProjectId = null, se
     onClose();
   };
 
+  const handleInputAction = () => {
+    if (session) {
+      submit();
+      return;
+    }
+    if (!contentReady) return;
+    setStep("agent");
+  };
+
+  const goBack = () => {
+    if (step === "runtime") {
+      setRuntimeConfirmed(false);
+      setStep("agent");
+    } else if (step === "agent") {
+      setStep("input");
+    }
+  };
+
+  const title = session
+    ? "回复"
+    : step === "input"
+      ? "新任务"
+      : step === "agent"
+        ? "选择 Agent"
+        : "选择执行方式";
+  const stepNumber = step === "input" ? 1 : step === "agent" ? 2 : 3;
+  const acceptsMaterials = Boolean(session || step === "input");
+
   return (
     <div className="composer-backdrop" role="presentation" onMouseDown={(event) => {
       if (event.currentTarget === event.target) onClose();
     }}>
-      <section className={`new-task-sheet ${session ? "is-follow-up" : "is-new-task"}`} role="dialog" aria-modal="true" aria-labelledby="new-task-title" ref={sheetRef}
-        onDragOver={(event) => { event.preventDefault(); event.dataTransfer.dropEffect = "copy"; }}
-        onDrop={(event) => { event.preventDefault(); void addFiles([...event.dataTransfer.files]); }}
+      <section className={`new-task-sheet ${session ? "is-follow-up" : `is-new-task is-step-${step}`}`} role="dialog" aria-modal="true" aria-labelledby="new-task-title" ref={sheetRef}
+        onDragOver={(event) => { if (!acceptsMaterials) return; event.preventDefault(); event.dataTransfer.dropEffect = "copy"; }}
+        onDrop={(event) => { if (!acceptsMaterials) return; event.preventDefault(); void addFiles([...event.dataTransfer.files]); }}
         onPaste={(event) => {
+          if (!acceptsMaterials) return;
           const files = [...event.clipboardData.files];
           if (files.length) { event.preventDefault(); void addFiles(files); }
         }}>
         {voiceNotice && <div className="composer-floating-notice" role="status">{voiceNotice}</div>}
         <header className="new-task-header">
-          {session && conversationAgent && <AgentAvatar avatar={conversationAgent.agentProfile.avatar} className={`composer-context-avatar ${agentAvatarStyle(conversationAgent.id)}`} alt="" />}
-          <div>
-            <h2 id="new-task-title">{session ? "回复当前会话" : "新任务"}</h2>
-            <p>{session ? `${conversationAgent?.agentProfile.displayName ?? "Agent"} · ${session.title}` : "选择 Agent，然后直接描述目标。"}</p>
+          <div className="new-task-header-leading">
+            {!session && step !== "input" && <button type="button" onClick={goBack} aria-label="返回上一步"><AppIcon name="arrow-left" /></button>}
+            <h2 id="new-task-title">{title}</h2>
           </div>
-          {session && <ProviderBadge provider={session.provider} labelMode="icon" />}
-          <button onClick={onClose} aria-label="关闭输入面板">×</button>
+          {!session && <div className="composer-step-progress" aria-label={`步骤 ${stepNumber}/3`}>
+            {[1, 2, 3].map((item) => <span className={item <= stepNumber ? "is-active" : ""} key={item} />)}
+          </div>}
+          <button className="new-task-close" type="button" onClick={onClose} aria-label="关闭输入面板"><AppIcon name="close" /></button>
         </header>
         <div className="new-task-scroll">
-          <section className="composer-brief" aria-labelledby="task-brief-label">
-            {!session && <div className="composer-field-heading">
-              <strong id="task-brief-label">任务内容</strong>
-              <span>{text.trim() ? "草稿已保存" : "草稿自动保存"}</span>
-            </div>}
+          {session && <div className="composer-current-session">
+            <AgentAvatar avatar={conversationAgent?.agentProfile.avatar ?? "●"} className={`composer-context-avatar ${conversationAgent ? agentAvatarStyle(conversationAgent.id) : ""}`} alt="" />
+            <strong>{session.title}</strong>
+            <ProviderBadge provider={session.provider} labelMode="icon" />
+          </div>}
+          {(session || step === "input") && <section className="composer-brief" aria-label={session ? "回复" : "任务内容"}>
             <div className="composer-input-row">
               <input ref={attachmentInput} type="file" multiple hidden accept="image/jpeg,image/png,image/webp,image/heic,image/heif,video/mp4,video/quicktime,video/x-m4v,application/pdf,text/plain,text/markdown,text/csv,application/json,.doc,.docx,.xls,.xlsx,.ppt,.pptx" onChange={(event) => { void addFiles([...event.target.files ?? []]); event.currentTarget.value = ""; }} />
               <button className="composer-attach-button" type="button" onClick={() => attachmentInput.current?.click()} disabled={materials.length >= 10} aria-label="添加附件" title="添加附件">
-                <span aria-hidden="true">＋</span>
+                <AppIcon name="paperclip" />
               </button>
-              <VoiceInput compact rows={2} value={text} onChange={setText} ariaLabel={session ? "回复当前会话" : "任务目标"} placeholder={session ? "回复当前会话…" : "描述目标，或点按麦克风…"} onSubmit={submit} onError={setVoiceNotice} />
-              <button className="composer-send-button" type="button" onClick={submit} disabled={!canSubmit} aria-label={session ? "发送消息" : "开始任务"} title={session ? "发送" : "开始任务"}>
-                <span aria-hidden="true">↑</span>
+              <VoiceInput compact singleLine value={text} onChange={setText} ariaLabel={session ? "回复" : "任务目标"} placeholder={session ? "输入回复…" : "描述目标…"} onSubmit={handleInputAction} onError={setVoiceNotice} />
+              <button className="composer-send-button" type="button" onClick={handleInputAction} disabled={session ? !canSubmit : !contentReady} aria-label={session ? "发送消息" : "继续选择 Agent"} title={session ? "发送" : "下一步"}>
+                <AppIcon name="arrow-up" />
               </button>
             </div>
             {materials.length > 0 && <div className="composer-input-hint"><span>附件</span><span>{materials.length}/10</span></div>}
@@ -225,72 +264,54 @@ export function TaskComposer({ workspaces, projects, initialProjectId = null, se
                 </article>;
               })}
             </div>}
-          </section>
-
-          {!session && <section className="composer-destination" aria-labelledby="composer-destination-title">
-            <div className="composer-field-heading">
-              <strong id="composer-destination-title">交给谁</strong>
-              <span>已沿用最近选择</span>
-            </div>
-            <button
-              type="button"
-              className="composer-assignee"
-              aria-expanded={choosingAgent}
-              aria-controls="composer-agent-chooser"
-              onClick={() => setChoosingAgent((value) => !value)}
-              disabled={workspaces.length === 0}
-            >
-              <AgentAvatar avatar={agentAvatar} className={`composer-agent-avatar ${selectedAgent ? agentAvatarStyle(selectedAgent.id) : ""}`} alt="" />
-              <span className="composer-assignee-copy">
-                <strong>{agentName}</strong>
-                <small>{selectedAgent ? `${selectedAgent.name} · 已记住项目上下文` : selectedWorkspace?.label ?? "暂无可信项目"}</small>
-              </span>
-              <ProviderBadge provider={provider} labelMode="icon" />
-              <span className="composer-change-label">{choosingAgent ? "收起" : "更换"}</span>
-            </button>
-
-            {choosingAgent && (
-              <div className="composer-agent-chooser" id="composer-agent-chooser">
-                <label className="composer-project-search">
-                  <span aria-hidden="true">⌕</span>
-                  <input value={projectQuery} onChange={(event) => setProjectQuery(event.target.value)} placeholder="搜索 Agent 或项目" aria-label="搜索 Agent" />
-                </label>
-                <div className="composer-agent-list" role="radiogroup" aria-label="选择 Agent">
-                  {visibleWorkspaces.map((workspace) => {
-                    const agent = projectByPath.get(workspace.path);
-                    const selected = workspace.id === workspaceId;
-                    return (
-                      <button type="button" role="radio" aria-checked={selected} className={selected ? "selected" : ""} onClick={() => chooseWorkspace(workspace)} key={workspace.id}>
-                        <AgentAvatar avatar={agent?.agentProfile.avatar ?? "●"} className={`composer-agent-option-avatar ${agent ? agentAvatarStyle(agent.id) : ""}`} alt="" />
-                        <span>
-                          <strong>{agent?.agentProfile.displayName ?? workspace.label}</strong>
-                          <small>{agent?.name ?? workspace.label}</small>
-                        </span>
-                        <span className="composer-agent-runtimes">
-                          {workspace.providers.map((item) => <ProviderBadge provider={item} labelMode="icon" key={item} />)}
-                        </span>
-                        {selected && <span className="composer-selected-check" aria-hidden="true">✓</span>}
-                      </button>
-                    );
-                  })}
-                  {visibleWorkspaces.length === 0 && <p className="composer-empty-search">没有匹配的 Agent</p>}
-                </div>
-                <div className="composer-runtime-choice">
-                  <span>执行方式</span>
-                  <div role="radiogroup" aria-label="选择执行方式">
-                    {(["codex", "claude"] satisfies Provider[]).map((item) => (
-                      <button type="button" role="radio" aria-checked={provider === item} className={provider === item ? "selected" : ""} disabled={!availableProviders.includes(item)} onClick={() => setProvider(item)} key={item}>
-                        <ProviderBadge provider={item} labelMode="icon" />
-                        <span>{item === "codex" ? "Codex" : "Claude Code"}</span>
-                      </button>
-                    ))}
-                  </div>
-                </div>
-              </div>
-            )}
           </section>}
 
-          {!session && workspaces.length === 0 && <p className="composer-warning">先在 Mac 的 Codex 或 Claude Code 中打开一次项目，Zimlo 才能安全地把任务交给它。</p>}
+          {!session && step === "agent" && <section className="composer-step-panel composer-agent-step" aria-label="选择 Agent">
+            <label className="composer-project-search">
+              <span aria-hidden="true">⌕</span>
+              <input autoFocus value={projectQuery} onChange={(event) => setProjectQuery(event.target.value)} placeholder="搜索 Agent 或项目" aria-label="搜索 Agent" />
+            </label>
+            <div className="composer-agent-list" role="radiogroup" aria-label="选择 Agent">
+              {visibleWorkspaces.map((workspace) => {
+                const agent = projectByPath.get(workspace.path);
+                const selected = workspace.id === workspaceId;
+                return (
+                  <button type="button" role="radio" aria-checked={selected} className={selected ? "selected" : ""} onClick={() => chooseWorkspace(workspace)} key={workspace.id}>
+                    <AgentAvatar avatar={agent?.agentProfile.avatar ?? "●"} className={`composer-agent-option-avatar ${agent ? agentAvatarStyle(agent.id) : ""}`} alt="" />
+                    <span>
+                      <strong>{agent?.agentProfile.displayName ?? workspace.label}</strong>
+                      <small>{agent?.name ?? workspace.label}</small>
+                    </span>
+                    {selected && <span className="composer-selected-check" aria-hidden="true">✓</span>}
+                  </button>
+                );
+              })}
+              {visibleWorkspaces.length === 0 && <p className="composer-empty-search">没有匹配的 Agent</p>}
+            </div>
+            {workspaces.length === 0 && <p className="composer-warning">先在 Mac 的 Codex 或 Claude Code 中打开一次项目，Zimlo 才能安全地把任务交给它。</p>}
+          </section>}
+
+          {!session && step === "runtime" && <section className="composer-step-panel composer-runtime-step" aria-label="选择执行方式">
+            <div className="composer-selected-agent">
+              <AgentAvatar avatar={agentAvatar} className={`composer-agent-avatar ${selectedAgent ? agentAvatarStyle(selectedAgent.id) : ""}`} alt="" />
+              <strong>{agentName}</strong>
+            </div>
+            <div className="composer-runtime-grid" role="radiogroup" aria-label="选择执行方式">
+              {(["codex", "claude"] satisfies Provider[]).map((item) => {
+                const selected = runtimeConfirmed && provider === item;
+                return <button type="button" role="radio" aria-checked={selected} className={selected ? "selected" : ""} disabled={!availableProviders.includes(item)} onClick={() => { setProvider(item); setRuntimeConfirmed(true); }} key={item}>
+                  <ProviderBadge provider={item} labelMode="icon" />
+                  <span>{item === "codex" ? "Codex" : "Claude Code"}</span>
+                  {selected && <span className="composer-selected-check" aria-hidden="true">✓</span>}
+                </button>;
+              })}
+            </div>
+            <button className="composer-final-submit" type="button" onClick={submit} disabled={!canSubmit}>
+              <span>开始任务</span>
+              <AppIcon name="arrow-up" />
+            </button>
+          </section>}
+
         </div>
       </section>
     </div>

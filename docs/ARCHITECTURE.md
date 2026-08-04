@@ -14,9 +14,9 @@ Zimlo Codex plugin
 
 本机 Settings 通过加密 WebSocket 请求 Bridge 安装插件源；Bridge 只接受 local-admin 设备。安装器保留现有 `~/.agents/plugins/marketplace.json` 内容，幂等更新指向 `~/plugins/zimlo` 的 `./plugins/zimlo` 条目，并用临时目录、rename 和备份更新文件。用户随后在 Codex GUI 的 Plugins → Personal 中完成插件安装和 hook 审核，新任务才加载 Skill、MCP 与 hooks。
 
-Codex GUI 插件只安装 `SessionStart`、`UserPromptSubmit`、`PermissionRequest` 和 `Stop`，避免为普通 tool call 增加 hook 开销。MCP 进程会先探测 Unix Socket；Bridge 不存在时以 detached 本地进程自动启动，并在 4 秒内等待就绪。非审批 hook 2.5 秒内 fail-open，Stop 只静默落下 `implicit_skip`，永不阻断 Agent 的结束循环。
+Codex GUI 插件只安装 `SessionStart`、`PermissionRequest` 和仅匹配 `request_user_input` 的 `PreToolUse`；Claude 的结构化输入 matcher 为 `AskUserQuestion`。普通一轮、context compact 与 SessionEnd 都不触发 hook；用户输入、工具活动、文件修改、测试与结束状态由本地 transcript 增量恢复。MCP 进程会先探测 Unix Socket；Bridge 不存在时以 detached 本地进程自动启动，并在 4 秒内等待就绪。Session 绑定 hook 2.5 秒内 fail-open，只有审批与结构化输入会等待用户，所有 hook 都是确定性本地处理。
 
-用户级 hooks 仍服务 Codex CLI 与 Claude Code，不再作为 Codex GUI 的推荐路径。`UserPromptSubmit` 只写入 `user_instruction` 事件供 Task 详情追溯，不再生成 Feed 帖子；Feed 帖子必须由 Agent 使用 V2 结构化字段主动编辑。
+用户级 hooks 仍服务 Codex CLI 与 Claude Code，不再作为 Codex GUI 的推荐路径，并使用相同的三个最小实时事件。旧版 `UserPromptSubmit` / `Stop` / `SessionEnd` / 全量 `PreToolUse` / `PostToolUse` 在升级时移除。Task Input 与过程状态由 transcript 提供，Feed 帖子必须由 Agent 在可审阅交付点使用 V3 结构化字段主动编辑。
 
 ## 包边界
 
@@ -40,9 +40,8 @@ flowchart LR
   E --> G["Unified Events"]
   F --> G
   G --> I["SQLite WAL"]
-  A --> S["signal.transition"]
-  S --> H["Task State Store"]
-  A --> P["feed.post / feed.skip"]
+  A --> P["feed.post + optional state"]
+  P --> H["Task State Store"]
   P --> Q["Feed Store"]
   H --> I["SQLite WAL"]
   Q --> I

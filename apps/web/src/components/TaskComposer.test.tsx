@@ -41,7 +41,7 @@ describe("TaskComposer", () => {
     expect(defaultWorkspaceId(workspaces)).toBe("zimlo");
   });
 
-  it("leads with the task goal and keeps technical routing behind the Agent chooser", () => {
+  it("starts with task input and defers Agent and runtime selection", () => {
     const markup = renderToStaticMarkup(
       <TaskComposer
         workspaces={workspaces}
@@ -53,19 +53,26 @@ describe("TaskComposer", () => {
     );
 
     expect(markup).toContain("<h2 id=\"new-task-title\">新任务</h2>");
-    expect(markup).toContain("任务内容");
-    expect(markup).toContain("草稿自动保存");
-    expect(markup).toContain("交给谁");
-    expect(markup).toContain("Zimlo");
-    expect(markup).toContain("/avatars/user-07.png");
+    expect(markup).toContain('aria-label="步骤 1/3"');
     expect(markup).toContain("aria-label=\"添加附件\"");
-    expect(markup).toContain("aria-label=\"开始任务\"");
+    expect(markup).toContain("aria-label=\"继续选择 Agent\"");
     expect(markup).toContain("aria-label=\"开始语音输入\"");
+    expect(markup).toContain('<input type="text"');
+    expect(markup).not.toContain("交给谁");
+    expect(markup).not.toContain("选择执行方式");
+    expect(markup).not.toContain("/avatars/user-07.png");
+    expect(markup).not.toContain("<textarea");
     expect(markup).not.toContain("autofocus");
     expect(markup).not.toContain("NEW TASK");
     expect(markup).not.toContain("Project Agent");
+    expect(markup).not.toContain("草稿自动保存");
+    expect(markup).not.toContain("草稿已保存");
+    expect(markup).not.toContain("已沿用最近选择");
+    expect(markup).not.toContain("已记住项目上下文");
+    expect(markup).not.toContain(">更换<");
+    expect(markup).not.toContain("选择 Agent，然后直接描述目标");
     expect(markup).not.toContain("/Projects/zimlo");
-    expect(markup.indexOf("任务内容")).toBeLessThan(markup.indexOf("交给谁"));
+    expect(markup).not.toContain("provider-badge");
   });
 
   it("renders an unmistakable compact reply composer for an existing session", () => {
@@ -80,11 +87,15 @@ describe("TaskComposer", () => {
     );
 
     expect(markup).toContain("new-task-sheet is-follow-up");
-    expect(markup).toContain("回复当前会话");
+    expect(markup).toContain('<h2 id="new-task-title">回复</h2>');
     expect(markup).toContain(session.title);
+    expect(markup).not.toContain("回复当前会话");
     expect(markup).not.toContain("交给谁");
     expect(markup).not.toContain("新任务");
     expect(markup).toContain('aria-label="发送消息"');
+    expect(markup).toContain('<input type="text"');
+    expect(markup).not.toContain("composer-step-progress");
+    expect(markup).not.toContain("<textarea");
     expect(markup).not.toContain("autofocus");
   });
 });

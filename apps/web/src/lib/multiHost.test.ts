@@ -11,6 +11,7 @@ function snapshot(host: Host, suffix: string): Snapshot {
     seenPostIds: [], dismissedFeedItemIds: [], taskTimelineCursors: {}, taskPreferences: [],
     notificationSettings: { enabled: false, approvals: true, failures: true, showTaskTitle: false, updatedAt: host.lastSeenAt },
     features: { projectTrustPolicy: true, pushNotifications: false, remoteSync: true, multiHost: true }, sequence: 1, lanApprovalsEnabled: false,
+    trustManagementEnabled: false,
   };
 }
 

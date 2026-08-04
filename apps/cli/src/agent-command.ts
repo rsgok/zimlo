@@ -46,6 +46,14 @@ export async function resolveAgentCommand(command: "codex" | "claude"): Promise<
   return null;
 }
 
+export async function requireAgentCommand(command: "codex" | "claude"): Promise<string> {
+  const resolved = await resolveAgentCommand(command);
+  if (resolved) return resolved;
+
+  const label = command === "codex" ? "Codex" : "Claude Code";
+  throw new Error(`未找到 ${label} Runtime。请确认应用已安装，或在 Zimlo 设置中检查 Runtime 接入。`);
+}
+
 export async function detectInstalledProviders(): Promise<Array<"codex" | "claude">> {
   const [codexCommand, claudeCommand] = await Promise.all([
     resolveAgentCommand("codex"),

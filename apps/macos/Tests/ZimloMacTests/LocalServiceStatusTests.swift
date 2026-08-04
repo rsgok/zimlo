@@ -59,6 +59,45 @@ final class LocalServiceStatusTests: XCTestCase {
         )
     }
 
+    func testMenuStatusDoesNotPresentPushCapabilityAsAUserFault() {
+        let status = LocalServiceStatus(
+            ready: true,
+            cloud: true,
+            pushNotifications: false,
+            pairedDeviceCount: 1,
+            integrations: []
+        )
+
+        let detail = MenuStatusDescription.detail(for: .ready, status: status)
+
+        XCTAssertEqual(detail, "手机已连接，等待需要你处理的任务")
+        XCTAssertFalse(detail.contains("推送"))
+        XCTAssertFalse(detail.contains("尚未启用"))
+    }
+
+    func testMenuStatusKeepsPairingAndCloudFailuresActionable() {
+        let unpaired = LocalServiceStatus(
+            ready: true,
+            cloud: true,
+            pushNotifications: false,
+            pairedDeviceCount: 0,
+            integrations: []
+        )
+        let offline = LocalServiceStatus(
+            ready: true,
+            cloud: false,
+            pushNotifications: false,
+            pairedDeviceCount: 1,
+            integrations: []
+        )
+
+        XCTAssertEqual(MenuStatusDescription.detail(for: .ready, status: unpaired), "还未连接手机")
+        XCTAssertEqual(
+            MenuStatusDescription.detail(for: .ready, status: offline),
+            "手机连接暂不可用，Zimlo 会自动重试"
+        )
+    }
+
     func testLateIntegrationSuccessDuringHaltUpdatesSnapshotOnly() {
         let current = LocalServiceStatus(
             ready: true,

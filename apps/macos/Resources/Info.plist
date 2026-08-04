@@ -31,6 +31,10 @@
 		<key>NSAllowsLocalNetworking</key>
 		<true/>
 	</dict>
+	<key>NSMicrophoneUsageDescription</key>
+	<string>Zimlo 需要使用麦克风，把你说的话填入任务输入框。</string>
+	<key>NSSpeechRecognitionUsageDescription</key>
+	<string>Zimlo 需要使用语音识别，把你的语音转换为任务文字。</string>
 	<key>SUFeedURL</key>
 	<string>https://zimlo-cloud.zimlo.workers.dev/releases/macos/appcast.xml</string>
 	<key>SUPublicEDKey</key>

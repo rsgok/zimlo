@@ -204,6 +204,16 @@ export const FeedContentSchema = z.discriminatedUnion("type", [
 ]);
 export type FeedContent = z.infer<typeof FeedContentSchema>;
 
+export const TaskStateSchema = z.enum([
+  "running",
+  "waiting_input",
+  "reviewing",
+  "user_review",
+  "failed",
+  "completed",
+]);
+export type TaskState = z.infer<typeof TaskStateSchema>;
+
 export const FeedPostInputSchema = z.object({
   task_id: z.string().min(1).max(160),
   kind: FeedPostKindSchema,
@@ -214,7 +224,31 @@ export const FeedPostInputSchema = z.object({
   proof: z.string().min(1).max(160).optional(),
   content: FeedContentSchema.optional(),
   dedupe_key: z.string().min(1).max(240),
-}).strict();
+  state: TaskStateSchema.optional(),
+  state_reason: z.string().min(1).max(500).optional(),
+}).strict().superRefine((value, context) => {
+  if (Boolean(value.state) !== Boolean(value.state_reason)) {
+    context.addIssue({
+      code: "custom",
+      path: value.state ? ["state_reason"] : ["state"],
+      message: "state 与 state_reason 必须同时提供。",
+    });
+  }
+  const requiredKind = value.state === "waiting_input"
+    ? "attention"
+    : value.state === "user_review" || value.state === "completed"
+      ? "result"
+      : value.state === "failed"
+        ? "failure"
+        : null;
+  if (requiredKind && value.kind !== requiredKind) {
+    context.addIssue({
+      code: "custom",
+      path: ["kind"],
+      message: `state=${value.state} 必须使用 kind=${requiredKind}。`,
+    });
+  }
+});
 export type FeedPostInput = z.infer<typeof FeedPostInputSchema>;
 
 export const FeedSkipInputSchema = z.object({
@@ -222,16 +256,6 @@ export const FeedSkipInputSchema = z.object({
   reason: z.string().min(1).max(500),
 });
 export type FeedSkipInput = z.infer<typeof FeedSkipInputSchema>;
-
-export const TaskStateSchema = z.enum([
-  "running",
-  "waiting_input",
-  "reviewing",
-  "user_review",
-  "failed",
-  "completed",
-]);
-export type TaskState = z.infer<typeof TaskStateSchema>;
 
 export const SignalTransitionInputSchema = z.object({
   task_id: z.string().min(1).max(160),
@@ -516,6 +540,7 @@ export const SnapshotSchema = z.object({
   features: FeatureCapabilitiesSchema,
   sequence: z.number().int().nonnegative(),
   lanApprovalsEnabled: z.boolean(),
+  trustManagementEnabled: z.boolean(),
 });
 export type Snapshot = z.infer<typeof SnapshotSchema>;
 

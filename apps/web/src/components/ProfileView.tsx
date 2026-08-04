@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import type { ClientCommand, Host, IntegrationStatus, NotificationSettings, Session, UserProfile } from "@zimlo/protocol";
 import type { CodexPluginInfo, DeviceInfo, PairingInfo } from "../hooks/useBridge";
+import { AppIcon } from "./AppIcon";
 import { ConfirmDialog } from "./ConfirmDialog";
 import { ProviderBadge } from "./ProviderBadge";
 import { AvatarPickerDialog, PairingDialog } from "./SettingsDialogs";
@@ -11,6 +12,7 @@ interface ProfileViewProps {
   devices: DeviceInfo[];
   pairing: PairingInfo | null;
   lanApprovalsEnabled: boolean;
+  trustManagementEnabled: boolean;
   codexPlugin: CodexPluginInfo | null;
   integrations: IntegrationStatus[];
   sessions: Session[];
@@ -38,7 +40,14 @@ function providerLabel(provider: "codex" | "claude") {
   return provider === "codex" ? "Codex" : "Claude Code";
 }
 
-export function ProfileView({ localAdmin, devices, pairing, lanApprovalsEnabled, codexPlugin, integrations, sessions, userProfile, notificationSettings = { enabled: false, approvals: true, failures: true, showTaskTitle: false, updatedAt: "" }, pushRegistered = false, notificationEnabled = true, connected = false, connectionMode = "offline", hosts = [], send, forgetDevice, pairAdditionalHost = async () => {}, forgetHost = async () => {} }: ProfileViewProps) {
+function devicePermissionSummary(device: DeviceInfo) {
+  if (device.canApprove && device.canManageTrust) return "审批与自动化已开启";
+  if (device.canApprove) return "已开启审批";
+  if (device.canManageTrust) return "已开启自动化";
+  return "权限已关闭";
+}
+
+export function ProfileView({ localAdmin, devices, pairing, lanApprovalsEnabled, trustManagementEnabled, codexPlugin, integrations, sessions, userProfile, notificationSettings = { enabled: false, approvals: true, failures: true, showTaskTitle: false, updatedAt: "" }, pushRegistered = false, notificationEnabled = true, connected = false, connectionMode = "offline", hosts = [], send, forgetDevice, pairAdditionalHost = async () => {}, forgetHost = async () => {} }: ProfileViewProps) {
   const [selectedAvatarId, setSelectedAvatarId] = useState(userProfile.avatarId);
   const [avatarPickerOpen, setAvatarPickerOpen] = useState(false);
   const [pairingOpen, setPairingOpen] = useState(false);
@@ -94,7 +103,10 @@ export function ProfileView({ localAdmin, devices, pairing, lanApprovalsEnabled,
       </div>
 
       <section className="settings-section" aria-labelledby="runtime-settings-title">
-        <h3 id="runtime-settings-title">Runtime</h3>
+        <div className="settings-section-heading">
+          <h3 id="runtime-settings-title">Runtime</h3>
+          {localAdmin && <button type="button" className="settings-icon-action" aria-label="检查 Runtime 接入" title="检查接入" onClick={() => send({ type: "integrations.cli.install" })}><AppIcon name="refresh" /></button>}
+        </div>
         <div className="settings-card runtime-overview-card">
           <div className="runtime-overview">
             {runtimeSummary.map((runtime) => (
@@ -105,7 +117,6 @@ export function ProfileView({ localAdmin, devices, pairing, lanApprovalsEnabled,
               </div>
             ))}
           </div>
-          {localAdmin && <button className="secondary-button settings-wide-action" onClick={() => send({ type: "integrations.cli.install" })}>检查接入</button>}
         </div>
       </section>
 
@@ -192,27 +203,37 @@ export function ProfileView({ localAdmin, devices, pairing, lanApprovalsEnabled,
           </section>
 
           <section className="settings-section" aria-labelledby="device-settings-title">
-            <div className="settings-section-heading"><h3 id="device-settings-title">设备</h3><button className="text-button" onClick={() => send({ type: "devices.request" })}>刷新</button></div>
+            <div className="settings-section-heading">
+              <h3 id="device-settings-title">设备</h3>
+              <button type="button" className="settings-icon-action" aria-label="刷新设备" title="刷新" onClick={() => send({ type: "devices.request" })}><AppIcon name="refresh" /></button>
+            </div>
             <div className="settings-card device-card">
               {pairedDevices.length === 0 ? <p className="empty-setting">还没有连接设备</p> : (
                 <ul className="device-list">
                   {pairedDevices.map((device) => (
                     <li key={device.id}>
-                      <span><strong>{device.name}</strong><small>{device.isLocalAdmin ? "本机管理" : "已配对"}</small></span>
-                      <time>{new Date(device.lastSeenAt).toLocaleString("zh-CN")}</time>
-                      {!device.isLocalAdmin && (
-                        <span className="device-permission-switches">
-                          <label>
-                            <span>审批</span>
+                      <details className="device-item">
+                        <summary>
+                          <span className="device-icon" aria-hidden="true"><AppIcon name="device" /></span>
+                          <span className="device-summary-copy">
+                            <strong>{device.name}</strong>
+                            <small>已配对 · 最近使用 {new Date(device.lastSeenAt).toLocaleString("zh-CN")}</small>
+                          </span>
+                          <span className={`device-grant-summary ${device.canApprove && device.canManageTrust ? "is-enabled" : ""}`}>{devicePermissionSummary(device)}</span>
+                          <span className="device-disclosure" aria-hidden="true"><AppIcon name="chevron-down" /></span>
+                        </summary>
+                        <div className="device-controls">
+                          <div className="settings-switch-row">
+                            <span><strong>审批与回复</strong><small>允许这台设备处理 Agent 的待办操作</small></span>
                             <button role="switch" aria-label={`${device.name} 手机审批`} aria-checked={device.canApprove} className={`switch ${device.canApprove ? "switch-on" : ""}`} onClick={() => send({ type: "device.approvals.set", deviceId: device.id, enabled: !device.canApprove })}><span /></button>
-                          </label>
-                          <label>
-                            <span>自动化</span>
+                          </div>
+                          <div className="settings-switch-row">
+                            <span><strong>安全自动化</strong><small>允许管理项目内的安全自动化规则</small></span>
                             <button role="switch" aria-label={`${device.name} 自动化管理`} aria-checked={device.canManageTrust} className={`switch ${device.canManageTrust ? "switch-on" : ""}`} onClick={() => send({ type: "device.trust.set", deviceId: device.id, enabled: !device.canManageTrust })}><span /></button>
-                          </label>
-                          <button className="text-button danger-text-button" onClick={() => setConfirmRevokeDevice(device)}>撤销</button>
-                        </span>
-                      )}
+                          </div>
+                          <button type="button" className="device-revoke-row" onClick={() => setConfirmRevokeDevice(device)}><span>撤销设备</span><small>断开后需要重新配对</small></button>
+                        </div>
+                      </details>
                     </li>
                   ))}
                 </ul>
@@ -230,7 +251,10 @@ export function ProfileView({ localAdmin, devices, pairing, lanApprovalsEnabled,
                 {integrations.length === 0 ? <p>正在检查本机接入状态…</p> : integrations.map((integration) => (
                   <div className="integration-row" key={integration.id}>
                     <span className={`integration-state integration-state-${integration.state}`} aria-hidden="true" />
-                    <span><strong>{integration.label}</strong><small>{integration.detail}</small></span>
+                    <span>
+                      <strong>{integration.label}</strong>
+                      <small>{integration.detail}</small>
+                    </span>
                     <em>{integrationStateLabel(integration.state)}</em>
                   </div>
                 ))}
@@ -251,9 +275,10 @@ export function ProfileView({ localAdmin, devices, pairing, lanApprovalsEnabled,
       {!localAdmin && (
         <section className="settings-section">
           <h3>这台手机</h3>
-          <div className="settings-card phone-permission-card">
-            <strong>{lanApprovalsEnabled ? "可查看、回复与审批" : "只读与回复"}</strong>
-            <button className="secondary-button" onClick={() => setConfirmForgetPhone(true)}>断开这台手机</button>
+          <div className="settings-card settings-list-card phone-permission-card">
+            <div className="settings-value-row"><span><strong>审批与回复</strong><small>处理 Agent 的待办操作</small></span><em>{lanApprovalsEnabled ? "已开启" : "已关闭"}</em></div>
+            <div className="settings-value-row"><span><strong>安全自动化</strong><small>管理项目内的自动化规则</small></span><em>{trustManagementEnabled ? "已开启" : "已关闭"}</em></div>
+            <button className="device-revoke-row" onClick={() => setConfirmForgetPhone(true)}><span>断开这台手机</span><small>断开后需要重新配对</small></button>
           </div>
         </section>
       )}

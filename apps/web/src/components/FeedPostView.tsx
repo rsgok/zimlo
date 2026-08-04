@@ -13,6 +13,7 @@ interface FeedPostViewProps {
   project: Project | undefined;
   onOpenProject: (projectId: string) => void;
   interactionMode?: "swipe" | "desktop";
+  historical?: boolean;
   send?: ((command: ClientCommand) => boolean) | undefined;
 }
 
@@ -23,11 +24,11 @@ interface MediaPreview {
   mimeType: string;
 }
 
-export const FeedPostView = memo(function FeedPostView({ post, materials = [], session, project, onOpenProject, interactionMode = "swipe", send = () => false }: FeedPostViewProps) {
+export const FeedPostView = memo(function FeedPostView({ post, materials = [], session, project, onOpenProject, interactionMode = "swipe", historical = false, send = () => false }: FeedPostViewProps) {
   const now = useNow();
   const content = post.content ?? { type: "text" as const };
   const [mediaPreview, setMediaPreview] = useState<MediaPreview | null>(null);
-  const taskHint = interactionMode === "desktop" ? "打开任务" : "滑动查看任务";
+  const taskHint = historical ? "历史" : interactionMode === "desktop" ? "打开任务" : "滑动查看任务";
 
   return (
     <article className={`feed-post post-${post.kind} template-${post.template} content-${content.type}`}>
@@ -51,7 +52,7 @@ export const FeedPostView = memo(function FeedPostView({ post, materials = [], s
       </div>
 
       <div className="post-footer">
-        {session && <span className="post-task-hint">{taskHint}</span>}
+        {(historical || session) && <span className="post-task-hint">{taskHint}</span>}
       </div>
       {mediaPreview && <FeedMediaViewer preview={mediaPreview} onClose={() => setMediaPreview(null)} />}
     </article>
@@ -63,7 +64,8 @@ export const FeedPostView = memo(function FeedPostView({ post, materials = [], s
   && previous.project === next.project
   && previous.onOpenProject === next.onOpenProject
   && previous.send === next.send
-  && previous.interactionMode === next.interactionMode,
+  && previous.interactionMode === next.interactionMode
+  && previous.historical === next.historical,
 );
 
 function FeedMediaCard({ post, materials, onPreview, send }: { post: FeedPost; materials: Material[]; onPreview: (preview: MediaPreview) => void; send: (command: ClientCommand) => boolean }) {

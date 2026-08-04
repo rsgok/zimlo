@@ -179,9 +179,15 @@ private struct MainAppWebView: NSViewRepresentable {
             injectionTime: .atDocumentStart,
             forMainFrameOnly: true
         ))
+        configuration.userContentController.add(
+            context.coordinator,
+            name: WebSpeechBridge.messageHandlerName
+        )
 
         let webView = WKWebView(frame: .zero, configuration: configuration)
         webView.navigationDelegate = context.coordinator
+        webView.uiDelegate = context.coordinator
+        context.coordinator.attach(to: webView)
         webView.underPageBackgroundColor = NSColor(
             calibratedRed: 0.045,
             green: 0.052,
@@ -202,14 +208,47 @@ private struct MainAppWebView: NSViewRepresentable {
     }
 
     @MainActor
-    final class Coordinator: NSObject, WKNavigationDelegate {
+    final class Coordinator: NSObject, WKNavigationDelegate, WKUIDelegate, WKScriptMessageHandler {
         var route: MainAppRoute
         var phase: Binding<MainAppLoadPhase>
         var lastReloadID: UUID?
+        private let speechBridge = WebSpeechBridge()
 
         init(route: MainAppRoute, phase: Binding<MainAppLoadPhase>) {
             self.route = route
             self.phase = phase
+        }
+
+        func attach(to webView: WKWebView) {
+            speechBridge.attach(to: webView)
+        }
+
+        func userContentController(
+            _ userContentController: WKUserContentController,
+            didReceive message: WKScriptMessage
+        ) {
+            speechBridge.handle(message)
+        }
+
+        func webView(
+            _ webView: WKWebView,
+            runOpenPanelWith parameters: WKOpenPanelParameters,
+            initiatedByFrame frame: WKFrameInfo,
+            completionHandler: @escaping @MainActor ([URL]?) -> Void
+        ) {
+            let panel = NSOpenPanel()
+            panel.canChooseFiles = true
+            panel.canChooseDirectories = parameters.allowsDirectories
+            panel.allowsMultipleSelection = parameters.allowsMultipleSelection
+
+            let complete: @MainActor (NSApplication.ModalResponse) -> Void = { response in
+                completionHandler(response == .OK ? panel.urls : nil)
+            }
+            if let window = webView.window {
+                panel.beginSheetModal(for: window, completionHandler: complete)
+            } else {
+                panel.begin(completionHandler: complete)
+            }
         }
 
         func webView(

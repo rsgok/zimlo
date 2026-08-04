@@ -17,6 +17,7 @@ import {
 import { detectHookSurface } from "./hook-surface.js";
 import { RuntimeHub } from "./runtime.js";
 import { MATERIAL_LIMITS, validateMaterialContent } from "./material-service.js";
+import { ZIMLO_VERSION } from "./version.js";
 
 export interface AgentToolRequest {
   type: "agent_tool";
@@ -35,7 +36,8 @@ export interface AgentToolResult {
   data?: unknown;
 }
 
-const EDITORIAL_POLICY = `只在信息会改变用户判断、行动或信心时发布。每帖按“结论 → 用户影响 → 关键事实 → 证据 → 下一步”编辑；不要发布普通工具调用、文件读取、编译过程、原始日志、心跳或重复状态。`;
+const EDITORIAL_POLICY = `只在用户必须行动、可审阅的阶段产物已经就绪、终止性失败/阻塞或最终结果时发布。progress 必须带当前可检查的产物或验证证据。每帖按“结论 → 用户影响 → 关键事实 → 证据 → 下一步”编辑；不要发布普通工具调用、文件读取、编译过程、原始日志、心跳或重复状态。`;
+const PROGRESS_COALESCE_WINDOW_MS = 10 * 60 * 1_000;
 
 const MATERIAL_FORMATS: Record<string, { kind: Material["kind"]; mimeType: string; label: string }> = {
   ".jpg": { kind: "image", mimeType: "image/jpeg", label: "图片" },
@@ -60,23 +62,23 @@ const MATERIAL_FORMATS: Record<string, { kind: Material["kind"]; mimeType: strin
   ".pptx": { kind: "document", mimeType: "application/vnd.openxmlformats-officedocument.presentationml.presentation", label: "文件" },
 };
 
-function toolDefinitions() {
+export function toolDefinitions() {
   return [
     {
       name: "feed.post",
-      description: `向 Zimlo 发布一条由你主动编辑、给人看的 Feed 帖子。平台不会替你 scrape 日志或生成摘要。${EDITORIAL_POLICY} 普通轮次没有值得说的内容时可以直接保持沉默；关键状态由 signal.transition 校验。`,
+      description: `向 Zimlo 发布一条由你主动编辑、给人看的 Feed 帖子，并可在同一次调用中更新任务状态。平台不会调用额外模型来 scrape 日志或生成摘要。${EDITORIAL_POLICY} 普通轮次没有值得说的内容时直接保持沉默。`,
       inputSchema: {
         type: "object",
         additionalProperties: false,
         required: ["task_id", "kind", "template", "headline", "takeaway", "highlights", "dedupe_key"],
         properties: {
           task_id: { type: "string", minLength: 1, maxLength: 160, description: "本次任务的稳定标识；同一任务后续帖子保持一致。" },
-          kind: { type: "string", enum: ["progress", "decision", "attention", "result", "failure"] },
+          kind: { type: "string", enum: ["progress", "decision", "attention", "result", "failure"], description: "progress 仅用于已有可检查产物或验证证据的阶段性交付。" },
           template: { type: "string", enum: ["paper", "grid", "sticky", "marker", "poster"], description: "选择有限的文字卡模板；不能传颜色、字体或 CSS。" },
           headline: { type: "string", minLength: 1, maxLength: 72, description: "直接表达已经发生的结果，禁止使用“阶段进展”等空标题。" },
           takeaway: { type: "string", minLength: 1, maxLength: 320, description: "用一到两句话解释为什么这件事值得用户现在读。" },
           highlights: { type: "array", maxItems: 3, items: { type: "string", minLength: 1, maxLength: 100 }, description: "最多三条可验证事实，每条只表达一件事。" },
-          proof: { type: "string", minLength: 1, maxLength: 160, description: "可选的一项测试、检查或一手证据，不得粘贴原始日志。" },
+          proof: { type: "string", minLength: 1, maxLength: 160, description: "可选的一项测试、检查或一手证据，不得粘贴原始日志；纯文本 progress 必须提供。" },
           content: {
             description: "可选的独立媒体卡。文本卡省略或传 {type:'text'}；图片组、视频、文档只引用已注册 material id。",
             oneOf: [
@@ -87,6 +89,8 @@ function toolDefinitions() {
             ],
           },
           dedupe_key: { type: "string", minLength: 1, maxLength: 240, description: "同一语义帖重试时保持不变，避免重复发布。" },
+          state: { type: "string", enum: ["running", "waiting_input", "reviewing", "user_review", "failed", "completed"], description: "可选；与 state_reason 同时提供，即可随发帖更新任务状态。" },
+          state_reason: { type: "string", minLength: 1, maxLength: 500, description: "可选；任务状态变化的简短原因。" },
         },
       },
     },
@@ -100,33 +104,6 @@ function toolDefinitions() {
         properties: {
           path: { type: "string", minLength: 1, maxLength: 2000, description: "物料文件路径；必须位于当前 workspace 内。" },
           name: { type: "string", minLength: 1, maxLength: 180, description: "可选展示文件名。" },
-        },
-      },
-    },
-    {
-      name: "feed.skip",
-      description: `显式记录当前受控检查点没有值得发布的新增信息。${EDITORIAL_POLICY} 这不是心跳帖，不会出现在 Timeline；普通聊天轮次无需为了结束而调用。`,
-      inputSchema: {
-        type: "object",
-        additionalProperties: false,
-        required: ["task_id", "reason"],
-        properties: {
-          task_id: { type: "string", minLength: 1, maxLength: 160 },
-          reason: { type: "string", minLength: 1, maxLength: 500 },
-        },
-      },
-    },
-    {
-      name: "signal.transition",
-      description: "更新可靠的机器任务状态。它是 source of truth，和给人看的 Feed 分开。waiting_input、user_review、failed 等关键状态会校验本轮是否已有匹配的 feed.post。",
-      inputSchema: {
-        type: "object",
-        additionalProperties: false,
-        required: ["task_id", "state", "reason"],
-        properties: {
-          task_id: { type: "string", minLength: 1, maxLength: 160 },
-          state: { type: "string", enum: ["running", "waiting_input", "reviewing", "user_review", "failed", "completed"] },
-          reason: { type: "string", minLength: 1, maxLength: 500 },
         },
       },
     },
@@ -151,6 +128,9 @@ export class AgentToolService {
     const parsed = FeedPostInputSchema.safeParse(request.arguments);
     if (!parsed.success) throw new Error(`feed.post 字段无效：${parsed.error.issues.map((issue) => issue.message).join("；")}`);
     const input = parsed.data;
+    if (input.kind === "progress" && !input.proof && (!input.content || input.content.type === "text")) {
+      throw new Error("feed.post(kind=progress) 必须提供可检查的 proof 或已注册物料。");
+    }
     const referenced = input.content?.type === "image_album"
       ? input.content.materialIds
       : input.content?.type === "video" || input.content?.type === "document"
@@ -194,7 +174,7 @@ export class AgentToolService {
       source: "agent" as const,
       createdAt: now,
     };
-    const stored = this.runtime.postFeed(post);
+    const stored = this.runtime.postFeed(post, PROGRESS_COALESCE_WINDOW_MS);
     this.runtime.store.recordFeedDecision({
       agentId: request.provider,
       runId: session.providerSessionId,
@@ -203,11 +183,32 @@ export class AgentToolService {
       at: now,
       ref: stored.post.id,
     });
+    const task = input.state && input.state_reason
+      ? this.runtime.updateTask({
+          id: input.task_id,
+          runId: session.providerSessionId,
+          agentId: request.provider,
+          sessionId: session.id,
+          state: input.state,
+          reason: redactText(input.state_reason, 500),
+          updatedAt: now,
+        })
+      : null;
     return {
       id: request.id,
       ok: true,
-      message: stored.inserted ? "Feed 已发布。" : "重复调用已去重，返回原帖。",
-      data: { post_id: stored.post.id, created_at: stored.post.createdAt, deduplicated: !stored.inserted },
+      message: stored.inserted
+        ? "Feed 已发布。"
+        : stored.coalesced
+          ? "已合并到最近的阶段成果，避免重复刷屏。"
+          : "重复调用已去重，返回原帖。",
+      data: {
+        post_id: stored.post.id,
+        created_at: stored.post.createdAt,
+        deduplicated: !stored.inserted && !stored.coalesced,
+        coalesced: stored.coalesced,
+        ...(task ? { task_state: task.state } : {}),
+      },
     };
   }
 
@@ -366,7 +367,7 @@ export async function runMcpServer(provider: Provider, socketPath: string): Prom
     const method = String(message.method ?? "");
     if (id === undefined) return;
     if (method === "initialize") {
-      respond({ jsonrpc: "2.0", id, result: { protocolVersion: "2025-03-26", capabilities: { tools: {} }, serverInfo: { name: "zimlo", version: "0.2.0" } } });
+      respond({ jsonrpc: "2.0", id, result: { protocolVersion: "2025-03-26", capabilities: { tools: {} }, serverInfo: { name: "zimlo", version: ZIMLO_VERSION } } });
       return;
     }
     if (method === "ping") {

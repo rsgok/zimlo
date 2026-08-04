@@ -11,24 +11,17 @@ export interface HookConfigChange {
   after: JsonObject;
 }
 
-const CODEX_EVENTS = ["SessionStart", "UserPromptSubmit", "PreToolUse", "PostToolUse", "PermissionRequest", "Stop"] as const;
-const CODEX_PLUGIN_EVENTS = ["SessionStart", "UserPromptSubmit", "PermissionRequest", "Stop"] as const;
-const CLAUDE_EVENTS = [
-  "SessionStart",
-  "UserPromptSubmit",
-  "PreToolUse",
-  "PermissionRequest",
-  "PostToolUse",
-  "PostToolUseFailure",
-  "Notification",
-  "Stop",
-  "SessionEnd",
-] as const;
+// Process/transcript discovery already reconstructs prompts, tool activity,
+// failures, and turn completion. Hooks are reserved for low-frequency events
+// that must bind a session immediately or synchronously wait for a human.
+const CODEX_EVENTS = ["SessionStart", "PreToolUse", "PermissionRequest"] as const;
+const CODEX_PLUGIN_EVENTS = ["SessionStart", "PreToolUse", "PermissionRequest"] as const;
+const CLAUDE_EVENTS = ["SessionStart", "PreToolUse", "PermissionRequest"] as const;
 
 export function codexPluginHooks(entrypoint: string, nodePath = process.execPath): JsonObject {
   const configured = appendHooks({}, CODEX_PLUGIN_EVENTS, zimloHookCommand(entrypoint, "codex", "gui", nodePath), "codex");
   return {
-    description: "Zimlo Feed checkpoints and action bridge for Codex",
+    description: "Zimlo session binding and synchronous action bridge for Codex",
     hooks: configured.hooks ?? {},
   };
 }
@@ -80,15 +73,18 @@ function appendHooks(
       });
     });
     if (alreadyInstalled) continue;
+    const waitsForHuman = event === "PermissionRequest" || event === "PreToolUse";
     const handler: JsonObject = {
       type: "command",
       command,
-      timeout: event === "PermissionRequest" || event === "PreToolUse" ? 480 : event === "Stop" ? 3 : 5,
-      statusMessage: event === "PermissionRequest" ? "Waiting for Zimlo approval" : "Updating Zimlo",
+      timeout: waitsForHuman ? 480 : 5,
     };
+    if (event === "PermissionRequest") handler.statusMessage = "Waiting for Zimlo approval";
+    if (event === "PreToolUse") handler.statusMessage = "Waiting for Zimlo input";
     const group: JsonObject = { hooks: [handler] };
-    if (["SessionStart"].includes(event)) group.matcher = "startup|resume|clear|compact";
-    if (["PreToolUse", "PostToolUse", "PostToolUseFailure", "PermissionRequest"].includes(event)) group.matcher = "*";
+    if (["SessionStart"].includes(event)) group.matcher = "startup|resume|clear";
+    if (event === "PreToolUse") group.matcher = provider === "codex" ? "request_user_input" : "AskUserQuestion";
+    if (event === "PermissionRequest") group.matcher = "*";
     groups.push(group);
     hooks[event] = groups;
   }

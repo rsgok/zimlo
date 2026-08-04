@@ -12,12 +12,34 @@ describe("Codex GUI plugin hooks", () => {
     home = null;
   });
 
-  it("uses only lifecycle and approval hooks with a fail-open Stop timeout", () => {
-    const config = codexPluginHooks("/tmp/zimlo.js", "/tmp/node") as { hooks: Record<string, Array<{ hooks: Array<{ timeout: number; command: string }> }>> };
-    expect(Object.keys(config.hooks).sort()).toEqual(["PermissionRequest", "SessionStart", "Stop", "UserPromptSubmit"]);
-    expect(config.hooks.Stop?.[0]?.hooks[0]?.timeout).toBe(3);
+  it("uses only session binding and synchronous human-action hooks", () => {
+    const config = codexPluginHooks("/tmp/zimlo.js", "/tmp/node") as {
+      hooks: Record<string, Array<{
+        matcher?: string;
+        hooks: Array<{ timeout: number; command: string; statusMessage?: string }>;
+      }>>;
+    };
+    expect(Object.keys(config.hooks).sort()).toEqual(["PermissionRequest", "PreToolUse", "SessionStart"]);
+    expect(config.hooks.PreToolUse?.[0]?.matcher).toBe("request_user_input");
+    expect(config.hooks.PreToolUse?.[0]?.hooks[0]?.timeout).toBe(480);
+    expect(config.hooks.PreToolUse?.[0]?.hooks[0]?.statusMessage).toBe("Waiting for Zimlo input");
     expect(config.hooks.PermissionRequest?.[0]?.hooks[0]?.timeout).toBe(480);
+    expect(config.hooks.PermissionRequest?.[0]?.matcher).toBe("*");
+    expect(config.hooks.SessionStart?.[0]?.hooks[0]?.statusMessage).toBeUndefined();
     expect(config.hooks.SessionStart?.[0]?.hooks[0]?.command).toContain("--surface gui");
+  });
+
+  it("uses the same three-event set for CLI providers with provider-specific input tools", async () => {
+    home = await mkdtemp(join(tmpdir(), "zimlo-hooks-"));
+    const [codex, claude] = await hookConfigChanges("/tmp/zimlo.js", false, home);
+    const codexHooks = codex?.after.hooks as Record<string, Array<{ matcher?: string }>>;
+    const claudeHooks = claude?.after.hooks as Record<string, Array<{ matcher?: string }>>;
+
+    expect(Object.keys(codexHooks).sort()).toEqual(["PermissionRequest", "PreToolUse", "SessionStart"]);
+    expect(Object.keys(claudeHooks).sort()).toEqual(["PermissionRequest", "PreToolUse", "SessionStart"]);
+    expect(codexHooks.PreToolUse?.[0]?.matcher).toBe("request_user_input");
+    expect(claudeHooks.PreToolUse?.[0]?.matcher).toBe("AskUserQuestion");
+    expect(codexHooks.SessionStart?.[0]?.matcher).toBe("startup|resume|clear");
   });
 
   it("lets shared Claude settings detect GUI versus CLI at hook runtime", () => {

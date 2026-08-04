@@ -79,7 +79,7 @@ struct ProviderIcon: View {
         }
         .foregroundStyle(ZColor.ink)
         .frame(width: size, height: size)
-        .clipShape(RoundedRectangle(cornerRadius: size * 0.22, style: .continuous))
+        .clipShape(RoundedRectangle(cornerRadius: provider == .codex ? size * 0.5 : size * 0.22, style: .continuous))
         .accessibilityHidden(true)
     }
 }

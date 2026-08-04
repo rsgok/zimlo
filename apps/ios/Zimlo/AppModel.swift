@@ -1107,7 +1107,8 @@ final class AppModel: ObservableObject {
                 multiHost: true
             ),
             sequence: values.map(\.sequence).max() ?? 0,
-            lanApprovalsEnabled: values.contains { $0.lanApprovalsEnabled }
+            lanApprovalsEnabled: values.contains { $0.lanApprovalsEnabled },
+            trustManagementEnabled: values.contains { $0.trustManagementEnabled }
         )
     }
 

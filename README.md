@@ -2,7 +2,7 @@
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
-Zimlo 是 Codex 与 Claude Code 的隐私优先移动状态层。它自动发现 Mac 上已经存在或正在运行的 session，同时给 Agent 提供显式的 `feed.post`、`feed.skip` 与 `signal.transition` 工具。手机默认通过 Cloudflare 与 Mac 完成配对和远程同步；局域网直连只是更快的可选路径。
+Zimlo 是 Codex 与 Claude Code 的隐私优先移动状态层。它自动发现 Mac 上已经存在或正在运行的 session，同时只向 Agent 公开 `feed.post` 与 `material.publish` 两个工具；旧版 `feed.skip` / `signal.transition` 仅保留协议兼容。手机默认通过 Cloudflare 与 Mac 完成配对和远程同步；局域网直连只是更快的可选路径。
 
 ## 当前能力
 
@@ -10,8 +10,8 @@ Zimlo 是 Codex 与 Claude Code 的隐私优先移动状态层。它自动发现
 - 把发现到的 Git root/工作目录持久化为 Project；每个 Project 拥有可编辑的 Agent Profile（名称、头像、简介、默认 Runtime），同一 Agent 下聚合 Codex 与 Claude Code Tasks 和插件卡片。
 - 使用 provider session id、transcript 路径、PID/启动时间、TTY、打开文件和父进程做保守关联；cwd 绝不作为唯一合并依据。
 - 用户原始指令只保留在 Task 详情；Feed 只接收 Agent 主动编辑的结构化阅读卡和真实待处理操作，平台不 scrape 输出，也不二次生成摘要。
-- `signal.transition` 单独维护机器任务状态；Feed 不是状态 source of truth。
-- 普通轮次可以静默结束；Stop hook 只幂等记录 `implicit_skip`，不会打断或把内部协议提示发进对话。关键状态仍会校验匹配的帖子种类。
+- `feed.post` 可在一次调用中同时发布阅读卡和更新机器任务状态；Feed 内容与任务状态仍分别持久化。
+- 普通轮次完全依赖本地 transcript 增量恢复输入、工具活动与完成状态，不安装逐轮 `UserPromptSubmit` / `Stop` hook。只有 Session 绑定、审批和结构化输入使用低频本地 hook，且不会调用额外模型。
 - 主 Feed 使用沉浸式一屏一卡，序列在页面会话内固定；阅读中已有卡不因已读、快照刷新或真实审批完成而换位。新内容只短暂浮出“有新内容”，用户真实开始浏览后自动消失。六小时内同任务的常规更新自动合并，稳定停留一秒后按设备记录已读。
 - 左滑 Feed 卡进入所属 Task Detail，右滑将卡片从本设备的当前与历史 Feed 中移除；卡片上的 Agent 身份进入跨任务 Agent Profile。Feed 移除与任务归档都是乐观更新并提供 6 秒撤销（`feed.dismiss.set` 携带幂等键，旧 `feed.dismiss` 保留兼容）。
 - 底部导航为 `Feed · Tasks · 对话 · Agents · 设置`；中间“对话”是操作入口而不是 Tab。
@@ -186,7 +186,7 @@ zimlo open
 zimlo codex-plugin install
 ```
 
-插件统一携带 `zimlo-feed` Skill、`feed.post` / `feed.skip` / `signal.transition` MCP 工具和精简的 lifecycle hooks。MCP 启动时会按需自动拉起本地 Bridge，因此 Codex GUI 不要求用户先输入终端命令。安装时使用当前 Node 与 CLI 入口的绝对路径，因此不依赖 Codex GUI 继承终端的 npm PATH。插件安装或升级后必须新建任务，已有任务不会动态获得新 Skill 和工具。
+插件统一携带压缩后的 `zimlo-feed` Skill、`feed.post` / `material.publish` MCP 工具和三个最小实时 hooks：`SessionStart`、`PermissionRequest` 与仅匹配 Codex `request_user_input` 的 `PreToolUse`（Claude 对应 `AskUserQuestion`）。普通轮次为 0 hook，`compact` 与 `SessionEnd` 也不再触发。所有 hook 都是确定性本地处理。MCP 启动时会按需自动拉起本地 Bridge，因此 Codex GUI 不要求用户先输入终端命令。安装时使用当前 Node 与 CLI 入口的绝对路径，因此不依赖 Codex GUI 继承终端的 npm PATH。插件安装或升级后必须新建任务，已有任务不会动态获得新 Skill 和工具。
 
 ### Codex CLI 与 Claude Code
 
@@ -203,7 +203,7 @@ claude mcp add --scope user zimlo -- zimlo mcp --provider claude
 
 也可以在 Mac 本机的 **Settings → Runtime 接入方式** 中查看 Codex/Claude 的 GUI、CLI 状态，并显式点击“配置 / 修复 CLI 接入”。Zimlo 启动时不会静默修改用户配置；Claude Code 的 GUI 与 CLI 共用用户级 Hooks/MCP，hook 会根据终端与父进程链记录实际 surface。Zimlo 自己创建的 Codex app-server 与 Claude runner 任务标记为 `Zimlo 托管`。
 
-Agent 的编辑门槛内置在工具描述与 Skill 中：只有信息会改变用户判断、行动或信心才发帖。每张卡按“结论 → 用户影响 → 关键事实 → 证据 → 下一步”书写，并从 `paper / grid / sticky / marker / poster` 中选择模板。普通 tool call、文件读取、编译测试过程、短暂重试和心跳应保持沉默；只有受控 Runner 或显式 `completed` 状态检查点才需要用 `feed.skip` 记录“本轮不发”。
+Agent 的编辑门槛内置在工具描述与 Skill 中：只有用户必须行动、可审阅阶段产物已经就绪、终止性失败/阻塞或最终结果才发帖。`progress` 必须带可检查物料或具体验证证据，同一任务十分钟内的连续阶段帖由服务端合并。每张卡按“结论 → 用户影响 → 关键事实 → 证据 → 下一步”书写，并从 `paper / grid / sticky / marker / poster` 中选择模板。普通 tool call、文件读取、编译测试过程、计划变化、短暂重试和心跳保持沉默；`state` / `state_reason` 可随 `feed.post` 一次提交，不需要额外状态工具调用。
 
 Feed V3 的 `feed.post` 使用结构化字段：`headline`、`takeaway`、最多三条 `highlights`、可选 `proof` 和 Artifact。卡片不再携带接受、修改或审批字段；真实高风险操作继续通过独立 `PendingAction` 明确批准或拒绝。升级插件后必须新建 Codex 任务，旧协议客户端需要同步升级。
 

@@ -17,6 +17,7 @@ import {
 } from "./feedSequence";
 import { SwipeToTask } from "./SwipeToTask";
 import { TaskCommandFailureCard } from "./TaskCommandFailureCard";
+import { AppIcon } from "./AppIcon";
 
 interface FeedViewProps {
   projects: Project[];
@@ -255,7 +256,6 @@ export function FeedView({ projects, posts, materials = [], sessions, actions, c
           onOpen={onOpen}
           onDismiss={() => dismissItem(item)}
         >
-          {historical && <span className="history-label">历史</span>}
           {item.type === "post" ? <FeedPostView
             post={item.post}
             materials={materials}
@@ -263,6 +263,7 @@ export function FeedView({ projects, posts, materials = [], sessions, actions, c
             project={contextProjectId(item) ? projectById.get(contextProjectId(item)!) : undefined}
             onOpenProject={onOpenProject}
             interactionMode={interactionMode}
+            historical={historical}
             send={send}
           /> : item.type === "action" ? <ActionFeedCard
             action={item.action}
@@ -296,7 +297,7 @@ export function FeedView({ projects, posts, materials = [], sessions, actions, c
               <p className="eyebrow">YOU'RE ALL CAUGHT UP</p>
             </div>
             <h2>暂时没有新内容</h2>
-            {historyItems.length > 0 && <button className="secondary-button" onClick={() => historyPage.current?.scrollIntoView({ behavior: "smooth" })}>继续看历史 ↓</button>}
+            {historyItems.length > 0 && <button className="feed-history-button" aria-label="继续浏览历史" title="继续浏览历史" onClick={() => historyPage.current?.scrollIntoView({ behavior: "smooth" })}><AppIcon name="chevron-down" /></button>}
           </div>
         </section>
         {visibleHistoryItems.map((item, index) => renderItem(item, true, index))}

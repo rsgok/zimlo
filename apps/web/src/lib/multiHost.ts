@@ -31,6 +31,7 @@ export function mergeHostSnapshots(sources: HostSnapshot[]): Snapshot {
       taskTimelineCursors: {}, taskPreferences: [], actions: [], trustPolicies: [], trustAudit: [],
       notificationSettings: { enabled: false, approvals: true, failures: true, showTaskTitle: false, updatedAt: "" },
       pushDevices: [], features: EMPTY_FEATURE_CAPABILITIES, sequence: 0, lanApprovalsEnabled: false,
+      trustManagementEnabled: false,
     });
   }
   const normalized = sources.map(({ host, snapshot }) => ({ host, snapshot: normalizeSnapshot(snapshot) }));
@@ -66,6 +67,7 @@ export function mergeHostSnapshots(sources: HostSnapshot[]): Snapshot {
     },
     sequence: Math.max(...normalized.map(({ snapshot }) => snapshot.sequence)),
     lanApprovalsEnabled: normalized.some(({ snapshot }) => snapshot.lanApprovalsEnabled),
+    trustManagementEnabled: normalized.some(({ snapshot }) => snapshot.trustManagementEnabled),
   };
 }
 

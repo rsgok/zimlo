@@ -60,6 +60,7 @@ const EMPTY_SNAPSHOT: Snapshot = {
   features: EMPTY_FEATURE_CAPABILITIES,
   sequence: 0,
   lanApprovalsEnabled: false,
+  trustManagementEnabled: false,
 };
 
 const HOST_BROADCAST_COMMANDS = new Set<ClientCommand["type"]>([

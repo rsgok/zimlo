@@ -1,6 +1,6 @@
 {
   "name": "@zimlo/protocol",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "Shared schemas and encrypted transport protocol for Zimlo",
   "license": "MIT",
   "files": ["dist"],

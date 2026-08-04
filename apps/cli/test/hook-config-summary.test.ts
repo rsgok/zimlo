@@ -26,7 +26,7 @@ describe("formatHookChangesSummary", () => {
     expect(summary).toContain(join(dir, ".codex", "hooks.json"));
     expect(summary).toContain("+ SessionStart：新增 1 条 hook");
     expect(summary).toContain("+ PermissionRequest：新增 1 条 hook");
-    expect(summary).toContain("合计：新增 6 条，移除 0 条，保留 0 条。");
+    expect(summary).toContain("合计：新增 3 条，移除 0 条，保留 0 条。");
     expect(summary).not.toContain('"hooks"');
   });
 
@@ -47,7 +47,7 @@ describe("formatHookChangesSummary", () => {
     const changes = await hookConfigChanges("/tmp/zimlo.js", false, dir, ["codex"]);
     const summary = formatHookChangesSummary(changes);
     expect(summary).toContain("- Stop：移除 1 条 hook");
-    expect(summary).toContain("+ Stop：新增 1 条 hook");
+    expect(summary).not.toContain("+ Stop：新增 1 条 hook");
     expect(summary).toContain("保留 1 条");
 
     await applyHookChanges(changes);

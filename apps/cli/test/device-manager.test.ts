@@ -44,7 +44,30 @@ describe("DeviceManager cloud pairing", () => {
       name: "iPhone",
     });
     expect(result?.device.name).toBe("iPhone");
+    expect(result?.device.canApprove).toBe(true);
+    expect(result?.device.canManageTrust).toBe(true);
     expect(result?.serverProof).toBeTruthy();
     store.close();
+  });
+
+  it("migrates existing active phones to the new permission defaults only once", () => {
+    const root = mkdtempSync(join(tmpdir(), "zimlo-device-manager-"));
+    roots.push(root);
+    const path = join(root, "zimlo.db");
+    const seed = new ZimloStore(path);
+    const now = new Date().toISOString();
+    seed.upsertDevice({ id: "phone", name: "Existing iPhone", keyBase64: "key", createdAt: now, lastSeenAt: now, revokedAt: null, isLocalAdmin: false, canApprove: false, canManageTrust: false });
+    seed.database.prepare("DELETE FROM metadata WHERE key = 'device_permissions_default_on_v1'").run();
+    seed.close();
+
+    const migrated = new ZimloStore(path);
+    expect(migrated.getDevice("phone")).toEqual(expect.objectContaining({ canApprove: true, canManageTrust: true }));
+    migrated.setDeviceApproval("phone", false);
+    migrated.setDeviceTrustManagement("phone", false);
+    migrated.close();
+
+    const reopened = new ZimloStore(path);
+    expect(reopened.getDevice("phone")).toEqual(expect.objectContaining({ canApprove: false, canManageTrust: false }));
+    reopened.close();
   });
 });

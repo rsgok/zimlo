@@ -103,8 +103,8 @@ export class DeviceManager {
       lastSeenAt: now,
       revokedAt: null,
       isLocalAdmin: false,
-      canApprove: false,
-      canManageTrust: false,
+      canApprove: true,
+      canManageTrust: true,
     });
     this.pairings.delete(pairing.id);
     return { device, serverProof: makeProof(pairKey, `server:${device.id}`) };

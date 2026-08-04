@@ -43,7 +43,12 @@ const TRUSTED_ZIMLO_TOOLS = new Set([
   "mcp__zimlo__feed_post",
   "mcp__zimlo__feed_skip",
   "mcp__zimlo__signal_transition",
+  "mcp__zimlo__material_publish",
 ]);
+
+export function isStructuredInputTool(toolName: unknown): boolean {
+  return toolName === "AskUserQuestion" || toolName === "request_user_input";
+}
 
 export function isTrustedZimloPermission(payload: Record<string, unknown>): boolean {
   return payload.hook_event_name === "PermissionRequest"
@@ -53,7 +58,7 @@ export function isTrustedZimloPermission(payload: Record<string, unknown>): bool
 
 export function actionDetailFor(payload: Record<string, unknown>): string {
   const input = record(payload.tool_input);
-  if (payload.tool_name === "AskUserQuestion" && Array.isArray(input.questions)) {
+  if (isStructuredInputTool(payload.tool_name) && Array.isArray(input.questions)) {
     const questions = input.questions.map((question) => {
       const value = record(question);
       return [value.header, value.question].filter((part) => typeof part === "string").join(": ");
@@ -67,7 +72,7 @@ export function actionDetailFor(payload: Record<string, unknown>): string {
   if (typeof input.file_path === "string" && input.file_path.trim()) lines.push(`文件：${input.file_path.trim()}`);
   if (typeof input.headline === "string" && input.headline.trim()) lines.push(`内容：${input.headline.trim()}`);
   if (typeof input.state === "string" && input.state.trim()) lines.push(`目标状态：${input.state.trim()}`);
-  if (typeof payload.tool_name === "string" && !["Bash", "AskUserQuestion"].includes(payload.tool_name)) {
+  if (typeof payload.tool_name === "string" && payload.tool_name !== "Bash" && !isStructuredInputTool(payload.tool_name)) {
     lines.push(`工具：${payload.tool_name}`);
   }
   if (lines.length === 0) {
@@ -132,7 +137,7 @@ function eventKind(payload: Record<string, unknown>): UnifiedEvent["kind"] | nul
   if (hook === "PermissionRequest") return "needs_approval";
   if (hook === "Stop") return "completed";
   if (hook === "PostToolUseFailure") return "failed";
-  if (hook === "PreToolUse" && tool === "AskUserQuestion") return "needs_input";
+  if (hook === "PreToolUse" && isStructuredInputTool(tool)) return "needs_input";
   if (hook === "PreToolUse" && tool === "Bash") return "command_started";
   if (hook === "PreToolUse" && /Edit|Write|apply_patch/u.test(tool)) return "files_changed";
   if (hook === "PostToolUse" && tool === "Bash") {
@@ -262,7 +267,7 @@ export class HookServer {
     const existing = this.runtime.store.getSession(sessionId);
     const hookName = String(payload.hook_event_name ?? "");
     const isApproval = hookName === "PermissionRequest";
-    const isInput = hookName === "PreToolUse" && payload.tool_name === "AskUserQuestion";
+    const isInput = hookName === "PreToolUse" && isStructuredInputTool(payload.tool_name);
     const trustedZimloPermission = request.provider === "codex" && isTrustedZimloPermission(payload);
     const session: Session = {
       id: sessionId,
@@ -397,13 +402,17 @@ export class HookServer {
   private formatDecision(provider: Provider, payload: Record<string, unknown>, resolution: DecisionResolution | null): unknown | null {
     if (!resolution) return null;
     const hookEventName = String(payload.hook_event_name ?? "PermissionRequest");
-    if (hookEventName === "PreToolUse" && payload.tool_name === "AskUserQuestion") {
+    if (hookEventName === "PreToolUse" && isStructuredInputTool(payload.tool_name)) {
       const toolInput = record(payload.tool_input);
       const answer = resolution.input?.answer;
       const answers = answer && Array.isArray(toolInput.questions)
         ? Object.fromEntries(toolInput.questions.map((question, index) => {
           const value = record(question);
-          const key = typeof value.question === "string" ? value.question : `question-${index + 1}`;
+          const key = provider === "codex" && typeof value.id === "string"
+            ? value.id
+            : typeof value.question === "string"
+              ? value.question
+              : `question-${index + 1}`;
           return [key, answer];
         }))
         : (resolution.input ?? {});
@@ -478,6 +487,6 @@ export async function runHookClient(
 export function hookClientTimeoutMs(payload: Record<string, unknown>): number {
   const event = String(payload.hook_event_name ?? "");
   const waitsForHuman = event === "PermissionRequest"
-    || (event === "PreToolUse" && payload.tool_name === "AskUserQuestion");
+    || (event === "PreToolUse" && isStructuredInputTool(payload.tool_name));
   return waitsForHuman ? 481_000 : 2_500;
 }

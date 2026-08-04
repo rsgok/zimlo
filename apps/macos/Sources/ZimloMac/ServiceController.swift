@@ -125,6 +125,27 @@ enum LocalStatusEvaluation {
     }
 }
 
+enum MenuStatusDescription {
+    static func detail(for state: ServiceState, status: LocalServiceStatus?) -> String {
+        if let message = state.recoveryMessage { return message }
+        switch state {
+        case .ready:
+            guard let status else { return "本地服务已连接" }
+            if status.pairedDeviceCount == 0 { return "还未连接手机" }
+            if !status.cloud { return "手机连接暂不可用，Zimlo 会自动重试" }
+            return "手机已连接，等待需要你处理的任务"
+        case .starting:
+            return "正在连接本地服务"
+        case .stopping:
+            return "正在完成后台服务切换"
+        case .manualStopped:
+            return "后台服务没有运行"
+        case .degraded, .unavailable:
+            return ""
+        }
+    }
+}
+
 @MainActor
 final class ServiceController: ObservableObject {
     @Published private(set) var state: ServiceState = .starting
@@ -198,19 +219,7 @@ final class ServiceController: ObservableObject {
     }
 
     var menuDetail: String {
-        if let message = state.recoveryMessage { return message }
-        switch state {
-        case .ready:
-            guard let status else { return "本地服务已连接。" }
-            if status.pairedDeviceCount == 0 { return "服务正常；尚未连接手机。" }
-            if !status.cloud { return "本地服务正常；加密云连接暂不可用。" }
-            if !status.pushNotifications { return "服务正常；手机推送尚未启用。" }
-            return "本地、云连接与手机推送均正常。"
-        case .starting: return "正在启动本地 Bridge 并检查协议。"
-        case .stopping: return "正在安全停止本地 Bridge。"
-        case .manualStopped: return "自动启动已暂停，可随时手动恢复。"
-        case .degraded, .unavailable: return ""
-        }
+        MenuStatusDescription.detail(for: state, status: status)
     }
 
     var completionSummary: String {

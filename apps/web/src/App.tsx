@@ -182,7 +182,7 @@ export function App() {
         <div className={tab === "settings" ? "tab-panel" : "tab-panel tab-panel-hidden"}>
           {mountedTabs.has("settings") && (
             <ProfileView
-              localAdmin={bridge.localAdmin}
+              localAdmin={macosShell || bridge.localAdmin}
               devices={bridge.devices}
               pairing={bridge.pairing}
               codexPlugin={bridge.codexPlugin}
@@ -190,6 +190,7 @@ export function App() {
               sessions={bridge.snapshot.sessions}
               userProfile={bridge.snapshot.userProfile}
               lanApprovalsEnabled={bridge.snapshot.lanApprovalsEnabled}
+              trustManagementEnabled={bridge.snapshot.trustManagementEnabled}
               notificationSettings={bridge.snapshot.notificationSettings}
               pushRegistered={bridge.snapshot.pushDevices.some((device) => device.active)}
               notificationEnabled={bridge.snapshot.features.pushNotifications}
@@ -221,13 +222,12 @@ export function App() {
           aria-label="打开对话"
         >
           <span className="bottom-nav-icon bottom-nav-create"><AppIcon name="conversation" /></span>
-          <strong className="bottom-nav-label">对话</strong>
         </button>
         <button aria-current={tab === "agents" ? "page" : undefined} className={tab === "agents" ? "active" : ""} onClick={() => mountTab("agents")}>
           <span className="bottom-nav-icon"><AppIcon name="agents" /></span>
           <span className="bottom-nav-label">Agents</span>
         </button>
-        <button aria-current={tab === "settings" ? "page" : undefined} className={tab === "settings" ? "active" : ""} onClick={openSettings} aria-label="个人设置">
+        <button aria-current={tab === "settings" ? "page" : undefined} className={tab === "settings" ? "active" : ""} onClick={openSettings} aria-label="设置">
           <span className="bottom-nav-icon bottom-nav-user"><UserAvatar avatarId={bridge.snapshot.userProfile.avatarId} className="bottom-nav-avatar" alt="" /></span>
           <span className="bottom-nav-label">设置</span>
         </button>

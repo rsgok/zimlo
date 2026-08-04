@@ -3,8 +3,8 @@ import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { EMPTY_CAPABILITIES, type Session, type UnifiedEvent } from "@zimlo/protocol";
-import { AgentToolService, type AgentToolRequest } from "../src/agent-tools.js";
-import { finalizeStopFeedDecision, hookClientTimeoutMs, ingestUserInstruction } from "../src/hook-server.js";
+import { AgentToolService, toolDefinitions, type AgentToolRequest } from "../src/agent-tools.js";
+import { finalizeStopFeedDecision, hookClientTimeoutMs, ingestUserInstruction, isStructuredInputTool } from "../src/hook-server.js";
 import { RuntimeHub } from "../src/runtime.js";
 import { ZimloStore } from "../src/store.js";
 
@@ -61,6 +61,73 @@ describe("agent-authored feed protocol", () => {
     expect(store.listFeedPosts()).toHaveLength(1);
     expect(store.getFeedCheckpoint("codex", "run-a")?.decisionKind).toBe("post");
     expect(store.listFeedPosts()[0]).toMatchObject({ template: "grid", headline: "完成认证重构", highlights: ["刷新请求只保留一个在途实例"] });
+  });
+
+  it("exposes only the two tools the model needs", () => {
+    expect(toolDefinitions().map((tool) => tool.name)).toEqual(["feed.post", "material.publish"]);
+  });
+
+  it("publishes and updates task state in one call", () => {
+    const result = tools.handle(request("feed.post", {
+      task_id: "task-a",
+      kind: "result",
+      template: "paper",
+      headline: "优化已可审阅",
+      takeaway: "用户现在可以直接检查最终行为。",
+      highlights: ["普通轮次不再触发 Hook"],
+      proof: "完整回归通过",
+      dedupe_key: "task-a:review",
+      state: "user_review",
+      state_reason: "等待用户确认最终效果",
+    }));
+
+    expect(result.ok).toBe(true);
+    expect(result.data).toMatchObject({ task_state: "user_review" });
+    expect(store.listTasks()[0]).toMatchObject({ id: "task-a", state: "user_review" });
+  });
+
+  it("coalesces nearby progress posts for the same task", () => {
+    const first = {
+      task_id: "task-a", kind: "progress", template: "grid", headline: "第一项成果可检查",
+      takeaway: "第一项行为已经验证。", highlights: [], proof: "定向测试通过", dedupe_key: "task-a:stage-1",
+    };
+    const second = {
+      ...first,
+      headline: "第二项成果可检查",
+      takeaway: "第二项行为也已经验证。",
+      proof: "完整测试通过",
+      dedupe_key: "task-a:stage-2",
+    };
+    expect(tools.handle(request("feed.post", first)).ok).toBe(true);
+    expect(tools.handle(request("feed.post", second)).data).toMatchObject({ coalesced: true, deduplicated: false });
+    expect(store.listFeedPosts()).toHaveLength(1);
+    expect(store.listFeedPosts()[0]).toMatchObject({ headline: "第二项成果可检查", proof: "完整测试通过" });
+  });
+
+  it("rejects task states that do not match the card kind", () => {
+    const result = tools.handle(request("feed.post", {
+      task_id: "task-a", kind: "progress", template: "grid", headline: "等待选择",
+      takeaway: "需要用户决定下一步。", highlights: [], proof: "两种方案已验证",
+      dedupe_key: "task-a:invalid-state", state: "waiting_input", state_reason: "等待选择",
+    }));
+    expect(result.ok).toBe(false);
+    expect(result.message).toContain("kind=attention");
+  });
+
+  it("rejects activity-style progress without a reviewable material or proof", () => {
+    const result = tools.handle(request("feed.post", {
+      task_id: "task-a",
+      kind: "progress",
+      template: "grid",
+      headline: "正在继续优化",
+      takeaway: "已经读完主要代码，下一步继续运行测试。",
+      highlights: ["完成代码阅读"],
+      dedupe_key: "task-a:activity-only",
+    }));
+
+    expect(result.ok).toBe(false);
+    expect(result.message).toContain("必须提供可检查的 proof 或已注册物料");
+    expect(store.listFeedPosts()).toHaveLength(0);
   });
 
   it("rejects removed V2 action fields without storing partial content", () => {
@@ -138,9 +205,9 @@ describe("agent-authored feed protocol", () => {
       expect(localStore.getMaterial(materialId)).toMatchObject({ kind: "image", status: "ready", origin: "agent" });
 
       const posted = localTools.handle({ ...request("feed.post", {
-        task_id: "task-a", kind: "result", template: "paper", headline: "效果图已生成",
+        task_id: "task-a", kind: "progress", template: "paper", headline: "阶段效果图已生成",
         takeaway: "可以直接查看最终画面。", highlights: [],
-        content: { type: "image_album", materialIds: [materialId] }, dedupe_key: "task-a:image-result",
+        content: { type: "image_album", materialIds: [materialId] }, dedupe_key: "task-a:image-progress",
       }), cwd: root });
       expect(posted.ok).toBe(true);
       expect(localStore.listFeedPosts()[0]?.content).toEqual({ type: "image_album", materialIds: [materialId] });
@@ -261,6 +328,9 @@ describe("feed decision Stop checkpoint", () => {
     expect(hookClientTimeoutMs({ hook_event_name: "Stop" })).toBe(2_500);
     expect(hookClientTimeoutMs({ hook_event_name: "PermissionRequest" })).toBe(481_000);
     expect(hookClientTimeoutMs({ hook_event_name: "PreToolUse", tool_name: "AskUserQuestion" })).toBe(481_000);
+    expect(hookClientTimeoutMs({ hook_event_name: "PreToolUse", tool_name: "request_user_input" })).toBe(481_000);
     expect(hookClientTimeoutMs({ hook_event_name: "PreToolUse", tool_name: "Bash" })).toBe(2_500);
+    expect(isStructuredInputTool("AskUserQuestion")).toBe(true);
+    expect(isStructuredInputTool("request_user_input")).toBe(true);
   });
 });

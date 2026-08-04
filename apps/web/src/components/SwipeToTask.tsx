@@ -1,4 +1,5 @@
 import { useRef, useState, type KeyboardEvent, type PointerEvent, type ReactNode } from "react";
+import { AppIcon } from "./AppIcon";
 
 interface SwipeToTaskProps {
   children: ReactNode;
@@ -82,10 +83,8 @@ export function SwipeToTask({ children, sessionId, onOpen, onDismiss, mode = "sw
     return (
       <div className="desktop-feed-item" role="group" aria-label="Feed 卡片操作" tabIndex={0} onKeyDown={handleKeyDown}>
         <div className="desktop-feed-content">{children}</div>
-        <div className="desktop-feed-actions">
-          {sessionId && <button type="button" className="desktop-feed-primary" onClick={() => onOpen(sessionId)}>查看任务</button>}
-          <button type="button" onClick={onDismiss}>移出 Feed</button>
-        </div>
+        <button type="button" className="desktop-feed-action desktop-feed-action-dismiss" aria-label="移出 Feed" title="移出 Feed" onClick={onDismiss}><AppIcon name="arrow-left" /></button>
+        {sessionId && <button type="button" className="desktop-feed-action desktop-feed-action-profile" aria-label="查看任务" title="查看任务" onClick={() => onOpen(sessionId)}><AppIcon name="arrow-right" /></button>}
       </div>
     );
   }

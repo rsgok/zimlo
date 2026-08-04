@@ -903,10 +903,10 @@ struct SettingsView: View {
         ScrollView {
             LazyVStack(alignment: .leading, spacing: 15) {
                 profileSummary
-                if model.snapshot.features.pushNotifications { notificationsSection }
-                connectionSection
-                hostsSection
                 runtimeSection
+                hostsSection
+                connectionSection
+                if model.snapshot.features.pushNotifications { notificationsSection }
                 forgetButton
             }
             .padding(.horizontal, 14)
@@ -1043,7 +1043,6 @@ struct SettingsView: View {
                 Divider().overlay(ZColor.line)
                 notificationToggle("任务失败", keyPath: \.failures)
                 Divider().overlay(ZColor.line)
-                Divider().overlay(ZColor.line)
                 notificationToggle("锁屏任务标题", keyPath: \.showTaskTitle)
             }
         }
@@ -1086,9 +1085,15 @@ struct SettingsView: View {
             .buttonStyle(.plain)
             Divider().overlay(ZColor.line)
             settingsValueRow(
-                "自动化",
-                value: model.snapshot.lanApprovalsEnabled ? "已授权" : "只读",
-                systemImage: "checkmark.shield.fill"
+                "审批与回复",
+                value: model.snapshot.lanApprovalsEnabled ? "已开启" : "已关闭",
+                systemImage: model.snapshot.lanApprovalsEnabled ? "checkmark.circle.fill" : "hand.raised.fill"
+            )
+            Divider().overlay(ZColor.line)
+            settingsValueRow(
+                "安全自动化",
+                value: model.snapshot.trustManagementEnabled ? "已开启" : "已关闭",
+                systemImage: model.snapshot.trustManagementEnabled ? "checkmark.shield.fill" : "shield.slash.fill"
             )
         }
     }

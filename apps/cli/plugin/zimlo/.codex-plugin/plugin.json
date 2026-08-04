@@ -1,6 +1,6 @@
 {
   "name": "zimlo",
-  "version": "0.2.0+codex.20260723",
+  "version": "0.2.1+codex.20260804",
   "description": "Structured Agent-authored reading cards and action checkpoints for Codex",
   "author": {
     "name": "Zimlo"
@@ -9,7 +9,7 @@
   "interface": {
     "displayName": "Zimlo",
     "shortDescription": "Publish structured, readable coding checkpoints to your local Feed.",
-    "longDescription": "Adds the Zimlo Feed V2 protocol, structured reading-card tools, and lifecycle checkpoints to Codex GUI tasks. Agents edit conclusions, impact, evidence, and next actions explicitly; raw prompts stay in Task details.",
+    "longDescription": "Adds the Zimlo Feed V3 protocol, structured reading-card tools, and a minimal synchronous action bridge to Codex GUI tasks. Ordinary turns are reconstructed from local transcripts without per-turn hooks; Agents publish only reviewable deliverables and final outcomes.",
     "developerName": "Zimlo",
     "category": "Developer Tools",
     "capabilities": [

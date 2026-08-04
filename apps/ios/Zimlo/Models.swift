@@ -365,6 +365,7 @@ struct Snapshot: Codable, Hashable {
     var features: FeatureCapabilities
     var sequence: Int
     var lanApprovalsEnabled: Bool
+    var trustManagementEnabled: Bool
 
     static let empty = Snapshot(
         host: nil,
@@ -376,7 +377,7 @@ struct Snapshot: Codable, Hashable {
         pushDevices: [], features: FeatureCapabilities(
             projectTrustPolicy: false, pushNotifications: false, remoteSync: false
         ),
-        sequence: 0, lanApprovalsEnabled: false
+        sequence: 0, lanApprovalsEnabled: false, trustManagementEnabled: false
     )
 
     enum CodingKeys: String, CodingKey {
@@ -384,7 +385,7 @@ struct Snapshot: Codable, Hashable {
         case userProfile, projects, sessions, posts, tasks, commands, materials, workspaces
         case seenPostIds, dismissedFeedItemIds, taskTimelineCursors, taskPreferences
         case actions, trustPolicies, trustAudit, notificationSettings, pushDevices, features
-        case sequence, lanApprovalsEnabled
+        case sequence, lanApprovalsEnabled, trustManagementEnabled
     }
 
     init(
@@ -396,7 +397,7 @@ struct Snapshot: Codable, Hashable {
         trustPolicies: [ProjectTrustPolicy], trustAudit: [TrustAuditEntry],
         notificationSettings: NotificationSettings, pushDevices: [PushDeviceRegistration],
         features: FeatureCapabilities,
-        sequence: Int, lanApprovalsEnabled: Bool
+        sequence: Int, lanApprovalsEnabled: Bool, trustManagementEnabled: Bool
     ) {
         self.host = host
         self.userProfile = userProfile
@@ -419,6 +420,7 @@ struct Snapshot: Codable, Hashable {
         self.features = features
         self.sequence = sequence
         self.lanApprovalsEnabled = lanApprovalsEnabled
+        self.trustManagementEnabled = trustManagementEnabled
     }
 
     init(from decoder: Decoder) throws {
@@ -444,6 +446,7 @@ struct Snapshot: Codable, Hashable {
         features = try c.decodeIfPresent(FeatureCapabilities.self, forKey: .features) ?? Snapshot.empty.features
         sequence = try c.decodeIfPresent(Int.self, forKey: .sequence) ?? 0
         lanApprovalsEnabled = try c.decodeIfPresent(Bool.self, forKey: .lanApprovalsEnabled) ?? false
+        trustManagementEnabled = try c.decodeIfPresent(Bool.self, forKey: .trustManagementEnabled) ?? false
     }
 }
 

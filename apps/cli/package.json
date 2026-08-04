@@ -1,6 +1,6 @@
 {
   "name": "@zimlo/cli",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "Trusted-LAN local feed and action bridge for coding agents",
   "license": "MIT",
   "engines": { "node": ">=24.0.0" },

@@ -427,7 +427,6 @@ struct MenuPanel: View {
     @ObservedObject private var service: ServiceController
     @State private var launchAtLogin = SMAppService.mainApp.status == .enabled
     @State private var menuNotice: String?
-    @State private var showingStopConfirmation = false
 
     init(model: AppModel) {
         self.model = model
@@ -436,7 +435,7 @@ struct MenuPanel: View {
 
     private var subtitle: String {
         switch service.state {
-        case .ready: "正在守候重要任务"
+        case .ready: "后台服务正常"
         case .starting: "正在准备后台服务"
         case .stopping: "正在停止后台服务"
         case .degraded: "连接不稳定"
@@ -450,7 +449,7 @@ struct MenuPanel: View {
     }
 
     private var detailColor: Color {
-        if menuNotice != nil { return ZColor.coral }
+        if menuNotice != nil { return ZColor.warning }
         switch service.state {
         case .ready, .manualStopped: return ZColor.muted
         case .starting, .stopping: return ZColor.warning
@@ -468,18 +467,15 @@ struct MenuPanel: View {
         }
     }
 
+    private var detailSymbol: String {
+        menuNotice == nil ? service.menuBarSymbol : "info.circle.fill"
+    }
+
     @ViewBuilder
     private var serviceControl: some View {
         switch service.state {
         case .ready:
-            MenuAction(
-                icon: "stop.circle",
-                label: service.controlBusy ? "正在停止服务…" : "停止后台服务",
-                trailingIcon: nil,
-                disabled: service.controlBusy
-            ) {
-                showingStopConfirmation = true
-            }
+            EmptyView()
         case .manualStopped:
             MenuAction(
                 icon: "play.circle",
@@ -490,13 +486,7 @@ struct MenuPanel: View {
                 Task { await service.retry() }
             }
         case .starting, .stopping:
-            MenuAction(
-                icon: "hourglass",
-                label: service.state.label,
-                trailingIcon: nil,
-                disabled: true,
-                action: {}
-            )
+            EmptyView()
         case .degraded, .unavailable:
             MenuAction(
                 icon: "arrow.clockwise",
@@ -532,14 +522,29 @@ struct MenuPanel: View {
             .padding(.top, 16)
             .padding(.bottom, 8)
 
-            Text(detail)
-                .font(.system(size: 12, weight: .semibold))
-                .foregroundStyle(detailColor)
-                .lineLimit(2)
-                .frame(maxWidth: .infinity, minHeight: 34, maxHeight: 34, alignment: .topLeading)
-                .padding(.horizontal, 18)
-                .padding(.bottom, 8)
-                .accessibilityLabel("服务详情：\(detail)")
+            HStack(spacing: 9) {
+                Image(systemName: detailSymbol)
+                    .font(.system(size: 12, weight: .bold))
+                    .foregroundStyle(menuNotice == nil ? statusColor : detailColor)
+                    .frame(width: 16)
+                Text(detail)
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundStyle(detailColor)
+                    .lineLimit(2)
+                Spacer(minLength: 0)
+            }
+            .padding(.horizontal, 11)
+            .padding(.vertical, 10)
+            .background(ZColor.surface)
+            .clipShape(RoundedRectangle(cornerRadius: 11, style: .continuous))
+            .overlay {
+                RoundedRectangle(cornerRadius: 11, style: .continuous)
+                    .stroke(ZColor.border, lineWidth: 1)
+            }
+            .padding(.horizontal, 12)
+            .padding(.bottom, 12)
+            .accessibilityElement(children: .combine)
+            .accessibilityLabel("服务详情：\(detail)")
 
             ZDivider()
 
@@ -561,16 +566,19 @@ struct MenuPanel: View {
                     model.onboarding.step = 1
                     WindowCoordinator.shared.showOnboardingFromMenu()
                 }
+            }
+            .padding(10)
+
+            ZDivider()
+
+            VStack(spacing: 4) {
+                MenuAction(icon: "arrow.triangle.2.circlepath", label: "检查更新", trailingIcon: nil) {
+                    if !model.updates.checkForUpdates() {
+                        menuNotice = "当前是本地开发版；发布版会在这里检查更新"
+                    }
+                }
                 MenuAction(icon: "doc.text.magnifyingglass", label: "查看日志", trailingIcon: "arrow.up.right") {
                     service.openLog()
-                }
-                MenuAction(icon: "folder", label: "打开服务目录", trailingIcon: "arrow.up.right") {
-                    service.openServiceDirectory()
-                }
-                if model.updates.isConfigured {
-                    MenuAction(icon: "arrow.triangle.2.circlepath", label: "检查更新", trailingIcon: nil) {
-                        model.updates.checkForUpdates()
-                    }
                 }
             }
             .padding(10)
@@ -615,18 +623,6 @@ struct MenuPanel: View {
         .task {
             guard service.state != .manualStopped else { return }
             _ = await service.refreshStatus()
-        }
-        .confirmationDialog(
-            "停止后台服务？",
-            isPresented: $showingStopConfirmation,
-            titleVisibility: .visible
-        ) {
-            Button("停止服务", role: .destructive) {
-                Task { await service.stopService() }
-            }
-            Button("取消", role: .cancel) {}
-        } message: {
-            Text("停止后，手机不会再收到新任务；可随时从菜单栏重新启动。")
         }
     }
 

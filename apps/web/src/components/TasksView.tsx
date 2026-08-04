@@ -133,11 +133,8 @@ function stateLabel(session: Session, state: string): string {
 
 function taskNextStep(session: Session, state: string): string | null {
   if (state === "waiting_input" || state === "waiting") return "需要你的回复";
-  if (state === "user_review") return "结果已就绪，等待你审阅";
-  if (state === "failed") return "执行失败，查看原因和恢复方式";
-  if (state === "reviewing") return "Agent 正在检查结果";
-  if (state === "running") return "Agent 正在执行";
-  if (isReadyTask(session, state)) return "可以继续布置后续工作";
+  if (state === "failed") return "查看原因并重试";
+  if (state === "user_review" || state === "reviewing" || state === "running" || isReadyTask(session, state)) return null;
   return null;
 }
 

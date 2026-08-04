@@ -7,9 +7,9 @@ pnpm exec vitest run apps/cli/test/codex-plugin.test.ts
 node apps/cli/dist/index.js codex-plugin status
 ```
 
-手工验证：在本机 Settings 点击“准备 Codex 插件”，使用 deeplink 打开 Codex Plugins，安装并审核 hooks，然后**新建**任务。确认新任务能看到 Feed V2 MCP 工具，MCP 会在 Bridge 未运行时自动拉起它；用户原始指令只进入 Task Detail，不得出现在 Feed。普通轮次允许静默结束且不得出现 Feed 协议反馈；只有值得说的内容才调用结构化 `feed.post`。
+手工验证：在本机 Settings 点击“准备 Codex 插件”，使用 deeplink 打开 Codex Plugins，安装并审核 hooks，然后**新建**任务。确认新任务只看到 `feed.post` 与 `material.publish`，MCP 会在 Bridge 未运行时自动拉起它；插件只声明 `SessionStart`、`PermissionRequest` 与 matcher 为 `request_user_input` 的 `PreToolUse`。用户原始指令只进入 Task Detail，不得出现在 Feed。普通轮次必须为 0 hook 且静默结束；只有可审阅产物、用户行动、终止性失败/阻塞或最终结果才调用结构化 `feed.post`。
 
-Stop 回归检查：给 hook transport 输入一个没有 Feed 决策的 `Stop` 事件，stdout 必须为空，SQLite 对应 checkpoint 应变为 `implicit_skip`；重复同一 Stop 仍为空且不会覆盖显式 `post/skip`。
+旧版兼容回归：给 hook transport 输入一个没有 Feed 决策的 `Stop` 事件，stdout 必须为空，SQLite 对应 checkpoint 应变为 `implicit_skip`；重复同一 Stop 仍为空且不会覆盖显式 `post/skip`。新安装配置不得再声明 Stop hook。
 
 ## 自动验证
 

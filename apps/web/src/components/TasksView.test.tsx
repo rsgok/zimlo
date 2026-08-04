@@ -75,7 +75,7 @@ describe("TasksView", () => {
     expect(markup).toContain("zimlo · 1");
     expect(markup).toContain("优化任务搜索与语义标题");
     expect(markup).toContain("项目 · zimlo");
-    expect(markup).toContain("Agent 正在执行");
+    expect(markup).not.toContain("Agent 正在执行");
     expect(markup).toContain("aria-label=\"管理任务\"");
     expect(markup).toContain("Codex");
     expect(markup).not.toContain("/Users/kai/Code/zimlo");

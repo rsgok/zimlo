@@ -3,6 +3,7 @@ import { createInterface } from "node:readline";
 import { parseClaudeLine, redactText, stableSessionId, uuidV7, type ParserState } from "@zimlo/adapters";
 import { EMPTY_CAPABILITIES, type Material, type Provider, type Session, type UnifiedEvent } from "@zimlo/protocol";
 import { ActionBroker } from "./action-broker.js";
+import { requireAgentCommand } from "./agent-command.js";
 import { CodexAppServer } from "./codex-app-server.js";
 import { RuntimeHub } from "./runtime.js";
 
@@ -86,7 +87,8 @@ export class ResumeService {
 
   private async createClaudeTask(cwd: string, text: string, materials: ResolvedMaterial[], onSession?: (sessionId: string) => void): Promise<{ ok: boolean; message: string; sessionId?: string }> {
     const args = ["-p", promptWithMaterials(text, materials), "--output-format", "stream-json", "--verbose", "--include-hook-events"];
-    const child = spawn("claude", args, { cwd, stdio: ["ignore", "pipe", "pipe"], env: process.env });
+    const command = await requireAgentCommand("claude");
+    const child = spawn(command, args, { cwd, stdio: ["ignore", "pipe", "pipe"], env: process.env });
     const parser: ParserState = { provider: "claude", providerSessionId: `pending:${uuidV7()}`, toolCalls: new Map() };
     let session: Session | null = null;
     const stderr: string[] = [];
@@ -180,7 +182,8 @@ export class ResumeService {
 
   private async runClaude(session: Session, text: string, materials: ResolvedMaterial[]): Promise<{ ok: boolean; message: string }> {
     const args = ["-p", promptWithMaterials(text, materials), "--resume", session.providerSessionId, "--output-format", "stream-json", "--verbose", "--include-hook-events"];
-    const child = spawn("claude", args, { cwd: session.cwd!, stdio: ["ignore", "pipe", "pipe"], env: process.env });
+    const command = await requireAgentCommand("claude");
+    const child = spawn(command, args, { cwd: session.cwd!, stdio: ["ignore", "pipe", "pipe"], env: process.env });
     const parser: ParserState = { provider: "claude", providerSessionId: session.providerSessionId, toolCalls: new Map() };
     this.beginSession(session, child.pid ?? null);
 

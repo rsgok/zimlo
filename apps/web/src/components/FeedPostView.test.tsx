@@ -16,8 +16,8 @@ const post: FeedPost = {
   highlights: [], dedupeKey: "attention-a", source: "agent", createdAt: "2026-07-23T00:00:00.000Z",
 };
 
-const renderPost = (value: FeedPost, materials: Material[] = [], interactionMode: "swipe" | "desktop" = "swipe") => renderToStaticMarkup(
-  <FeedPostView post={value} materials={materials} session={session} project={undefined} onOpenProject={vi.fn()} interactionMode={interactionMode} />,
+const renderPost = (value: FeedPost, materials: Material[] = [], interactionMode: "swipe" | "desktop" = "swipe", historical = false) => renderToStaticMarkup(
+  <FeedPostView post={value} materials={materials} session={session} project={undefined} onOpenProject={vi.fn()} interactionMode={interactionMode} historical={historical} />,
 );
 
 describe("FeedPostView", () => {
@@ -36,6 +36,13 @@ describe("FeedPostView", () => {
     expect(markup).not.toContain("左滑");
     expect(markup).not.toContain("/Users/kai");
     expect(markup).not.toContain("Codex");
+  });
+
+  it("keeps the history state in the footer instead of overlaying the timestamp", () => {
+    const markup = renderPost(post, [], "desktop", true);
+    expect(markup).toContain('post-task-hint">历史');
+    expect(markup).not.toContain("history-label");
+    expect(markup).not.toContain("打开任务");
   });
 
   it("plays video in place and reads long text inside the card", () => {

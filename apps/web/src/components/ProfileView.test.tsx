@@ -18,6 +18,7 @@ describe("ProfileView", () => {
         devices={[]}
         pairing={null}
         lanApprovalsEnabled={false}
+        trustManagementEnabled={false}
         codexPlugin={null}
         integrations={integrations}
         sessions={[]}
@@ -60,6 +61,7 @@ describe("ProfileView", () => {
         ]}
         pairing={null}
         lanApprovalsEnabled={false}
+        trustManagementEnabled={false}
         codexPlugin={null}
         integrations={integrations}
         sessions={[]}
@@ -70,6 +72,11 @@ describe("ProfileView", () => {
     );
 
     expect(markup).toContain("我的 iPhone");
+    expect(markup).toContain("审批与回复");
+    expect(markup).toContain("安全自动化");
+    expect(markup).toContain("已开启审批");
+    expect(markup).toContain("最近使用");
+    expect(markup).toContain("device-item");
     expect(markup).not.toContain("Local Mac browser");
     expect(markup).not.toContain("Cloud pairing smoke");
     expect(markup).toContain("1 条已撤销设备记录");

@@ -57,10 +57,12 @@ describe("Codex GUI plugin installer", () => {
       args: [entrypoint, "mcp", "--provider", "codex"],
     });
     const hooks = JSON.parse(await readFile(resolve(paths.plugin, "hooks/hooks.json"), "utf8"));
-    const stop = hooks.hooks.Stop[0].hooks[0];
-    expect(stop.command).toContain(nodePath);
-    expect(stop.command).toContain(entrypoint);
-    expect(stop.command).toContain("--surface gui");
+    expect(Object.keys(hooks.hooks).sort()).toEqual(["PermissionRequest", "PreToolUse", "SessionStart"]);
+    const input = hooks.hooks.PreToolUse[0];
+    expect(input.matcher).toBe("request_user_input");
+    expect(input.hooks[0].command).toContain(nodePath);
+    expect(input.hooks[0].command).toContain(entrypoint);
+    expect(input.hooks[0].command).toContain("--surface gui");
 
     const marketplace = JSON.parse(await readFile(paths.marketplace, "utf8"));
     expect(marketplace.name).toBe("personal");

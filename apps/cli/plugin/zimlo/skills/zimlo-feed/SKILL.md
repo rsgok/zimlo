@@ -1,129 +1,48 @@
 ---
 name: zimlo-feed
-description: Use for every Codex coding task when the Zimlo MCP tools are available. Publishes only meaningful, human-readable checkpoints while allowing ordinary turns to stay silent.
+description: Use for every Codex coding task when the Zimlo MCP tools are available. Publishes only meaningful, human-readable deliverables; ordinary turns stay silent.
 ---
 
-# Zimlo Feed Protocol V3
+# Zimlo Feed
 
-Zimlo is the user's attention feed for this coding task. It is not a transcript, log stream, or task-state database.
+Zimlo is an attention feed, not a transcript or log stream. It does not call another model: you decide whether a card is worthwhile and write it with `feed.post`.
 
-- `signal.transition` records reliable machine state.
-- `feed.post` publishes one Agent-edited reading card.
-- `feed.skip` records that a managed checkpoint has nothing worth publishing.
-- `material.publish` registers a generated workspace file and returns the `material_id` used by a media card.
+## Default: stay silent
 
-## Lifecycle
+Do not call Zimlo for ordinary replies, reads, searches, tool calls, builds, tests, retries, plans, raw logs, heartbeats, or repeated status. A turn can end without any Zimlo call.
 
-1. Keep one stable `task_id` for the task.
-2. Post only when the information changes the user's judgment, action, or confidence.
-3. Before asking for input, publish `kind=attention`, then transition to `waiting_input`.
-4. Before entering user review, publish `kind=result`, then transition to `user_review`.
-5. Before reporting failure, publish `kind=failure`, then transition to `failed`.
-6. A normal turn may end silently. Use `feed.skip` only for a managed runner or explicit `completed` checkpoint.
+Post only when one of these is true:
 
-If Zimlo is unavailable, make at most one attempt and continue the coding task normally. Never claim a post succeeded without confirmation.
+- the user must act and no approval/structured-input hook already represents it;
+- a reviewable intermediate deliverable exists now, with material or concrete verification proof;
+- a terminal failure changes the user's next action;
+- the final result is ready.
 
-## Editorial gate
+Keep one stable `task_id`. Reuse the same `dedupe_key` for retries. Nearby `progress` posts for one task are coalesced by the server.
 
-Publish only:
+## One-call lifecycle
 
-- a milestone that materially changes what the user can now do;
-- a new fact that changes the plan or confidence in it;
-- a decision, risk, failure, blocker, or input request;
-- a result ready for review, or the final result and its impact.
+Use optional `state` and `state_reason` on `feed.post` to publish and update task state together:
 
-Keep silent for:
+- important input needed: `kind=attention`, `state=waiting_input`;
+- ready for review: `kind=result`, `state=user_review`;
+- terminal failure: `kind=failure`, `state=failed`;
+- fully finished with no review step: `kind=result`, `state=completed`.
 
-- ordinary file reads, searches, tool calls, builds, or test execution;
-- raw logs, internal protocol details, temporary retries, or heartbeat updates;
-- repeated progress with no new user consequence;
-- the user's original prompt, which belongs in Task details.
+`progress` means an inspectable delivery checkpoint, never activity. It requires `proof` or registered media. Use `state=running` or `reviewing` only when a state update adds real value.
 
-## Writing frame
+## Editorial frame
 
-Every post follows this reading order:
+Write in the user's primary language and order the card as: conclusion → user impact → key facts → proof → next step.
 
-> Conclusion → user impact → key facts → proof → next step
+- `headline`: changed reality, not “progress update” or “completed”.
+- `takeaway`: why the user should care now, in one or two sentences.
+- `highlights`: up to three verifiable facts.
+- `proof`: the strongest concise check or first-party fact, never raw logs.
+- `template`: `paper` for summaries, `grid` for evidence, `sticky` for decisions, `marker` for attention, `poster` for one major result.
 
-- `headline`: State the changed reality in outcome language. Avoid empty labels such as “Progress update”, “Task completed”, or “Update”.
-- `takeaway`: In one or two sentences, explain why this deserves the user's attention now.
-- `highlights`: Add at most three verifiable facts. Each item expresses one fact, not a paragraph.
-- `proof`: Add the single strongest test, check, or first-party fact. Never paste raw logs.
-- Feed cards are editorial content, never approvals. Ask for ordinary feedback in the copy and let the user continue through the shared conversation composer.
-- Write in the user's primary language. Prefer user and product impact over internal symbol names.
+If Zimlo is unavailable, try once and continue the coding task. Never claim a post succeeded without confirmation.
 
-## Kind guide
+## Media
 
-- `progress`: A meaningful milestone and how it changes confidence or what remains.
-- `decision`: What was learned, what changed, and why the new direction is better.
-- `attention`: What needs the user, why it cannot proceed safely, and the recommended response.
-- `result`: What the user can now do, how it was verified, and any remaining boundary.
-- `failure`: What failed, the impact, what was ruled out, and the recovery path.
-
-## Template guide
-
-Choose exactly one visual template. Do not request colors, fonts, or CSS.
-
-- `paper`: Explanations, ordinary results, and complete summaries.
-- `grid`: Progress, checklists, or evidence-heavy milestones.
-- `sticky`: Discoveries, decisions, and changes of direction.
-- `marker`: Risks, approvals, input requests, and urgent attention.
-- `poster`: A major result that stands on one short statement.
-
-## Media cards
-
-Keep editorial copy and the visual carrier separate. For an output image, video,
-PDF, or document:
-
-1. Save the final file inside the current workspace.
-2. Call `material.publish` with its path.
-3. Put the returned id in `feed.post.content` as `image_album`, `video`, or
-   `document`.
-
-Do not paste binary data, base64, local paths, or raw file contents into Feed
-copy. Image lists and video are standalone TikTok-style cards; PDFs and other
-documents use a dedicated document card and native preview. Use a text card when
-the file itself is not the main result.
-
-## Examples
-
-Good result:
-
-```json
-{
-  "task_id": "auth-refresh",
-  "kind": "result",
-  "template": "paper",
-  "headline": "登录刷新不再重复提交",
-  "takeaway": "刷新竞态已经被消除，用户在弱网下也不会被重复登出。",
-  "highlights": ["刷新请求现在只保留一个在途实例", "失败时仍保留原有会话"],
-  "proof": "认证定向测试与完整构建均通过",
-  "dedupe_key": "auth-refresh:result"
-}
-```
-
-Good attention post:
-
-```json
-{
-  "task_id": "storage-migration",
-  "kind": "attention",
-  "template": "marker",
-  "headline": "旧客户端会阻止这次迁移",
-  "takeaway": "继续发布会让仍在使用旧协议的客户端无法读取新记录。",
-  "highlights": ["线上仍有两个旧版本设备"],
-  "proof": "设备列表与服务端版本统计一致",
-  "dedupe_key": "storage-migration:compat-choice"
-}
-```
-
-Bad post:
-
-```json
-{
-  "headline": "阶段进展",
-  "takeaway": "读取了文件，运行了测试，正在继续处理。"
-}
-```
-
-It has no changed reality, user impact, evidence, or decision and must not be published.
+For a final image, video, PDF, or document inside the workspace, call `material.publish`, then reference its `material_id` from `feed.post.content`. Never paste binary data, base64, raw file contents, or local paths into card copy.

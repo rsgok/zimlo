@@ -55,19 +55,19 @@ describe("reconcileFeedSequence", () => {
     expect(next.history).toEqual([]);
   });
 
-  it("appends a historical card that becomes actionable again to the queue tail and marks it fresh", () => {
+  it("moves a historical card that becomes actionable again to the queue head and marks it fresh", () => {
     const initial = createFeedSequence([postItem("a"), postItem("c", { unread: false })]);
     const next = reconcileFeedSequence(initial, [postItem("a"), postItem("c", { unread: false, needsAction: true, priority: 0 })]);
-    expect(next.queue).toEqual(["post:a", "post:c"]);
+    expect(next.queue).toEqual(["post:c", "post:a"]);
     expect(next.fresh).toEqual(["post:c"]);
     expect(next.history).toEqual([]);
   });
 
-  it("appends newly arrived actionable cards in item order and accumulates fresh", () => {
+  it("prepends newly arrived cards in item order and keeps the newest batch first", () => {
     const initial = reconcileFeedSequence(createFeedSequence([postItem("a")]), [postItem("a"), postItem("b")]);
     const next = reconcileFeedSequence(initial, [postItem("a"), postItem("b"), postItem("c")]);
-    expect(next.queue).toEqual(["post:a", "post:b", "post:c"]);
-    expect(next.fresh).toEqual(["post:b", "post:c"]);
+    expect(next.queue).toEqual(["post:c", "post:b", "post:a"]);
+    expect(next.fresh).toEqual(["post:c", "post:b"]);
   });
 
   it("drops cards that disappear from the item list (explicit removal)", () => {

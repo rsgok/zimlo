@@ -93,9 +93,9 @@ export class RuntimeHub extends EventEmitter {
     return result.event;
   }
 
-  postFeed(post: FeedPost): { post: FeedPost; inserted: boolean } {
-    const result = this.store.insertFeedPost(post);
-    if (result.inserted) {
+  postFeed(post: FeedPost, coalesceProgressWithinMs = 0): { post: FeedPost; inserted: boolean; coalesced: boolean } {
+    const result = this.store.insertFeedPost(post, coalesceProgressWithinMs);
+    if (result.inserted || result.coalesced) {
       this.send({ type: "feed.posted", post: result.post });
       if (result.post.projectId) {
         const project = this.store.getProject(result.post.projectId);

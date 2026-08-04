@@ -338,8 +338,8 @@ export class ZimloStore {
         last_seen_at TEXT NOT NULL,
         revoked_at TEXT,
         is_local_admin INTEGER NOT NULL DEFAULT 0,
-        can_approve INTEGER NOT NULL DEFAULT 0,
-        can_manage_trust INTEGER NOT NULL DEFAULT 0
+        can_approve INTEGER NOT NULL DEFAULT 1,
+        can_manage_trust INTEGER NOT NULL DEFAULT 1
       );
 
       CREATE TABLE IF NOT EXISTS project_trust_policies (
@@ -428,10 +428,18 @@ export class ZimloStore {
     }
     const deviceColumns = this.database.prepare("PRAGMA table_info(devices)").all() as Array<{ name: string }>;
     if (!deviceColumns.some((column) => column.name === "can_approve")) {
-      this.database.exec("ALTER TABLE devices ADD COLUMN can_approve INTEGER NOT NULL DEFAULT 0");
+      this.database.exec("ALTER TABLE devices ADD COLUMN can_approve INTEGER NOT NULL DEFAULT 1");
     }
     if (!deviceColumns.some((column) => column.name === "can_manage_trust")) {
-      this.database.exec("ALTER TABLE devices ADD COLUMN can_manage_trust INTEGER NOT NULL DEFAULT 0");
+      this.database.exec("ALTER TABLE devices ADD COLUMN can_manage_trust INTEGER NOT NULL DEFAULT 1");
+    }
+    const permissionDefaultsMigration = this.database.prepare("SELECT value FROM metadata WHERE key = 'device_permissions_default_on_v1'").get() as { value: string } | undefined;
+    if (permissionDefaultsMigration?.value !== "1") {
+      this.database.prepare(`
+        UPDATE devices SET can_approve = 1, can_manage_trust = 1
+        WHERE revoked_at IS NULL AND is_local_admin = 0
+      `).run();
+      this.database.prepare("INSERT OR REPLACE INTO metadata(key, value) VALUES ('device_permissions_default_on_v1', '1')").run();
     }
     const actionColumns = this.database.prepare("PRAGMA table_info(actions)").all() as Array<{ name: string }>;
     if (!actionColumns.some((column) => column.name === "approval_context_json")) {
@@ -952,8 +960,48 @@ export class ZimloStore {
     return card;
   }
 
-  insertFeedPost(post: FeedPost): { post: FeedPost; inserted: boolean } {
+  insertFeedPost(post: FeedPost, coalesceProgressWithinMs = 0): { post: FeedPost; inserted: boolean; coalesced: boolean } {
     const projectId = post.projectId ?? (post.sessionId ? this.getSession(post.sessionId)?.projectId ?? null : null);
+    const existingDedupe = this.database.prepare(`
+      SELECT * FROM feed_posts WHERE agent_id = ? AND run_id = ? AND dedupe_key = ?
+    `).get(post.agentId, post.runId, post.dedupeKey) as Record<string, unknown> | undefined;
+    if (existingDedupe) return { post: this.feedPostFromRow(existingDedupe), inserted: false, coalesced: false };
+
+    if (post.kind === "progress" && coalesceProgressWithinMs > 0) {
+      const windowStart = new Date(Date.parse(post.createdAt) - coalesceProgressWithinMs).toISOString();
+      const recent = this.database.prepare(`
+        SELECT * FROM feed_posts
+        WHERE agent_id = ? AND run_id = ? AND task_id = ? AND kind = 'progress'
+          AND source = 'agent' AND created_at >= ?
+        ORDER BY created_at DESC LIMIT 1
+      `).get(post.agentId, post.runId, post.taskId, windowStart) as Record<string, unknown> | undefined;
+      if (recent) {
+        const id = String(recent.id);
+        this.database.prepare(`
+          UPDATE feed_posts SET
+            project_id = ?, session_id = ?, title = ?, body = ?, dedupe_key = ?,
+            created_at = ?, content_json = ?
+          WHERE id = ?
+        `).run(
+          projectId,
+          post.sessionId,
+          post.headline,
+          post.takeaway,
+          post.dedupeKey,
+          post.createdAt,
+          JSON.stringify({
+            template: post.template,
+            headline: post.headline,
+            takeaway: post.takeaway,
+            highlights: post.highlights,
+            ...(post.proof ? { proof: post.proof } : {}),
+            ...(post.content ? { content: post.content } : {}),
+          } satisfies StoredFeedContentV2),
+          id,
+        );
+        return { post: { ...post, id, projectId }, inserted: false, coalesced: true };
+      }
+    }
     const result = this.database.prepare(`
       INSERT OR IGNORE INTO feed_posts (
         id, project_id, task_id, run_id, agent_id, session_id, kind, title, body,
@@ -987,13 +1035,13 @@ export class ZimloStore {
           UPDATE projects SET last_used_at = CASE WHEN ? > last_used_at THEN ? ELSE last_used_at END WHERE id = ?
         `).run(post.createdAt, post.createdAt, projectId);
       }
-      return { post: { ...post, projectId }, inserted: true };
+      return { post: { ...post, projectId }, inserted: true, coalesced: false };
     }
     const existing = this.database.prepare(`
       SELECT * FROM feed_posts WHERE agent_id = ? AND run_id = ? AND dedupe_key = ?
     `).get(post.agentId, post.runId, post.dedupeKey) as Record<string, unknown> | undefined;
     if (!existing) throw new Error("Feed 帖子去重冲突，但无法读取原记录。");
-    return { post: this.feedPostFromRow(existing), inserted: false };
+    return { post: this.feedPostFromRow(existing), inserted: false, coalesced: false };
   }
 
   listFeedPosts(): FeedPost[] {
@@ -1614,6 +1662,7 @@ export class ZimloStore {
       features: FEATURE_CAPABILITIES,
       sequence: this.latestSequence(),
       lanApprovalsEnabled: device?.isLocalAdmin === true || device?.canApprove === true,
+      trustManagementEnabled: device?.isLocalAdmin === true || device?.canManageTrust === true,
     };
   }
 

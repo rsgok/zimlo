@@ -24,7 +24,10 @@ final class UpdateController {
         controller != nil
     }
 
-    func checkForUpdates() {
-        controller?.checkForUpdates(nil)
+    @discardableResult
+    func checkForUpdates() -> Bool {
+        guard let controller else { return false }
+        controller.checkForUpdates(nil)
+        return true
     }
 }

@@ -34,16 +34,19 @@ describe("FeedView", () => {
     const markup = renderFeed({ posts: [post, historical], seenPostIds: [historical.id] });
 
     expect(markup).not.toContain("post-position");
-    expect(markup).toContain("history-label");
+    expect(markup).toContain('post-task-hint">历史');
+    expect(markup).not.toContain("history-label");
     expect(markup).toContain('data-feed-key="post:post-a"');
     expect(markup).toContain('data-feed-key="post:post-history"');
   });
 
   it("renders a quiet caught-up page without consumption counts or a large task CTA", () => {
-    const markup = renderFeed();
+    const markup = renderFeed({ seenPostIds: [post.id] });
 
     expect(markup).toContain('data-feed-key="__caught_up__"');
     expect(markup).toContain("暂时没有新内容");
+    expect(markup).toContain('class="feed-history-button"');
+    expect(markup).not.toContain("继续看历史 ↓");
     expect(markup).not.toContain("新任务");
   });
 
@@ -51,12 +54,14 @@ describe("FeedView", () => {
     expect(renderFeed()).not.toContain("feed-new-updates");
   });
 
-  it("renders desktop card actions without swipe affordances in the macOS shell mode", () => {
+  it("renders quiet directional icon actions in the macOS shell mode", () => {
     const markup = renderFeed({ interactionMode: "desktop" });
 
     expect(markup).toContain("desktop-feed-item");
-    expect(markup).toContain("查看任务");
-    expect(markup).toContain("移出 Feed");
+    expect(markup).toContain("desktop-feed-action-dismiss");
+    expect(markup).toContain("desktop-feed-action-profile");
+    expect(markup).not.toContain(">查看任务<");
+    expect(markup).not.toContain(">移出 Feed<");
     expect(markup).not.toContain("左滑查看 Task Profile");
   });
 

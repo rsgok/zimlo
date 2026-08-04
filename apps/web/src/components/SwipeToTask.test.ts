@@ -17,7 +17,7 @@ describe("task swipe gesture", () => {
     expect(shouldDismissFeedSwipe(-96, 2)).toBe(false);
   });
 
-  it("uses explicit actions in the desktop interaction mode", () => {
+  it("uses quiet directional icon actions in the desktop interaction mode", () => {
     const markup = renderToStaticMarkup(createElement(SwipeToTask, {
       sessionId: "session-a",
       mode: "desktop",
@@ -27,9 +27,14 @@ describe("task swipe gesture", () => {
     }));
 
     expect(markup).toContain("desktop-feed-item");
-    expect(markup).toContain("查看任务");
-    expect(markup).toContain("移出 Feed");
-    expect(markup).not.toContain("左滑查看");
+    expect(markup).toContain("desktop-feed-action-dismiss");
+    expect(markup).toContain("desktop-feed-action-profile");
+    expect(markup).toContain('aria-label="移出 Feed"');
+    expect(markup).toContain('aria-label="查看任务"');
+    expect(markup).toMatch(/desktop-feed-action-dismiss[^]*?<path d="M19 12H5/);
+    expect(markup).toMatch(/desktop-feed-action-profile[^]*?<path d="M5 12h14/);
+    expect(markup).not.toContain(">查看任务<");
+    expect(markup).not.toContain(">移出 Feed<");
     expect(markup).not.toContain("swipe-task-reveal");
   });
 });

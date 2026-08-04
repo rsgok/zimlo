@@ -121,5 +121,6 @@ export function normalizeSnapshot(value: Snapshot): Snapshot {
     features: { ...EMPTY_FEATURE_CAPABILITIES, ...(snapshot.features ?? {}) },
     sequence: typeof snapshot.sequence === "number" ? snapshot.sequence : 0,
     lanApprovalsEnabled: snapshot.lanApprovalsEnabled === true,
+    trustManagementEnabled: snapshot.trustManagementEnabled === true,
   };
 }

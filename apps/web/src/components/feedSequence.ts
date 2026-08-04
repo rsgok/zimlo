@@ -2,8 +2,8 @@ import type { FeedItem } from "./feedItems";
 import { feedItemId } from "./feedItems";
 
 // 页面会话固定序列：首次载入按 protocol 优先级排序建立队列；之后已有卡不因
-// 已读 / 审批完成 / 快照刷新而换位，新卡与重新可操作的卡只追加到队列末尾
-// （caught-up 页之前），已处理卡在当前会话原位展示完成状态。
+// 已读 / 审批完成 / 快照刷新而换位。新卡与重新可操作的卡进入队列头部，锚定
+// 逻辑负责保持用户当前阅读位置；已处理卡在当前会话原位展示完成状态。
 
 export interface FeedSequenceState {
   /** 当前队列的卡片 key，展示顺序固定 */
@@ -39,16 +39,18 @@ export function reconcileFeedSequence(previous: FeedSequenceState, items: FeedIt
     return true;
   });
 
-  const fresh = previous.fresh.filter((key) => queueSet.has(key));
-  // 追加：队列外的可操作卡（全新卡，或历史区重新可操作的卡），保持 items 的
-  // protocol 排序相对次序追加到队列末尾。
+  const previousFresh = previous.fresh.filter((key) => queueSet.has(key));
+  const newcomers: string[] = [];
+  // 队列外的可操作卡（全新卡，或历史区重新可操作的卡）保持 protocol 排序，
+  // 统一插到队列头部，让“有新内容”总是指向最前面的最新关注项。
   for (const item of items) {
     const key = feedItemId(item);
     if (queueSet.has(key) || !isCurrentEligible(item)) continue;
     queueSet.add(key);
-    queue.push(key);
-    fresh.push(key);
+    newcomers.push(key);
   }
+  queue.unshift(...newcomers);
+  const fresh = [...newcomers, ...previousFresh];
 
   // 历史区：保留仍在 items 中且未回到队列的卡；新进历史的卡按 createdAt 新→旧归并。
   const historySurvivors = previous.history.filter((key) => !queueSet.has(key) && itemByKey.has(key));

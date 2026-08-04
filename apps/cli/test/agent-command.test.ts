@@ -2,7 +2,7 @@ import { chmod, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { afterEach, describe, expect, it } from "vitest";
-import { resolveAgentCommand } from "../src/agent-command.js";
+import { requireAgentCommand, resolveAgentCommand } from "../src/agent-command.js";
 
 describe("agent command discovery", () => {
   const original = {
@@ -32,5 +32,20 @@ describe("agent command discovery", () => {
   it("rejects a missing override instead of claiming the agent exists", async () => {
     process.env.ZIMLO_CLAUDE_BIN = "/missing/claude";
     expect(await resolveAgentCommand("claude")).toBeNull();
+  });
+
+  it("returns the absolute command used by managed runtimes", async () => {
+    root = await mkdtemp(join(tmpdir(), "zimlo-managed-command-"));
+    const command = join(root, "codex");
+    await writeFile(command, "#!/bin/sh\nexit 0\n");
+    await chmod(command, 0o755);
+    process.env.ZIMLO_CODEX_BIN = command;
+
+    expect(await requireAgentCommand("codex")).toBe(command);
+  });
+
+  it("gives an actionable error when a managed runtime is unavailable", async () => {
+    process.env.ZIMLO_CODEX_BIN = "/missing/codex";
+    await expect(requireAgentCommand("codex")).rejects.toThrow("请确认应用已安装，或在 Zimlo 设置中检查 Runtime 接入");
   });
 });

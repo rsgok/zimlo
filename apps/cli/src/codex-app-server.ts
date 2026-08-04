@@ -3,9 +3,11 @@ import { createInterface, type Interface } from "node:readline";
 import { isTestCommand, redactText, stableSessionId, uuidV7 } from "@zimlo/adapters";
 import { EMPTY_CAPABILITIES, type Decision, type Session, type UnifiedEvent } from "@zimlo/protocol";
 import { ActionBroker } from "./action-broker.js";
+import { requireAgentCommand } from "./agent-command.js";
 import { RuntimeHub } from "./runtime.js";
 import { approvalContextForCommand, approvalContextForFile } from "./trust-policy.js";
 import type { ResolvedMaterial } from "./resume-service.js";
+import { ZIMLO_VERSION } from "./version.js";
 
 type JsonRecord = Record<string, unknown>;
 type RequestId = string | number;
@@ -173,7 +175,8 @@ export class CodexAppServer {
 
   async start(): Promise<void> {
     if (this.child) return;
-    const child = spawn("codex", ["app-server", "--listen", "stdio://"], {
+    const command = await requireAgentCommand("codex");
+    const child = spawn(command, ["app-server", "--listen", "stdio://"], {
       cwd: this.session.cwd ?? undefined,
       env: process.env,
       stdio: ["pipe", "pipe", "pipe"],
@@ -189,7 +192,7 @@ export class CodexAppServer {
     child.once("error", (error) => this.handleExit(-1, error.message));
 
     await this.request("initialize", {
-      clientInfo: { name: "zimlo", title: "Zimlo", version: "0.2.0" },
+      clientInfo: { name: "zimlo", title: "Zimlo", version: ZIMLO_VERSION },
       capabilities: { experimentalApi: true },
     });
     this.notify("initialized", {});
