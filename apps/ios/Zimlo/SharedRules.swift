@@ -85,6 +85,119 @@ protocol FeedOrderable {
     var createdAt: String { get }
 }
 
+// MARK: - Task Profile 头部
+
+enum TaskHeaderRules {
+    static func navigationTitle(sessionTitle: String, taskInput: String, maxLength: Int = 18) -> String {
+        let normalizedSession = normalized(sessionTitle)
+        let normalizedInput = normalized(taskInput)
+        let authoredSessionTitle = !normalizedSession.isEmpty
+            && normalizedSession != normalizedInput
+            && !normalizedSession.hasPrefix("Codex ·")
+            && !normalizedSession.hasPrefix("Claude ·")
+            && normalizedSession.count <= maxLength
+        let source = authoredSessionTitle ? normalizedSession : (normalizedInput.isEmpty ? normalizedSession : normalizedInput)
+        guard !source.isEmpty else { return "任务" }
+
+        let breakCharacters = Set("，。！？；：,.!?;:\n")
+        let clause: String
+        if let index = source.firstIndex(where: breakCharacters.contains) {
+            let prefix = String(source[..<index]).trimmingCharacters(in: .whitespacesAndNewlines)
+            clause = prefix.count >= 4 ? prefix : source
+        } else {
+            clause = source
+        }
+        return clause.count > maxLength ? "\(clause.prefix(maxLength))…" : clause
+    }
+
+    static func requiredAction(
+        currentState: String,
+        pendingActionTitle: String?,
+        hasLatestConclusion: Bool
+    ) -> String? {
+        if let title = pendingActionTitle?.trimmingCharacters(in: .whitespacesAndNewlines), !title.isEmpty {
+            return title
+        }
+        switch currentState {
+        case "waiting", "waiting_input": return "回复 Agent，让任务继续"
+        case "user_review": return hasLatestConclusion ? "审阅最新结论" : "查看任务结果"
+        case "failed": return "查看失败原因并决定是否重试"
+        default: return nil
+        }
+    }
+
+    static func stateLabel(_ state: String) -> String {
+        ["running": "进行中", "waiting": "等待中", "idle": "可继续", "completed": "已完成",
+         "failed": "失败", "ended": "已结束", "waiting_input": "等你回复",
+         "reviewing": "检查中", "user_review": "待你审阅"][state] ?? "状态未知"
+    }
+
+    private static func normalized(_ value: String) -> String {
+        value
+            .trimmingCharacters(in: CharacterSet(charactersIn: " \t\n#>*`-"))
+            .split(whereSeparator: \.isWhitespace)
+            .joined(separator: " ")
+    }
+}
+
+// MARK: - 底栏核心入口
+
+enum CoreActionMotionState: String, CaseIterable {
+    case idle
+    case active
+    case attention
+    case offline
+    case composing
+
+    var accessibilityValue: String {
+        switch self {
+        case .idle: return "可以创建新任务"
+        case .active: return "Agent 正在工作"
+        case .attention: return "有任务需要处理"
+        case .offline: return "当前离线，新任务会先保存在手机"
+        case .composing: return "正在编辑新任务"
+        }
+    }
+
+    var animates: Bool {
+        switch self {
+        case .idle, .active, .attention: return true
+        case .offline, .composing: return false
+        }
+    }
+}
+
+enum CoreActionMotionRules {
+    private static let attentionTaskStates = Set(["waiting", "waiting_input", "user_review", "failed"])
+    private static let activeTaskStates = Set(["running", "reviewing"])
+    private static let activeCommandStates = Set(["queued", "dispatching", "running"])
+
+    static func state(
+        connected: Bool,
+        isComposerPresented: Bool,
+        pendingActionCount: Int,
+        failedOutboxCount: Int,
+        pendingOutboxCount: Int,
+        taskStates: [String],
+        commandStates: [String]
+    ) -> CoreActionMotionState {
+        if isComposerPresented { return .composing }
+        if !connected { return .offline }
+        if pendingActionCount > 0
+            || failedOutboxCount > 0
+            || !attentionTaskStates.isDisjoint(with: taskStates)
+            || commandStates.contains("failed") {
+            return .attention
+        }
+        if pendingOutboxCount > 0
+            || !activeTaskStates.isDisjoint(with: taskStates)
+            || !activeCommandStates.isDisjoint(with: commandStates) {
+            return .active
+        }
+        return .idle
+    }
+}
+
 // MARK: - Outbox 用户反馈
 
 enum OutboxFeedbackRules {

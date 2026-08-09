@@ -70,21 +70,24 @@ export function AgentProfileDetail({ project, sessions, posts, commands, trustPo
   return (
     <div className="detail-backdrop" role="presentation">
       <section className="detail-panel agent-profile-detail" role="dialog" aria-modal="true" aria-label={project.agentProfile.displayName} ref={panelRef}>
-        <AppTopBar detail title={project.agentProfile.displayName} onBack={onClose} action={<button className="app-top-bar-action" onClick={() => onNewTask(project.id)}>＋ 新任务</button>} />
+        <AppTopBar detail title="Agent" onBack={onClose} />
         <section className="agent-profile-header">
-          <AgentAvatar avatar={project.agentProfile.avatar} className={`agent-avatar agent-profile-avatar ${agentAvatarStyle(project.id)}`} alt="" />
-          <div className="agent-profile-actions">
-            <button className="secondary-button" onClick={() => setEditing((value) => !value)}>{editing ? "取消" : "编辑"}</button>
-            <button className="primary-button" onClick={() => onNewTask(project.id)}>＋ 新任务</button>
+          <div className="agent-profile-identity">
+            <AgentAvatar avatar={project.agentProfile.avatar} className={`agent-avatar agent-profile-avatar ${agentAvatarStyle(project.id)}`} alt="" />
+            <div className="agent-profile-copy">
+              <span className="eyebrow">Agent Profile</span>
+              <h1>{project.agentProfile.displayName}</h1>
+              <p className={visibleBio ? "" : "is-placeholder"}>{visibleBio ?? "还没有设置专长与工作方式。编辑资料后，团队更容易理解这个 Agent 适合做什么。"}</p>
+            </div>
           </div>
-          <h1>{project.agentProfile.displayName}</h1>
-          <p className={visibleBio ? "" : "is-placeholder"}>{visibleBio ?? "还没有设置专长与工作方式。编辑资料后，团队更容易理解这个 Agent 适合做什么。"}</p>
-          <div className="agent-profile-meta">
-            <span>项目 · {project.name}</span>
-            <span>{project.sessionCount} 个历史任务</span>
-            <span>{running > 0 ? `${running} 个正在工作` : "当前空闲"}</span>
-            <span>最近 · {relativeTime(project.lastUsedAt, now)}</span>
-            <span className="agent-provider-meta">默认 · {project.agentProfile.defaultProvider ? <ProviderBadge provider={project.agentProfile.defaultProvider} labelMode="icon" /> : "自动选择"}</span>
+          <div className="agent-profile-actions">
+            <button className="primary-button" onClick={() => onNewTask(project.id)}>＋ 新任务</button>
+            <button className="secondary-button" onClick={() => setEditing((value) => !value)}>{editing ? "取消" : "编辑资料"}</button>
+          </div>
+          <div className="agent-profile-stats" aria-label="Agent 概况">
+            <div><strong>{running}</strong><span>正在工作</span></div>
+            <div><strong>{project.sessionCount}</strong><span>历史任务</span></div>
+            <div><strong className="agent-provider-meta">{project.agentProfile.defaultProvider ? <><ProviderBadge provider={project.agentProfile.defaultProvider} labelMode="icon" />{project.agentProfile.defaultProvider === "codex" ? "Codex" : "Claude"}</> : "自动"}</strong><span>默认 Runtime</span></div>
           </div>
           {editing && (
             <form className="agent-profile-editor" onSubmit={(event) => {
@@ -158,7 +161,7 @@ export function AgentProfileDetail({ project, sessions, posts, commands, trustPo
         </section>}
         <section className="agent-timeline" aria-label="Agent Timeline">
           <header className="timeline-heading"><h2>重要动态</h2><span>跨任务汇总 · 最新在上</span></header>
-          {timeline.slice(0, showAllActivity ? timeline.length : 8).map((item) => {
+          {timeline.slice(0, showAllActivity ? timeline.length : 3).map((item) => {
             if (item.type === "command") {
               const session = item.command.sessionId ? sessionById.get(item.command.sessionId) : undefined;
               return <article className="agent-timeline-item is-user" key={`command:${item.id}`}>
@@ -180,9 +183,10 @@ export function AgentProfileDetail({ project, sessions, posts, commands, trustPo
               </div>
             </article>;
           })}
-          {!showAllActivity && timeline.length > 8 && (
-            <button className="agent-timeline-more" onClick={() => setShowAllActivity(true)}>查看其余 {timeline.length - 8} 条历史动态</button>
+          {!showAllActivity && timeline.length > 3 && (
+            <button className="agent-timeline-more" onClick={() => setShowAllActivity(true)}>查看全部 {timeline.length} 条动态</button>
           )}
+          {showAllActivity && timeline.length > 3 && <button className="agent-timeline-more" onClick={() => setShowAllActivity(false)}>收起历史动态</button>}
           {timeline.length === 0 && <div className="timeline-empty"><strong>还没有 Agent 动态</strong><p>布置第一个任务后，重要进展会汇总在这里。</p></div>}
         </section>
       </section>

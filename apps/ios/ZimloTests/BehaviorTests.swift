@@ -94,6 +94,100 @@ final class PairingLinkRulesTests: XCTestCase {
     }
 }
 
+final class TaskHeaderRulesTests: XCTestCase {
+    func testNavigationTitleUsesFirstConciseClauseWhileTaskInputStaysComplete() {
+        let input = "下一周我要对这个产品做宣发，包括在小红书上和 X 上，所以需要准备完整宣发材料"
+        XCTAssertEqual(
+            TaskHeaderRules.navigationTitle(sessionTitle: input, taskInput: input),
+            "下一周我要对这个产品做宣发"
+        )
+    }
+
+    func testNavigationTitleKeepsAConciseAuthoredTitle() {
+        XCTAssertEqual(
+            TaskHeaderRules.navigationTitle(sessionTitle: "产品宣发准备", taskInput: "准备一整套跨平台产品宣发材料"),
+            "产品宣发准备"
+        )
+    }
+
+    func testRequiredActionOnlyAppearsForRealUserWork() {
+        XCTAssertNil(TaskHeaderRules.requiredAction(currentState: "idle", pendingActionTitle: nil, hasLatestConclusion: true))
+        XCTAssertNil(TaskHeaderRules.requiredAction(currentState: "running", pendingActionTitle: nil, hasLatestConclusion: true))
+        XCTAssertEqual(
+            TaskHeaderRules.requiredAction(currentState: "user_review", pendingActionTitle: nil, hasLatestConclusion: true),
+            "审阅最新结论"
+        )
+        XCTAssertEqual(
+            TaskHeaderRules.requiredAction(currentState: "waiting_input", pendingActionTitle: nil, hasLatestConclusion: false),
+            "回复 Agent，让任务继续"
+        )
+        XCTAssertEqual(
+            TaskHeaderRules.requiredAction(currentState: "running", pendingActionTitle: "允许执行测试", hasLatestConclusion: true),
+            "允许执行测试"
+        )
+    }
+
+    func testStateLabelsNeverExposeProtocolValues() {
+        XCTAssertEqual(TaskHeaderRules.stateLabel("idle"), "可继续")
+        XCTAssertEqual(TaskHeaderRules.stateLabel("user_review"), "待你审阅")
+    }
+}
+
+final class CoreActionMotionRulesTests: XCTestCase {
+    func testComposerAndOfflineStatesTakePriorityOverAmbientMotion() {
+        XCTAssertEqual(
+            state(connected: true, composing: true, taskStates: ["running"]),
+            .composing
+        )
+        XCTAssertEqual(
+            state(connected: false, taskStates: ["running"]),
+            .offline
+        )
+    }
+
+    func testAttentionStatesOverrideRunningWork() {
+        XCTAssertEqual(
+            state(connected: true, pendingActionCount: 1, taskStates: ["running"]),
+            .attention
+        )
+        XCTAssertEqual(
+            state(connected: true, taskStates: ["user_review"]),
+            .attention
+        )
+        XCTAssertEqual(
+            state(connected: true, commandStates: ["failed"]),
+            .attention
+        )
+    }
+
+    func testActiveAndIdleStatesReflectRealWork() {
+        XCTAssertEqual(state(connected: true, taskStates: ["running"]), .active)
+        XCTAssertEqual(state(connected: true, commandStates: ["queued"]), .active)
+        XCTAssertEqual(state(connected: true, pendingOutboxCount: 1), .active)
+        XCTAssertEqual(state(connected: true), .idle)
+    }
+
+    private func state(
+        connected: Bool,
+        composing: Bool = false,
+        pendingActionCount: Int = 0,
+        failedOutboxCount: Int = 0,
+        pendingOutboxCount: Int = 0,
+        taskStates: [String] = [],
+        commandStates: [String] = []
+    ) -> CoreActionMotionState {
+        CoreActionMotionRules.state(
+            connected: connected,
+            isComposerPresented: composing,
+            pendingActionCount: pendingActionCount,
+            failedOutboxCount: failedOutboxCount,
+            pendingOutboxCount: pendingOutboxCount,
+            taskStates: taskStates,
+            commandStates: commandStates
+        )
+    }
+}
+
 final class OutboxFeedbackRulesTests: XCTestCase {
     func testBackgroundReadAndSettingsSyncStaySilent() {
         for type in ["feed.seen", "task.timeline.seen", "notification.device.register", "trust.policy.update", "material.register"] {
@@ -568,8 +662,8 @@ final class TaskDirectoryProjectionTests: XCTestCase {
         XCTAssertEqual(collapsed.managedSessions.map(\.id), ["s1", "process-old"])
         XCTAssertEqual(collapsed.runningCount, 2)
         XCTAssertEqual(collapsed.posts.map(\.id), (0..<10).reversed().map { "p\($0)" })
-        XCTAssertEqual(collapsed.visiblePosts.count, 8)
-        XCTAssertEqual(collapsed.remainingPostCount, 2)
+        XCTAssertEqual(collapsed.visiblePosts.count, 3)
+        XCTAssertEqual(collapsed.remainingPostCount, 7)
         XCTAssertEqual(collapsed.workspacePaths, ["/tmp/p1", "/tmp/p1-secondary"])
 
         let expanded = AgentDetailProjection(snapshot: snapshot, project: agentProject, showAllActivity: true)

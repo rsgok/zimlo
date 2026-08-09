@@ -8,6 +8,7 @@ enum ZColor {
     static let raised = Color(red: 0.085, green: 0.098, blue: 0.090)
     static let control = Color(red: 0.120, green: 0.137, blue: 0.125)
     static let ink = Color(red: 0.940, green: 0.925, blue: 0.880)
+    static let secondaryInk = Color(red: 0.720, green: 0.710, blue: 0.670)
     static let muted = Color(red: 0.550, green: 0.570, blue: 0.540)
 
     // Muted moss accent: reserved for selection and the primary next action.
@@ -194,6 +195,7 @@ struct AppTopBar: View {
     var connectionLabel: String?
     var onBack: (() -> Void)?
     var status: String?
+    var statusColor: Color?
     var onRetry: (() -> Void)?
 
     static func contentHeight(for size: DynamicTypeSize) -> CGFloat {
@@ -203,7 +205,7 @@ struct AppTopBar: View {
     var body: some View {
         ZStack {
             Text(title)
-                .font(ZFont.subheadline.weight(.bold))
+                .font(ZFont.headline.weight(.bold))
                 .lineLimit(1)
                 .padding(.horizontal, 80)
             HStack {
@@ -218,10 +220,13 @@ struct AppTopBar: View {
                 }
                 Spacer()
                 if let status {
+                    let tone = statusColor ?? ZColor.secondaryInk
                     Text(status)
                         .font(ZFont.caption2)
+                        .foregroundStyle(tone)
                         .padding(.horizontal, 9).padding(.vertical, 6)
-                        .background(ZColor.raised)
+                        .background(tone.opacity(0.14))
+                        .overlay(Capsule().stroke(tone.opacity(0.26)))
                         .clipShape(Capsule())
                 } else {
                     // 断线时胶囊可点按，立即触发一次重连，不必等退避循环。

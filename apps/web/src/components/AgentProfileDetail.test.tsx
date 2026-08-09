@@ -62,6 +62,10 @@ describe("AgentProfileDetail", () => {
     expect(markup).toContain("/Projects/zimlo");
     expect(markup).toContain("其他已识别目录");
     expect(markup).toContain("/Projects/zimlo-release");
+    expect(markup).toContain("正在工作");
+    expect(markup).toContain("历史任务");
+    expect(markup).toContain("默认 Runtime");
+    expect(markup.match(/＋ 新任务/g)).toHaveLength(1);
   });
 
   it("keeps older Agent activity behind an explicit history action", () => {
@@ -80,8 +84,8 @@ describe("AgentProfileDetail", () => {
     );
 
     expect(markup).toContain("动态 9");
-    expect(markup).toContain("动态 2");
-    expect(markup).not.toContain("动态 1");
-    expect(markup).toContain("查看其余 2 条历史动态");
+    expect(markup).toContain("动态 7");
+    expect(markup).not.toContain("动态 6");
+    expect(markup).toContain("查看全部 10 条动态");
   });
 });

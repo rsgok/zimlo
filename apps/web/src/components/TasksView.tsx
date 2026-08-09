@@ -300,10 +300,10 @@ export function TasksView({ projects, sessions, tasks, posts = EMPTY_POSTS, pref
       ...filtered.filter((session) => statePriority(effectiveState(session, taskBySession.get(session.id))) >= 2).slice(0, 6),
     ];
   const groups = [
-    { id: "pinned", label: "已置顶", hint: "重要任务", sessions: visible.filter((session) => effectivePreferenceBySession.get(session.id)?.pinnedAt) },
-    { id: "attention", label: "待你处理", hint: "回复、审阅或恢复", sessions: visible.filter((session) => !effectivePreferenceBySession.get(session.id)?.pinnedAt && statePriority(effectiveState(session, taskBySession.get(session.id))) === 0) },
-    { id: "active", label: "正在工作", hint: "Agent 正在推进", sessions: visible.filter((session) => !effectivePreferenceBySession.get(session.id)?.pinnedAt && statePriority(effectiveState(session, taskBySession.get(session.id))) === 1) },
-    { id: "recent", label: showArchived ? "已归档" : "可继续与最近完成", hint: showArchived ? "不影响当前注意力" : "随时回看或继续", sessions: visible.filter((session) => !effectivePreferenceBySession.get(session.id)?.pinnedAt && statePriority(effectiveState(session, taskBySession.get(session.id))) >= 2) },
+    { id: "pinned", label: "已置顶", sessions: visible.filter((session) => effectivePreferenceBySession.get(session.id)?.pinnedAt) },
+    { id: "attention", label: "待你处理", sessions: visible.filter((session) => !effectivePreferenceBySession.get(session.id)?.pinnedAt && statePriority(effectiveState(session, taskBySession.get(session.id))) === 0) },
+    { id: "active", label: "正在工作", sessions: visible.filter((session) => !effectivePreferenceBySession.get(session.id)?.pinnedAt && statePriority(effectiveState(session, taskBySession.get(session.id))) === 1) },
+    { id: "recent", label: showArchived ? "已归档" : "可继续与最近完成", sessions: visible.filter((session) => !effectivePreferenceBySession.get(session.id)?.pinnedAt && statePriority(effectiveState(session, taskBySession.get(session.id))) >= 2) },
   ].filter((group) => group.sessions.length > 0);
 
   return (
@@ -344,7 +344,7 @@ export function TasksView({ projects, sessions, tasks, posts = EMPTY_POSTS, pref
       {groups.map((group) => (
         <section className={`task-group task-group-${group.id}`} key={group.id}>
           <header>
-            <div><h3>{group.label}</h3><span>{group.hint}</span></div>
+            <h3>{group.label}</h3>
             <strong>{group.sessions.length}</strong>
           </header>
           <div className="task-list">

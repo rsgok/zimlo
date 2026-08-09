@@ -1,6 +1,6 @@
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it, vi } from "vitest";
-import { EMPTY_CAPABILITIES, type FeedPost, type Project, type Session, type TaskCommand, type UnifiedEvent } from "@zimlo/protocol";
+import { EMPTY_CAPABILITIES, type FeedPost, type Project, type Session, type TaskCommand, type TaskRecord, type UnifiedEvent } from "@zimlo/protocol";
 import { buildTaskTimeline, conciseInstruction, SessionDetail } from "./SessionDetail";
 
 const session: Session = {
@@ -119,6 +119,7 @@ describe("SessionDetail", () => {
 
     expect(markup).toContain("左滑进入当前任务详情");
     expect(markup).toContain("详情页已经重构");
+    expect(markup).toContain("现在只保留需要阅读的更新。");
     expect(markup).toContain("Claude Code");
     expect(markup).toContain("项目 · zimlo");
     expect(markup).toContain("继续补充移动端验证");
@@ -128,6 +129,7 @@ describe("SessionDetail", () => {
     expect(markup.match(/data-timeline-level="secondary"/g)).toHaveLength(1);
     expect(markup).not.toContain("SECRET_TOOL_COMMAND");
     expect(markup).not.toContain("command started");
+    expect(markup).not.toContain("现在需要你");
   });
 
   it("groups one provider turn into a single primary item with second-level execution details", () => {
@@ -188,6 +190,37 @@ describe("SessionDetail", () => {
 
     expect(markup).toContain("修复 Feed 交互");
     expect(markup).toContain("还没有需要阅读的更新");
+  });
+
+  it("shows the full task input while keeping the app heading concise", () => {
+    const longInput = `${"请完整保留任务输入。".repeat(30)}结尾验收词`;
+    const longInstruction = { ...events[0]!, payload: { prompt: longInput } };
+    const markup = renderToStaticMarkup(
+      <SessionDetail session={session} events={[longInstruction]} actions={[]} posts={[]} commands={[]} userAvatarId="user-01" send={vi.fn()} onClose={vi.fn()} />,
+    );
+
+    expect(markup).toContain(">任务详情<");
+    expect(markup).toContain("结尾验收词");
+    expect(markup).not.toContain("查看完整输入");
+  });
+
+  it("only shows a human next action when review is actually required", () => {
+    const reviewTask: TaskRecord = {
+      id: "task-review",
+      runId: session.providerSessionId,
+      agentId: "claude",
+      sessionId: session.id,
+      state: "user_review",
+      reason: "结果等待审阅",
+      updatedAt: "2026-07-22T10:00:00.000Z",
+    };
+    const markup = renderToStaticMarkup(
+      <SessionDetail session={session} task={reviewTask} events={events} actions={[]} posts={[post]} commands={[]} userAvatarId="user-01" send={vi.fn()} onClose={vi.fn()} />,
+    );
+
+    expect(markup).toContain("现在需要你");
+    expect(markup).toContain("审阅最新结论");
+    expect(markup).not.toContain("有需要时继续对话");
   });
 
   it("does not duplicate the global conversation composer in task detail", () => {

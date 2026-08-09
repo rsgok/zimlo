@@ -261,26 +261,19 @@ export function SessionDetail({ session, project, events, actions, posts, comman
     .sort((left, right) => left.sequence - right.sequence);
   const firstInstruction = instructions[0];
   const rawTaskInput = cleanDisplayText(firstInstruction ? instructionText(firstInstruction) || session.title : session.title);
-  const taskInput = conciseTaskInput(rawTaskInput, 220);
   const location = sessionLocation(session);
   const pendingAction = actions.find((action) => action.state === "pending");
   const pendingActions = actions.filter((action) => action.state === "pending");
-  const queuedCommand = commands.find((command) => ["queued", "dispatching", "running"].includes(command.state));
   const currentState = task?.state ?? session.status;
+  const latestPost = [...posts].sort((left, right) => right.createdAt.localeCompare(left.createdAt))[0];
   const nextAction = pendingAction?.title
-    ?? (queuedCommand ? COMMAND_LABELS[queuedCommand.state] : null)
-    ?? (currentState === "waiting_input"
+    ?? (["waiting", "waiting_input"].includes(currentState)
       ? "回复 Agent，让任务继续"
       : currentState === "user_review"
-        ? "有需要时继续对话"
-        : currentState === "reviewing"
-          ? "Agent 正在检查结果，无需操作"
-          : currentState === "running"
-            ? "Agent 正在执行，无需操作"
-            : currentState === "failed"
-              ? "查看失败原因并决定是否重试"
-              : "可以继续布置任务");
-  const latestPost = [...posts].sort((left, right) => right.createdAt.localeCompare(left.createdAt))[0];
+        ? latestPost ? "审阅最新结论" : "查看任务结果"
+        : currentState === "failed"
+          ? "查看失败原因并决定是否重试"
+          : null);
 
   const timeline = useMemo(() => buildTaskTimeline(posts, commands, events), [commands, events, posts]);
   const timelineIds = timeline.map((item) => `${item.type}:${item.id}`);
@@ -323,7 +316,7 @@ export function SessionDetail({ session, project, events, actions, posts, comman
   return (
     <div className="detail-backdrop" role="presentation">
       <section className="detail-panel" role="dialog" aria-modal="true" aria-label={session.title} ref={panelRef}>
-        <AppTopBar detail title={session.title} onBack={onClose} action={<span className={`task-status task-status-${currentState}`}>{STATUS_LABELS[currentState] ?? currentState}</span>} />
+        <AppTopBar detail title="任务详情" onBack={onClose} action={<span className={`task-status task-status-${currentState}`}>{STATUS_LABELS[currentState] ?? currentState}</span>} />
 
         <section className="task-profile-header">
           <div className="task-profile-identity">
@@ -334,16 +327,18 @@ export function SessionDetail({ session, project, events, actions, posts, comman
               <strong>{project?.agentProfile.displayName ?? (session.provider === "codex" ? "Codex" : "Claude Code")}</strong>
               <span className="task-runtime-line"><ProviderBadge provider={session.provider} surface={session.surface} />{location.label}</span>
             </div>
-            <span className={`task-status task-status-${currentState}`}>{STATUS_LABELS[currentState] ?? currentState}</span>
           </div>
           <div className="task-profile-copy">
             <p className="task-profile-label">Task Input</p>
-            <div className="task-input"><FormattedText text={taskInput} compact /></div>
-            {rawTaskInput.trim() !== taskInput.trim() && <details className="task-input-full"><summary>查看完整输入</summary><FormattedText text={rawTaskInput} /></details>}
+            <div className="task-input"><FormattedText text={rawTaskInput} /></div>
           </div>
           <div className="task-profile-summary">
-            {latestPost && <div className="task-latest-result"><span>最新结论</span><strong>{latestPost.headline}</strong></div>}
-            <div className="task-next-action"><span>现在需要你</span><strong>{nextAction}</strong></div>
+            {latestPost && <section className="task-latest-result" aria-label="最新结论">
+              <span>最新结论</span>
+              <strong>{latestPost.headline}</strong>
+              {latestPost.takeaway && <div className="task-latest-takeaway"><FormattedText text={latestPost.takeaway} compact /></div>}
+            </section>}
+            {nextAction && <div className="task-next-action"><span>现在需要你</span><strong>{nextAction}</strong></div>}
           </div>
           <div className="task-profile-meta" aria-label="任务信息">
             <span>{location.kind === "project" ? "项目" : "目录"} · {location.label}</span>
