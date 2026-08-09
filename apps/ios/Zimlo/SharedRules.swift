@@ -85,6 +85,39 @@ protocol FeedOrderable {
     var createdAt: String { get }
 }
 
+// MARK: - Outbox 用户反馈
+
+enum OutboxFeedbackRules {
+    // 只有用户明确撰写或确认的操作才需要发送反馈；已读回执、设置同步、
+    // 附件登记等后台指令保持静默，避免把内部 Bridge 协议暴露给用户。
+    static let userAuthoredTypes: Set<String> = [
+        "task.create", "task.follow_up", "session.message", "action.decide",
+    ]
+    private static let backgroundTypes: Set<String> = [
+        "feed.seen", "task.timeline.seen", "feed.dismiss.set",
+        "notification.device.register", "material.register",
+    ]
+
+    static func showsPendingStatus(commandType: String) -> Bool {
+        !backgroundTypes.contains(commandType)
+    }
+
+    static func queuedNotice(commandType: String, sent: Bool) -> String? {
+        guard userAuthoredTypes.contains(commandType) else { return nil }
+        guard sent else { return "已保存在手机，连接 Mac 后自动发送" }
+        switch commandType {
+        case "task.create": return "任务已发送，等待 Mac 接收"
+        case "task.follow_up", "session.message": return "回复已发送，等待 Mac 接收"
+        case "action.decide": return "决定已发送，等待 Mac 确认"
+        default: return nil
+        }
+    }
+
+    static func duplicateNotice(commandType: String) -> String? {
+        userAuthoredTypes.contains(commandType) ? "这条操作已在发送队列中，不会重复发送" : nil
+    }
+}
+
 // MARK: - Outbox 语义键
 
 enum SemanticKey {
@@ -193,6 +226,41 @@ enum CommandCancelRules {
             $0.idempotencyKey == key || $0.idempotencyKey.hasSuffix(":\(key)")
         }) else { return true }
         return isCancelable(server.state)
+    }
+}
+
+// MARK: - Outbox 服务端失败关联
+
+enum OutboxFailureRules {
+    private static let projectCommandTypes: Set<String> = ["agent.profile.update", "trust.policy.update"]
+
+    // 新 Bridge 会回传 idempotencyKey，始终精确关联。兼容旧 Bridge 时，只有在
+    // project_not_found 且恰好存在一条目标已不在权威快照中的 Project 指令时才
+    // 回退关联，避免把同一时刻的其它手机操作误判为失败。
+    static func matchingEntryIDs(
+        entries: [OutboxEntry],
+        code: String?,
+        idempotencyKey: String?,
+        hostId: String,
+        snapshot: Snapshot
+    ) -> Set<String> {
+        let scoped = entries.filter { entry in
+            guard let commandHost = entry.command.values["hostId"]?.stringValue else { return true }
+            return commandHost == hostId
+        }
+        if let idempotencyKey, !idempotencyKey.isEmpty {
+            return Set(scoped.compactMap { entry in
+                guard let entryKey = entry.command.idempotencyKey else { return nil }
+                return entryKey == idempotencyKey || idempotencyKey.hasSuffix(":\(entryKey)") ? entry.id : nil
+            })
+        }
+        guard code == "project_not_found" else { return [] }
+        let stale = scoped.filter { entry in
+            guard projectCommandTypes.contains(entry.command.type),
+                  case .string(let projectId) = entry.command.values["projectId"] else { return false }
+            return !snapshot.projects.contains { $0.id == projectId }
+        }
+        return stale.count == 1 ? Set(stale.map(\.id)) : []
     }
 }
 

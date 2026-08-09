@@ -182,23 +182,28 @@ struct RootView: View {
             } label: {
                 ViewThatFits(in: .horizontal) {
                     HStack(spacing: 8) {
-                        Circle().fill(model.bridge.connected ? ZColor.sage : Color.orange).frame(width: 6, height: 6)
+                        Circle().fill(outboxStatusColor).frame(width: 6, height: 6)
                         TimelineView(.periodic(from: .now, by: 30)) { _ in
                             Text(statusLine)
                         }
-                        if model.pendingOutboxCount > 0 { Text("\(model.pendingOutboxCount) 条").bold() }
+                        if model.failedOutboxCount > 0 {
+                            Text("\(model.failedOutboxCount) 条失败").bold()
+                        } else if model.waitingOutboxCount > 0 {
+                            Text("\(model.waitingOutboxCount) 条").bold()
+                        }
                         if !model.bridge.connected { Text("查看重连步骤").foregroundStyle(ZColor.muted) }
                     }
                     VStack(alignment: .leading, spacing: 4) {
                         HStack(spacing: 8) {
-                            Circle().fill(model.bridge.connected ? ZColor.sage : Color.orange).frame(width: 6, height: 6)
+                            Circle().fill(outboxStatusColor).frame(width: 6, height: 6)
                             TimelineView(.periodic(from: .now, by: 30)) { _ in
                                 Text(statusLine)
                                     .fixedSize(horizontal: false, vertical: true)
                             }
                         }
                         HStack(spacing: 8) {
-                            if model.pendingOutboxCount > 0 { Text("\(model.pendingOutboxCount) 条待确认").bold() }
+                            if model.failedOutboxCount > 0 { Text("\(model.failedOutboxCount) 条同步失败").bold() }
+                            if model.waitingOutboxCount > 0 { Text("\(model.waitingOutboxCount) 条待确认").bold() }
                             if !model.bridge.connected { Text("查看重连步骤").foregroundStyle(ZColor.muted) }
                         }
                     }
@@ -244,13 +249,23 @@ struct RootView: View {
     }
 
     private var statusLine: String {
+        if model.failedOutboxCount > 0 {
+            return model.waitingOutboxCount > 0
+                ? "部分手机操作同步失败"
+                : "手机操作同步失败，点按处理"
+        }
         if model.bridge.connected {
-            return model.pendingOutboxCount > 0 ? "手机操作正在等待 Mac 确认" : "当前离线，操作已保存在手机"
+            return model.waitingOutboxCount > 0 ? "手机操作正在等待 Mac 确认" : "已与 Mac 同步"
         }
         if let savedAt = model.snapshotSavedAt {
             return "当前离线 · 数据更新于 \(relative(savedAt))"
         }
         return "当前离线，操作已保存在手机"
+    }
+
+    private var outboxStatusColor: Color {
+        if model.failedOutboxCount > 0 { return ZColor.coralText }
+        return model.bridge.connected ? ZColor.sage : Color.orange
     }
 
     private func userFacingBridgeError(_ error: String) -> String {

@@ -94,6 +94,45 @@ final class PairingLinkRulesTests: XCTestCase {
     }
 }
 
+final class OutboxFeedbackRulesTests: XCTestCase {
+    func testBackgroundReadAndSettingsSyncStaySilent() {
+        for type in ["feed.seen", "task.timeline.seen", "notification.device.register", "trust.policy.update", "material.register"] {
+            XCTAssertNil(OutboxFeedbackRules.queuedNotice(commandType: type, sent: true))
+            XCTAssertNil(OutboxFeedbackRules.duplicateNotice(commandType: type))
+        }
+    }
+
+    func testBackgroundSyncDoesNotEnterGlobalPendingStatus() {
+        for type in ["feed.seen", "task.timeline.seen", "feed.dismiss.set", "notification.device.register", "material.register"] {
+            XCTAssertFalse(OutboxFeedbackRules.showsPendingStatus(commandType: type))
+        }
+        XCTAssertTrue(OutboxFeedbackRules.showsPendingStatus(commandType: "task.create"))
+        XCTAssertTrue(OutboxFeedbackRules.showsPendingStatus(commandType: "trust.policy.update"))
+    }
+
+    func testUserAuthoredCommandsUseHumanFacingCopy() {
+        XCTAssertEqual(OutboxFeedbackRules.queuedNotice(commandType: "task.create", sent: true), "任务已发送，等待 Mac 接收")
+        XCTAssertEqual(OutboxFeedbackRules.queuedNotice(commandType: "task.follow_up", sent: true), "回复已发送，等待 Mac 接收")
+        XCTAssertEqual(OutboxFeedbackRules.queuedNotice(commandType: "action.decide", sent: true), "决定已发送，等待 Mac 确认")
+        XCTAssertEqual(OutboxFeedbackRules.queuedNotice(commandType: "task.create", sent: false), "已保存在手机，连接 Mac 后自动发送")
+    }
+}
+
+final class SpeechCaptureErrorRulesTests: XCTestCase {
+    func testSimulatorRecognizerFailureExplainsHowToRestoreAudioInput() {
+        let message = SpeechCaptureErrorRules.message(for: "Failed to initialize recognizer", isSimulator: true)
+        XCTAssertTrue(message.contains("Audio Input"))
+        XCTAssertTrue(message.contains("真机"))
+    }
+
+    func testUnrelatedRecognizerErrorIsPreserved() {
+        XCTAssertEqual(
+            SpeechCaptureErrorRules.message(for: "No speech was detected", isSimulator: true),
+            "No speech was detected"
+        )
+    }
+}
+
 final class SnapshotCacheMigrationTests: XCTestCase {
     func testEnvelopeRoundTrip() throws {
         let envelope = CachedSnapshot(snapshot: .empty, savedAt: Date(timeIntervalSince1970: 1_700_000_000))
@@ -231,6 +270,17 @@ final class OutboxFlowTests: XCTestCase {
         XCTAssertEqual(model.notice, "已移出 Feed", "旧计时任务不能清掉同文案的新提示")
     }
 
+    func testFeedReadReceiptQueuesSilentlyWithoutGlobalPendingStatus() {
+        let model = makeModel()
+
+        model.markSeen("p1")
+
+        XCTAssertEqual(model.outboxEntries.map(\.command.type), ["feed.seen"])
+        XCTAssertEqual(model.pendingOutboxCount, 0)
+        XCTAssertEqual(model.waitingOutboxCount, 0)
+        XCTAssertNil(model.notice)
+    }
+
     func testCancelQueuedFollowUp() {
         let model = makeModel()
         XCTAssertTrue(model.followUp(sessionId: "s1", text: "继续"))
@@ -281,6 +331,73 @@ final class OutboxFlowTests: XCTestCase {
         let entries = try? JSONDecoder().decode([OutboxEntry].self, from: stored ?? Data())
         XCTAssertEqual(entries?.count, 1)
         XCTAssertEqual(entries?.first?.semanticKey, "task.follow_up:s1:继续跑测试")
+    }
+
+    func testCorrelatedServerErrorMarksOnlyTheRejectedEntry() throws {
+        let model = makeModel()
+        model.updateTrustPolicy(projectId: "project-missing-1", preset: "safe_automation")
+        model.updateTrustPolicy(projectId: "project-missing-2", preset: "ask")
+        let rejected = try XCTUnwrap(model.outboxEntries.first {
+            $0.command.values["projectId"] == .string("project-missing-1")
+        })
+
+        XCTAssertTrue(model.markOutboxFailed(
+            code: "project_not_found",
+            error: "这个 Project 已不存在。",
+            idempotencyKey: rejected.command.idempotencyKey,
+            hostId: "host-1"
+        ))
+        XCTAssertEqual(model.failedOutboxCount, 1)
+        XCTAssertEqual(model.waitingOutboxCount, 1)
+        XCTAssertEqual(model.outboxEntries.first { $0.id == rejected.id }?.lastError, "这个 Project 已不存在。")
+        XCTAssertNil(model.outboxEntries.first {
+            $0.command.values["projectId"] == .string("project-missing-2")
+        }?.lastError)
+    }
+
+    func testLegacyProjectNotFoundSafelyMatchesOneStaleEntry() {
+        let model = makeModel()
+        model.updateTrustPolicy(projectId: "project-legacy", preset: "safe_automation")
+
+        XCTAssertTrue(model.markOutboxFailed(
+            code: "project_not_found",
+            error: "这个 Project 已不存在。",
+            idempotencyKey: nil,
+            hostId: "host-1"
+        ))
+        XCTAssertEqual(model.failedOutboxCount, 1)
+        XCTAssertEqual(model.waitingOutboxCount, 0)
+    }
+
+    func testLegacyProjectNotFoundDoesNotGuessBetweenMultipleEntries() {
+        let model = makeModel()
+        model.updateTrustPolicy(projectId: "project-legacy-1", preset: "safe_automation")
+        model.updateTrustPolicy(projectId: "project-legacy-2", preset: "ask")
+
+        XCTAssertFalse(model.markOutboxFailed(
+            code: "project_not_found",
+            error: "这个 Project 已不存在。",
+            idempotencyKey: nil,
+            hostId: "host-1"
+        ))
+        XCTAssertEqual(model.failedOutboxCount, 0)
+        XCTAssertEqual(model.waitingOutboxCount, 2)
+    }
+
+    func testManualRetryReturnsFailedEntryToWaiting() throws {
+        let model = makeModel()
+        model.updateTrustPolicy(projectId: "project-missing", preset: "safe_automation")
+        let entry = try XCTUnwrap(model.outboxEntries.first)
+        XCTAssertTrue(model.markOutboxFailed(
+            code: "project_not_found",
+            error: "这个 Project 已不存在。",
+            idempotencyKey: entry.command.idempotencyKey,
+            hostId: "host-1"
+        ))
+
+        model.retryOutboxEntry(entry)
+        XCTAssertEqual(model.failedOutboxCount, 0)
+        XCTAssertEqual(model.waitingOutboxCount, 1)
     }
 }
 

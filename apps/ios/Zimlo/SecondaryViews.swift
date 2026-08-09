@@ -1074,8 +1074,8 @@ struct SettingsView: View {
                 HStack(spacing: 11) {
                     settingsLabel("待同步", systemImage: "arrow.triangle.2.circlepath")
                     Spacer()
-                    Text(model.pendingOutboxCount == 0 ? "已完成" : "\(model.pendingOutboxCount) 条")
-                        .foregroundStyle(model.pendingOutboxCount == 0 ? ZColor.muted : ZColor.sageText)
+                    Text(outboxSummary)
+                        .foregroundStyle(model.failedOutboxCount > 0 ? ZColor.coralText : model.pendingOutboxCount == 0 ? ZColor.muted : ZColor.sageText)
                     Image(systemName: "chevron.right").font(ZFont.caption2).foregroundStyle(ZColor.muted)
                 }
                 .font(ZFont.subheadline)
@@ -1096,6 +1096,11 @@ struct SettingsView: View {
                 systemImage: model.snapshot.trustManagementEnabled ? "checkmark.shield.fill" : "shield.slash.fill"
             )
         }
+    }
+
+    private var outboxSummary: String {
+        if model.failedOutboxCount > 0 { return "\(model.failedOutboxCount) 条失败" }
+        return model.waitingOutboxCount == 0 ? "已完成" : "\(model.waitingOutboxCount) 条"
     }
 
     private var runtimeSection: some View {

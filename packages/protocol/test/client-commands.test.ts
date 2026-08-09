@@ -41,6 +41,25 @@ describe("task.pin / task.archive idempotency keys", () => {
   });
 });
 
+describe("agent.profile.update idempotency key", () => {
+  const command = {
+    type: "agent.profile.update",
+    projectId: "project-1",
+    displayName: "Zimlo",
+    avatar: "agent-1",
+    bio: "Mobile agent",
+    defaultProvider: "codex",
+  } as const;
+
+  it("accepts correlated updates from new clients", () => {
+    expect(ClientCommandSchema.safeParse({ ...command, idempotencyKey: "profile-1" }).success).toBe(true);
+  });
+
+  it("keeps updates from existing clients compatible", () => {
+    expect(ClientCommandSchema.safeParse(command).success).toBe(true);
+  });
+});
+
 describe("push route v1", () => {
   it("parses the minimal and the full route", () => {
     expect(PushRouteV1Schema.safeParse({ version: 1, sessionId: "s-1" }).success).toBe(true);

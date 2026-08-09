@@ -486,7 +486,7 @@ struct NewTaskView: View {
                                         .font(ZFont.caption2).foregroundStyle(ZColor.muted)
                                 }
                             }
-                            HStack(alignment: .bottom, spacing: 8) {
+                            HStack(alignment: .center, spacing: 8) {
                                 Menu {
                                     PhotosPicker(
                                     selection: $selectedPhotos,
@@ -505,7 +505,8 @@ struct NewTaskView: View {
                                 VoiceInput(
                                     text: $text,
                                     placeholder: session == nil ? "描述目标，或点按麦克风…" : "回复当前会话…",
-                                    minHeight: session == nil ? 72 : 52,
+                                    axis: .horizontal,
+                                    minHeight: 44,
                                     onError: { message in
                                         withAnimation(.easeOut(duration: 0.18)) { voiceNotice = message }
                                     }
@@ -690,13 +691,6 @@ struct NewTaskView: View {
             .foregroundStyle(ZColor.ink).background(ZColor.paper)
             .navigationTitle(session == nil ? "新任务" : "回复")
             .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .cancellationAction) {
-                    Button { dismiss() } label: { Image(systemName: "xmark") }
-                        .foregroundStyle(ZColor.ink)
-                        .accessibilityLabel("关闭")
-                }
-            }
             .fileImporter(
                 isPresented: $showingFileImporter,
                 allowedContentTypes: [.pdf, .plainText, .commaSeparatedText, .json, .image, .movie, .data],

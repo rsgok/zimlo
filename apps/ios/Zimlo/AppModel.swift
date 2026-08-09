@@ -103,7 +103,7 @@ final class AppModel: ObservableObject {
 
     private var bridgeObserver: AnyCancellable?
     private var hostSnapshots: [String: Snapshot] = [:]
-    private var outbox: [OutboxEntry] = []
+    @Published private var outbox: [OutboxEntry] = []
     private var outboxRetryTask: Task<Void, Never>?
     private var snapshotSaveTask: Task<Void, Never>?
     private var snapshotClearTask: Task<Void, Never>?
@@ -177,7 +177,19 @@ final class AppModel: ObservableObject {
         }
     }
 
-    var pendingOutboxCount: Int { outbox.count }
+    var pendingOutboxCount: Int {
+        outbox.count { OutboxFeedbackRules.showsPendingStatus(commandType: $0.command.type) }
+    }
+    var failedOutboxCount: Int {
+        outbox.count {
+            $0.lastError != nil && OutboxFeedbackRules.showsPendingStatus(commandType: $0.command.type)
+        }
+    }
+    var waitingOutboxCount: Int {
+        outbox.count {
+            $0.lastError == nil && OutboxFeedbackRules.showsPendingStatus(commandType: $0.command.type)
+        }
+    }
     var outboxEntries: [OutboxEntry] { outbox }
 
     func showNotice(_ text: String, action: NoticeAction? = nil) {
@@ -499,6 +511,7 @@ final class AppModel: ObservableObject {
             "avatar": .string(avatar),
             "bio": .string(bio),
             "defaultProvider": provider.map { .string($0.rawValue) } ?? .null,
+            "idempotencyKey": .string(UUID().uuidString),
         ]))
     }
 
@@ -742,10 +755,11 @@ final class AppModel: ObservableObject {
                 outbox[index].lastError = nil
                 guard persistOutbox() else { return false }
                 _ = bridge.send(command)
-                if command.type != "feed.dismiss.set" { showNotice("设置已更新，等待 Bridge 确认") }
                 return true
             }
-            showNotice("这条指令已在队列中，不会重复发送")
+            if let notice = OutboxFeedbackRules.duplicateNotice(commandType: command.type) {
+                showNotice(notice)
+            }
             return bridge.send(outbox[index].command) || true
         }
         let hostId = command.values["hostId"]?.stringValue ?? "unscoped"
@@ -763,8 +777,10 @@ final class AppModel: ObservableObject {
             return false
         }
         let sent = bridge.send(command)
-        if Self.hapticSendTypes.contains(command.type) { Haptics.persisted() }
-        showNotice(sent ? "指令已发送，等待 Bridge 确认" : "指令已保存在手机，将在重连后自动发送")
+        if OutboxFeedbackRules.userAuthoredTypes.contains(command.type) { Haptics.persisted() }
+        if let notice = OutboxFeedbackRules.queuedNotice(commandType: command.type, sent: sent) {
+            showNotice(notice)
+        }
         return true
     }
 
@@ -780,11 +796,6 @@ final class AppModel: ObservableObject {
         }
         return persisted
     }
-
-    // 只有用户主动撰写的发送才播轻触；已读标记、设置同步等被动指令不打扰。
-    private static let hapticSendTypes: Set<String> = [
-        "task.create", "task.follow_up", "session.message", "action.decide",
-    ]
 
     func uploadAndRegister(_ prepared: PreparedMobileMaterial, hostId: String? = nil) async throws -> Material {
         let targetHostId = hostId ?? routed(ClientCommand(type: "material.register")).values["hostId"]?.stringValue
@@ -825,7 +836,8 @@ final class AppModel: ObservableObject {
 
     private func flushOutbox(hostId: String? = nil) {
         guard bridge.connected, !outbox.isEmpty else { return }
-        for entry in outbox where hostId == nil || entry.command.values["hostId"]?.stringValue == hostId {
+        for entry in outbox where entry.lastError == nil
+            && (hostId == nil || entry.command.values["hostId"]?.stringValue == hostId) {
             _ = bridge.send(entry.command)
         }
     }
@@ -1017,7 +1029,19 @@ final class AppModel: ObservableObject {
                 }
             }
         case "error":
-            showNotice(message.message ?? "Bridge 返回错误")
+            let error = message.message ?? "Bridge 返回错误"
+            if markOutboxFailed(
+                code: message.code,
+                error: error,
+                idempotencyKey: message.idempotencyKey,
+                hostId: hostId
+            ) {
+                showNotice("手机操作同步失败：\(error)", action: NoticeAction(label: "查看") {
+                    self.showingOutbox = true
+                })
+            } else {
+                showNotice(error)
+            }
         default:
             break
         }
@@ -1196,6 +1220,34 @@ final class AppModel: ObservableObject {
             changed = true
         }
         if changed { persistOutbox() }
+    }
+
+    // 通用 Bridge error 通过幂等键精确关联；旧 Bridge 的 project_not_found 仅在
+    // 单一无效目标时安全回退。失败项保留供用户查看/重试/移除，但自动重发会跳过。
+    @discardableResult
+    func markOutboxFailed(
+        code: String?,
+        error: String,
+        idempotencyKey: String?,
+        hostId: String
+    ) -> Bool {
+        let ids = OutboxFailureRules.matchingEntryIDs(
+            entries: outbox,
+            code: code,
+            idempotencyKey: idempotencyKey,
+            hostId: hostId,
+            snapshot: snapshot
+        )
+        guard !ids.isEmpty else { return false }
+        var changed = false
+        for index in outbox.indices where ids.contains(outbox[index].id) {
+            if outbox[index].lastError != error {
+                outbox[index].lastError = error
+                changed = true
+            }
+        }
+        if changed { persistOutbox() }
+        return true
     }
 
     private func upsert<T: Identifiable>(_ values: inout [T], _ value: T) where T.ID: Equatable {

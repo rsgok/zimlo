@@ -647,6 +647,8 @@ const ClientCommandPayloadSchema = z.discriminatedUnion("type", [
     avatar: z.string().min(1).max(16),
     bio: z.string().max(280),
     defaultProvider: ProviderSchema.nullable(),
+    // Optional for backwards compatibility with older mobile clients.
+    idempotencyKey: z.string().optional(),
   }),
   z.object({ type: z.literal("session.events.request"), sessionId: z.string() }),
   z.object({ type: z.literal("devices.request") }),
@@ -716,7 +718,7 @@ export type ServerMessage =
       pluginPath: string;
       deepLink: string;
     }
-  | { type: "error"; code: string; message: string };
+  | { type: "error"; code: string; message: string; commandType?: string; idempotencyKey?: string };
 
 export const EMPTY_CAPABILITIES: SessionCapabilities = {
   discovered: true,
