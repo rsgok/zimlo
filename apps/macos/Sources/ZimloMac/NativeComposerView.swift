@@ -123,7 +123,7 @@ struct NativeComposerOverlay: View {
     }
 
     private var destinationPicker: some View {
-        HStack(spacing: 12) {
+        HStack(spacing: 10) {
             Picker("交给", selection: $workspaceID) {
                 if store.snapshot.workspaces.isEmpty { Text("暂无可信项目").tag("") }
                 ForEach(store.snapshot.workspaces.sorted { $0.lastUsedAt > $1.lastUsedAt }) { workspace in
@@ -131,16 +131,17 @@ struct NativeComposerOverlay: View {
                 }
             }
             .labelsHidden()
-            .frame(width: 250, alignment: .leading)
+            .pickerStyle(.menu)
             .onChange(of: workspaceID) { _, _ in coerceProvider() }
 
             Picker("Runtime", selection: $provider) {
                 ForEach(Provider.allCases) { item in Text(item.label).tag(item) }
             }
             .labelsHidden()
-            .frame(width: 150)
-            Spacer(minLength: 0)
+            .pickerStyle(.menu)
         }
+        .fixedSize(horizontal: true, vertical: false)
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 
     private var inputRow: some View {
