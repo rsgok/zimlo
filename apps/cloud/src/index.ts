@@ -538,6 +538,19 @@ async function completePairing(
   });
 }
 
+async function cancelPairing(
+  request: Request,
+  env: Env,
+  pairingId: string,
+): Promise<Response> {
+  const installation = await installationForSignedRequest(request, env);
+  if (installation instanceof Response) return installation;
+  return pairingRoom(env, pairingId).fetch("https://pairing.internal/mac", {
+    method: "DELETE",
+    headers: { "x-zimlo-installation-id": installation.id },
+  });
+}
+
 async function beginDevicePairing(request: Request, env: Env): Promise<Response> {
   const body = await request.json<Record<string, unknown>>().catch(() => null);
   const pairingId = body?.pairingId;
@@ -616,6 +629,10 @@ export default {
         url.pathname.slice("/v1/pairings/".length, -"/complete".length),
       );
       return completePairing(request, env, pairingId);
+    }
+    if (request.method === "DELETE" && /^\/v1\/pairings\/[^/]+$/u.test(url.pathname)) {
+      const pairingId = decodeURIComponent(url.pathname.slice("/v1/pairings/".length));
+      return cancelPairing(request, env, pairingId);
     }
     if (request.method === "POST" && url.pathname === "/api/pair") {
       const allowed = await env.AUTH_RATE_LIMITER.limit({ key: `pair:${actorKey(request)}` });

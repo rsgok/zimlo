@@ -3,6 +3,7 @@ import SwiftUI
 struct NativeSettingsView: View {
     @ObservedObject var store: NativeAppStore
     @ObservedObject var service: ServiceController
+    @State private var showingDevices = false
 
     var body: some View {
         ScrollView {
@@ -12,6 +13,7 @@ struct NativeSettingsView: View {
                     integrationsCard
                     devicesCard
                 }
+                .frame(maxWidth: .infinity, alignment: .topLeading)
                 permissionsCard
                 maintenanceCard
             }
@@ -21,7 +23,14 @@ struct NativeSettingsView: View {
         }
         .background(NativeTheme.paper)
         .navigationTitle("设置")
-        .task { _ = await service.refreshStatus() }
+        .task {
+            async let status: Void = { _ = await service.refreshStatus() }()
+            async let devices: Void = store.loadDevices()
+            _ = await (status, devices)
+        }
+        .sheet(isPresented: $showingDevices) {
+            NativeDevicesSheet(store: store)
+        }
     }
 
     private var serviceCard: some View {
@@ -45,6 +54,7 @@ struct NativeSettingsView: View {
             }
         }
         .padding(18)
+        .frame(maxWidth: .infinity, alignment: .leading)
         .nativeCard(cornerRadius: 17)
     }
 
@@ -64,14 +74,15 @@ struct NativeSettingsView: View {
             if let issue = service.integrationIssue {
                 Text(issue.message).font(.system(size: 10, weight: .medium)).foregroundStyle(NativeTheme.coral)
             }
+            Spacer(minLength: 0)
             Button(service.integrationBusy ? "正在检查…" : "修复本机接入") {
                 Task { await service.installIntegration("all") }
             }
             .buttonStyle(.bordered)
             .disabled(service.integrationBusy)
         }
-        .padding(17)
-        .frame(maxWidth: .infinity, minHeight: 210, alignment: .topLeading)
+        .padding(18)
+        .frame(maxWidth: .infinity, minHeight: 224, alignment: .topLeading)
         .nativeCard(cornerRadius: 16)
     }
 
@@ -80,7 +91,7 @@ struct NativeSettingsView: View {
             HStack {
                 Text("手机连接").font(.system(size: 14, weight: .bold, design: .rounded))
                 Spacer()
-                Text("\(service.status?.pairedDeviceCount ?? 0) 台")
+                Text("\(store.devices.count) 台")
                     .font(.system(size: 10, weight: .bold)).foregroundStyle(NativeTheme.muted)
             }
             if let image = service.pairingImage {
@@ -96,37 +107,55 @@ struct NativeSettingsView: View {
             } else {
                 Text("手机与 Mac 通过加密通道同步任务。生成二维码后，两分钟内完成扫描。")
                     .font(.system(size: 10.5, weight: .medium)).foregroundStyle(NativeTheme.ink.opacity(0.66)).lineSpacing(3)
-                Button(service.pairingBusy ? "正在生成…" : "连接新手机") {
-                    Task { await service.createPairing() }
-                }
-                .buttonStyle(.borderedProminent).tint(NativeTheme.acid)
-                .disabled(service.pairingBusy || !service.isReady)
             }
             if let issue = service.pairingIssue {
                 Text(issue.message).font(.system(size: 10, weight: .medium)).foregroundStyle(NativeTheme.coral)
             }
+            HStack(spacing: 8) {
+                Button("管理设备") { showingDevices = true }
+                    .buttonStyle(.bordered)
+                    .disabled(store.devices.isEmpty)
+                Spacer()
+                if service.pairingImage == nil {
+                    Button(service.pairingBusy ? "正在生成…" : "连接新手机") {
+                        Task { await service.createPairing() }
+                    }
+                    .buttonStyle(.borderedProminent).tint(NativeTheme.acid)
+                    .disabled(service.pairingBusy || !service.isReady)
+                } else {
+                    Button(service.pairingBusy ? "正在取消…" : "取消连接", role: .destructive) {
+                        Task { await service.cancelPairing() }
+                    }
+                    .buttonStyle(.bordered)
+                    .disabled(service.pairingBusy)
+                }
+            }
         }
-        .padding(17)
-        .frame(maxWidth: .infinity, minHeight: 210, alignment: .topLeading)
+        .padding(18)
+        .frame(maxWidth: .infinity, minHeight: 224, alignment: .topLeading)
         .nativeCard(cornerRadius: 16)
     }
 
     private var permissionsCard: some View {
         VStack(alignment: .leading, spacing: 12) {
             Text("权限边界").font(.system(size: 14, weight: .bold, design: .rounded))
-            Toggle(isOn: Binding(
-                get: { store.snapshot.lanApprovalsEnabled },
-                set: { enabled in Task { await store.setLANApprovals(enabled) } }
-            )) {
+            HStack(spacing: 18) {
                 VStack(alignment: .leading, spacing: 3) {
                     Text("允许局域网审批").font(.system(size: 11.5, weight: .bold))
                     Text("仅对已配对、已授权的设备生效；高风险操作仍会再次确认。")
                         .font(.system(size: 9.5, weight: .medium)).foregroundStyle(NativeTheme.muted)
                 }
+                Spacer(minLength: 0)
+                Toggle("允许局域网审批", isOn: Binding(
+                    get: { store.snapshot.lanApprovalsEnabled },
+                    set: { enabled in Task { await store.setLANApprovals(enabled) } }
+                ))
+                .labelsHidden()
+                .toggleStyle(.switch)
             }
-            .toggleStyle(.switch)
         }
-        .padding(17)
+        .padding(18)
+        .frame(maxWidth: .infinity, alignment: .leading)
         .nativeCard(cornerRadius: 16)
     }
 
@@ -147,7 +176,8 @@ struct NativeSettingsView: View {
             }
             .buttonStyle(.bordered)
         }
-        .padding(17)
+        .padding(18)
+        .frame(maxWidth: .infinity, alignment: .leading)
         .nativeCard(cornerRadius: 16)
     }
 
@@ -156,6 +186,80 @@ struct NativeSettingsView: View {
         case .ready: NativeTheme.sage
         case .degraded, .starting, .stopping: NativeTheme.amber
         case .manualStopped, .unavailable: NativeTheme.coral
+        }
+    }
+}
+
+private struct NativeDevicesSheet: View {
+    @ObservedObject var store: NativeAppStore
+    @Environment(\.dismiss) private var dismiss
+    @State private var pendingRemoval: NativeDevice?
+
+    var body: some View {
+        VStack(spacing: 0) {
+            HStack {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("已连接设备")
+                        .font(.system(size: 20, weight: .bold, design: .rounded))
+                    Text("移除后，这台设备会立即断开，需要重新扫码才能连接。")
+                        .font(.system(size: 11, weight: .medium))
+                        .foregroundStyle(NativeTheme.muted)
+                }
+                Spacer()
+                Button("完成") { dismiss() }.keyboardShortcut(.cancelAction)
+            }
+            .padding(22)
+
+            Divider().opacity(0.45)
+
+            ScrollView {
+                LazyVStack(spacing: 10) {
+                    ForEach(store.devices) { device in
+                        HStack(spacing: 13) {
+                            ZStack {
+                                RoundedRectangle(cornerRadius: 11, style: .continuous)
+                                    .fill(NativeTheme.acidSoft)
+                                Image(systemName: "iphone.gen3")
+                                    .font(.system(size: 18, weight: .semibold))
+                                    .foregroundStyle(NativeTheme.acid)
+                            }
+                            .frame(width: 42, height: 42)
+                            VStack(alignment: .leading, spacing: 3) {
+                                Text(device.name)
+                                    .font(.system(size: 13, weight: .bold))
+                                Text("最近连接：\(device.lastSeenAt.zimloDate.formatted(.relative(presentation: .named)))")
+                                    .font(.system(size: 10.5, weight: .medium))
+                                    .foregroundStyle(NativeTheme.muted)
+                            }
+                            Spacer()
+                            Button("移除", role: .destructive) { pendingRemoval = device }
+                                .buttonStyle(.bordered)
+                        }
+                        .padding(14)
+                        .nativeCard(cornerRadius: 14)
+                    }
+                }
+                .padding(18)
+            }
+        }
+        .frame(width: 540, height: 470)
+        .background(NativeTheme.paper)
+        .task { await store.loadDevices() }
+        .confirmationDialog(
+            "移除 \(pendingRemoval?.name ?? "这台设备")？",
+            isPresented: Binding(
+                get: { pendingRemoval != nil },
+                set: { if !$0 { pendingRemoval = nil } }
+            ),
+            titleVisibility: .visible
+        ) {
+            if let device = pendingRemoval {
+                Button("移除设备", role: .destructive) {
+                    pendingRemoval = nil
+                    Task { _ = await store.revokeDevice(device) }
+                }
+            }
+            Button("取消", role: .cancel) { pendingRemoval = nil }
         }
     }
 }

@@ -138,13 +138,13 @@ final class SystemProxyEnvironmentTests: XCTestCase {
 
 final class PairingPayloadTests: XCTestCase {
     func testDecodesLANTransport() throws {
-        let payload = try JSONDecoder().decode(PairingPayload.self, from: Data(#"{"pairUrl":"http://192.168.1.8:4747/#pair","qrDataUrl":"data:image/png;base64,AA==","expiresAt":"2026-08-01T00:00:00.000Z","transport":"lan"}"#.utf8))
+        let payload = try JSONDecoder().decode(PairingPayload.self, from: Data(#"{"pairingId":"019pair","pairUrl":"http://192.168.1.8:4747/#pair","qrDataUrl":"data:image/png;base64,AA==","expiresAt":"2026-08-01T00:00:00.000Z","transport":"lan"}"#.utf8))
         XCTAssertEqual(payload.transport, .lan)
         XCTAssertNil(payload.localPairUrl)
     }
 
     func testDecodesCloudPayloadWithLocalFallback() throws {
-        let payload = try JSONDecoder().decode(PairingPayload.self, from: Data(#"{"pairUrl":"https://cloud.example/#pair","localPairUrl":"http://192.168.1.8:4747/#pair","qrDataUrl":"data:image/png;base64,AA==","expiresAt":"2026-08-01T00:00:00.000Z","transport":"cloud"}"#.utf8))
+        let payload = try JSONDecoder().decode(PairingPayload.self, from: Data(#"{"pairingId":"019pair","pairUrl":"https://cloud.example/#pair","localPairUrl":"http://192.168.1.8:4747/#pair","qrDataUrl":"data:image/png;base64,AA==","expiresAt":"2026-08-01T00:00:00.000Z","transport":"cloud"}"#.utf8))
         XCTAssertEqual(payload.transport, .cloud)
         XCTAssertEqual(payload.localPairUrl, "http://192.168.1.8:4747/#pair")
     }
@@ -152,6 +152,7 @@ final class PairingPayloadTests: XCTestCase {
     func testOlderBridgePayloadRemainsCompatible() throws {
         let payload = try JSONDecoder().decode(PairingPayload.self, from: Data(#"{"pairUrl":"https://cloud.example/#pair","qrDataUrl":"data:image/png;base64,AA==","expiresAt":"2026-08-01T00:00:00.000Z"}"#.utf8))
         XCTAssertNil(payload.transport)
+        XCTAssertNil(payload.pairingId)
     }
 }
 

@@ -115,7 +115,8 @@ struct NativeTasksView: View {
                 }
             }
             .pickerStyle(.segmented)
-            .frame(maxWidth: 520)
+            .labelsHidden()
+            .fixedSize(horizontal: true, vertical: false)
             Spacer()
             Text("\(sessions.count) 个任务")
                 .font(.system(size: 11, weight: .semibold))
@@ -146,7 +147,7 @@ private struct NativeTaskRow: View {
     var body: some View {
         NavigationLink(value: NativeRoute.task(session.id)) {
             HStack(spacing: 14) {
-                NativeAgentAvatar(avatar: project?.agentProfile.avatar ?? "●", size: 38)
+                NativeTaskAvatar(project: project, provider: session.provider, size: 38)
                 VStack(alignment: .leading, spacing: 5) {
                     HStack(spacing: 6) {
                         Text(TaskPresentationRules.shortTitle(session.title, limit: 54))
@@ -257,7 +258,7 @@ struct NativeTaskProfileView: View {
     private var taskHeader: some View {
         VStack(alignment: .leading, spacing: 18) {
             HStack(spacing: 12) {
-                NativeAgentAvatar(avatar: project?.agentProfile.avatar ?? "●", size: 48)
+                NativeTaskAvatar(project: project, provider: session.provider, size: 48)
                 VStack(alignment: .leading, spacing: 3) {
                     Text(project?.agentProfile.displayName ?? session.provider.label)
                         .font(.system(size: 16, weight: .bold))
@@ -298,11 +299,11 @@ struct NativeTaskProfileView: View {
     }
 
     private var originalInput: String {
-        let instruction = events
+        let instructionEvent = events
             .filter { $0.kind == "user_instruction" }
             .sorted { $0.sequence < $1.sequence }
-            .first?.payload.stringValue?
-            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .first
+        let instruction = instructionEvent.flatMap(TimelineEventPresentation.text(for:))
         return TaskPresentationRules.clean(instruction?.isEmpty == false ? instruction! : session.title)
     }
 
@@ -348,8 +349,8 @@ struct NativeTaskProfileView: View {
     private var timelineItems: [NativeTimelineItem] {
         let postItems = posts.map(NativeTimelineItem.post)
         let commandItems = commands.map(NativeTimelineItem.command)
-        let eventItems = events
-            .filter { ["user_instruction", "plan_updated", "tests_passed", "tests_failed", "blocked", "completed", "failed"].contains($0.kind) }
+        let eventItems = TimelineEventPresentation.deduplicated(events
+            .filter { ["user_instruction", "plan_updated", "tests_passed", "tests_failed", "blocked", "completed", "failed"].contains($0.kind) })
             .map(NativeTimelineItem.event)
         return (postItems + commandItems + eventItems).sorted { $0.date > $1.date }
     }
@@ -545,14 +546,16 @@ private struct NativeTimelineRow: View {
         switch item {
         case .post(let post): TaskPresentationRules.preview(post.headline)
         case .command(let command): TaskPresentationRules.preview(command.text)
-        case .event(let event): TaskPresentationRules.preview(event.payload.stringValue ?? label)
+        case .event(let event): TaskPresentationRules.shortTitle(TimelineEventPresentation.text(for: event) ?? label, limit: 80)
         }
     }
     private var detail: String {
         switch item {
-        case .post(let post): TaskPresentationRules.clean(post.takeaway)
-        case .command(let command): ["queued": "等待当前步骤结束", "dispatching": "正在准备", "running": "Agent 正在执行", "completed": "已完成", "failed": command.error ?? "发送失败", "canceled": "已取消"][command.state] ?? command.state
-        case .event: ""
+        case .post(let post): return TaskPresentationRules.clean(post.takeaway)
+        case .command(let command): return ["queued": "等待当前步骤结束", "dispatching": "正在准备", "running": "Agent 正在执行", "completed": "已完成", "failed": command.error ?? "发送失败", "canceled": "已取消"][command.state] ?? command.state
+        case .event(let event):
+            guard let value = TimelineEventPresentation.text(for: event), value.count > 80 else { return "" }
+            return TaskPresentationRules.clean(value)
         }
     }
     private var symbol: String {

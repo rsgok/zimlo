@@ -68,6 +68,7 @@ enum PairingTransport: String, Codable {
 }
 
 struct PairingPayload: Codable {
+    let pairingId: String?
     let pairUrl: String
     let localPairUrl: String?
     let qrDataUrl: String
@@ -577,6 +578,39 @@ final class ServiceController: ObservableObject {
                 for: error,
                 fallback: "暂时无法创建配对二维码。",
                 retryAction: "检查网络和后台服务后重试。"
+            )
+        }
+    }
+
+    func cancelPairing() async {
+        guard let pairing, !pairingBusy else { return }
+        guard let pairingId = pairing.pairingId else {
+            self.pairing = nil
+            pairingImage = nil
+            return
+        }
+        pairingBusy = true
+        pairingIssue = nil
+        defer { pairingBusy = false }
+        do {
+            let safeID = pairingId.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? pairingId
+            var request = URLRequest(url: baseURL.appending(path: "api/local/pairing/\(safeID)"))
+            request.httpMethod = "DELETE"
+            request.timeoutInterval = 10
+            let (data, response) = try await session.data(for: request)
+            guard (response as? HTTPURLResponse)?.statusCode == 200 else {
+                pairingIssue = BridgeErrorDecoder.decode(data, fallback: "暂时无法取消这个连接码。")
+                return
+            }
+            self.pairing = nil
+            pairingImage = nil
+        } catch is CancellationError {
+            return
+        } catch {
+            pairingIssue = OperationIssueMapper.issue(
+                for: error,
+                fallback: "暂时无法取消这个连接码。",
+                retryAction: "请稍后重试。"
             )
         }
     }

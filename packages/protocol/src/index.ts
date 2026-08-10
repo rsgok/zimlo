@@ -708,7 +708,7 @@ export type ServerMessage =
         canManageTrust: boolean;
       }>;
     }
-  | { type: "pairing.created"; pairUrl: string; qrDataUrl: string; expiresAt: string }
+  | { type: "pairing.created"; pairingId: string; pairUrl: string; qrDataUrl: string; expiresAt: string }
   | { type: "lan.approvals.changed"; enabled: boolean }
   | { type: "integrations.status"; integrations: IntegrationStatus[] }
   | {

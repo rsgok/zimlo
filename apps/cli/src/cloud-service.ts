@@ -142,6 +142,13 @@ export class CloudService {
     return response.json() as Promise<CloudPairingRequest>;
   }
 
+  async cancelPairing(pairingId: string): Promise<boolean> {
+    if (!await this.ensureReady()) return false;
+    const pathname = `/v1/pairings/${encodeURIComponent(pairingId)}`;
+    const response = await this.signedFetch(pathname, "DELETE");
+    return response.ok || response.status === 410;
+  }
+
   async completePairing(
     pairingId: string,
     requestId: string,

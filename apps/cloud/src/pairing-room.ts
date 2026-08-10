@@ -59,6 +59,11 @@ export class PairingRoom implements DurableObject {
       if (!this.authorizedMac(request, registration)) return jsonError(403, "wrong_installation");
       return this.complete(request);
     }
+    if (request.method === "DELETE" && url.pathname === "/mac") {
+      if (!this.authorizedMac(request, registration)) return jsonError(403, "wrong_installation");
+      await this.state.storage.deleteAll();
+      return Response.json({ ok: true });
+    }
     return jsonError(404, "not_found");
   }
 

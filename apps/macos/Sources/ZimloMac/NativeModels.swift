@@ -45,10 +45,36 @@ enum JSONValue: Codable, Hashable {
         case .bool(let value): value ? "true" : "false"
         case .array(let values): values.compactMap(\.stringValue).joined(separator: " ")
         case .object(let values):
-            ["summary", "message", "reason", "text", "content", "path"]
+            ["prompt", "last_agent_message", "summary", "message", "reason", "text", "content", "preview", "path"]
                 .compactMap { values[$0]?.stringValue }
                 .first(where: { !$0.isEmpty })
         case .null: nil
+        }
+    }
+}
+
+enum TimelineEventPresentation {
+    static func text(for event: UnifiedEvent) -> String? {
+        guard let raw = event.payload.stringValue else { return nil }
+        var value = TaskPresentationRules.clean(raw)
+        if event.kind == "user_instruction",
+           let marker = value.range(of: "## My request:\n") {
+            value = String(value[marker.upperBound...])
+            if let image = value.range(of: "\n<image") { value = String(value[..<image.lowerBound]) }
+        }
+        value = TaskPresentationRules.clean(value)
+        guard !value.isEmpty, value != event.kind else { return nil }
+        return value
+    }
+
+    static func deduplicated(_ events: [UnifiedEvent]) -> [UnifiedEvent] {
+        var seen = Set<String>()
+        return events.filter { event in
+            guard let text = text(for: event) else { return false }
+            let key = text.lowercased().filter { !$0.isWhitespace }
+            guard !seen.contains(key) else { return false }
+            seen.insert(key)
+            return true
         }
     }
 }
@@ -417,6 +443,20 @@ struct ServerEnvelope: Codable {
     var events: [UnifiedEvent]?
     var message: String?
     var code: String?
+    var devices: [NativeDevice]?
+}
+
+struct NativeDevice: Codable, Hashable, Identifiable {
+    var id: String
+    var name: String
+    var createdAt: String
+    var lastSeenAt: String
+    var revokedAt: String?
+    var isLocalAdmin: Bool
+    var canApprove: Bool
+    var canManageTrust: Bool
+
+    var isActivePhone: Bool { !isLocalAdmin && revokedAt == nil }
 }
 
 struct LocalCommandResponse: Codable {
