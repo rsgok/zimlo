@@ -34,7 +34,7 @@ struct TaskDetailView: View {
     }
 
     private func compactHeader(_ projection: TaskDetailProjection) -> some View {
-        VStack(alignment: .leading, spacing: 13) {
+        VStack(alignment: .leading, spacing: 16) {
             HStack(spacing: 10) {
                 AgentAvatar(value: projection.project?.agentProfile.avatar ?? "Z", size: 42)
                 VStack(alignment: .leading, spacing: 2) {
@@ -42,33 +42,72 @@ struct TaskDetailView: View {
                     HStack(spacing: 6) {
                         ProviderBadge(provider: session.provider, surface: session.surface)
                         Text(session.projectName ?? session.cwd?.split(separator: "/").last.map(String.init) ?? "未归属")
-                            .font(ZFont.footnote).foregroundStyle(ZColor.muted).lineLimit(1)
+                            .font(ZFont.footnote).foregroundStyle(ZColor.secondaryInk).lineLimit(1)
                     }
                 }
             }
-            VStack(alignment: .leading, spacing: 5) {
-                Text("TASK INPUT").font(ZFont.caption2).foregroundStyle(ZColor.muted)
-                Text(projection.taskInput).font(ZFont.title3).lineLimit(3)
+            VStack(alignment: .leading, spacing: 7) {
+                Text("原始任务").font(ZFont.caption).foregroundStyle(ZColor.secondaryInk)
+                Text(projection.taskInput)
+                    .font(ZFont.body.weight(.semibold))
+                    .foregroundStyle(ZColor.ink)
+                    .fixedSize(horizontal: false, vertical: true)
             }
             if let latest = projection.posts.first {
-                HStack(alignment: .top, spacing: 18) {
-                    headerFact("最新结论", latest.headline)
-                    headerFact("现在需要你", nextAction(for: projection))
-                }
-            } else {
-                headerFact("现在需要你", nextAction(for: projection))
+                latestConclusion(latest)
+            }
+            if let action = TaskHeaderRules.requiredAction(
+                currentState: projection.currentState,
+                pendingActionTitle: projection.pendingActions.first?.title,
+                hasLatestConclusion: !projection.posts.isEmpty
+            ) {
+                requiredAction(action)
             }
         }
         .foregroundStyle(ZColor.ink)
-        .padding(.horizontal, 18).padding(.vertical, 16)
+        .padding(.horizontal, 18).padding(.top, 18).padding(.bottom, 20)
         .overlay(alignment: .bottom) { Rectangle().fill(ZColor.line).frame(height: 1) }
     }
 
-    private func headerFact(_ label: String, _ value: String) -> some View {
-        VStack(alignment: .leading, spacing: 3) {
-            Text(label).font(ZFont.caption2).foregroundStyle(ZColor.sageText)
-            Text(value).font(ZFont.footnote.weight(.bold)).lineLimit(3)
-        }.frame(maxWidth: .infinity, alignment: .leading)
+    private func latestConclusion(_ post: FeedPost) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Label("最新结论", systemImage: "sparkles")
+                .font(ZFont.caption)
+                .foregroundStyle(ZColor.sageText)
+            Text(post.headline)
+                .font(ZFont.title3)
+                .foregroundStyle(ZColor.ink)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .padding(14)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(ZColor.raised)
+        .overlay(
+            RoundedRectangle(cornerRadius: ZRadius.inner, style: .continuous)
+                .stroke(ZColor.sageText.opacity(0.34))
+        )
+        .clipShape(RoundedRectangle(cornerRadius: ZRadius.inner, style: .continuous))
+        .accessibilityElement(children: .combine)
+    }
+
+    private func requiredAction(_ action: String) -> some View {
+        HStack(alignment: .top, spacing: 10) {
+            Image(systemName: "arrow.turn.down.right")
+                .font(ZFont.callout.weight(.bold))
+                .foregroundStyle(ZColor.coralText)
+            VStack(alignment: .leading, spacing: 3) {
+                Text("需要你").font(ZFont.caption).foregroundStyle(ZColor.coralText)
+                Text(action).font(ZFont.callout.weight(.bold)).foregroundStyle(ZColor.ink)
+            }
+        }
+        .padding(12)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(ZColor.coral.opacity(0.13))
+        .overlay(
+            RoundedRectangle(cornerRadius: ZRadius.control, style: .continuous)
+                .stroke(ZColor.coralText.opacity(0.28))
+        )
+        .clipShape(RoundedRectangle(cornerRadius: ZRadius.control, style: .continuous))
     }
 
     private func attentionSection(_ actions: [PendingAction]) -> some View {
@@ -114,18 +153,6 @@ struct TaskDetailView: View {
             }
         }
         .foregroundStyle(ZColor.ink)
-    }
-
-    private func nextAction(for projection: TaskDetailProjection) -> String {
-        if let action = projection.pendingActions.first { return action.title }
-        if !projection.activeQueue.isEmpty { return "等待当前步骤结束" }
-        switch projection.currentState {
-        case "waiting_input": return "回复 Agent，让任务继续"
-        case "user_review": return "有需要时继续对话"
-        case "running", "reviewing": return "Agent 正在执行，无需操作"
-        case "failed": return "查看失败原因并决定是否重试"
-        default: return "可以继续布置任务"
-        }
     }
 
 }
@@ -193,10 +220,7 @@ struct TaskDetailProjection {
         currentState = task?.state ?? session.status
         pendingActions = snapshot.actions.filter { $0.sessionId == session.id && $0.state == "pending" }
         activeQueue = commands.filter { ["queued", "dispatching", "running"].contains($0.state) }
-        taskInput = sessionEvents.lazy
-            .filter { $0.kind == "user_instruction" }
-            .min { $0.sequence < $1.sequence }?
-            .payload.stringValue ?? session.title
+        taskInput = Self.originalInput(sessionTitle: session.title, sessionEvents: sessionEvents)
 
         var items = posts.map(TaskTimelineItem.post)
         items += commands.map(TaskTimelineItem.command)
@@ -210,6 +234,13 @@ struct TaskDetailProjection {
             for: timelineItems,
             sessionEvents: sessionEvents
         )
+    }
+
+    static func originalInput(sessionTitle: String, sessionEvents: [UnifiedEvent]) -> String {
+        sessionEvents.lazy
+            .filter { $0.kind == "user_instruction" }
+            .min { $0.sequence < $1.sequence }?
+            .payload.stringValue ?? sessionTitle
     }
 
     private static func makeDetails(
@@ -486,7 +517,7 @@ struct NewTaskView: View {
                                         .font(ZFont.caption2).foregroundStyle(ZColor.muted)
                                 }
                             }
-                            HStack(alignment: .bottom, spacing: 8) {
+                            HStack(alignment: .center, spacing: 8) {
                                 Menu {
                                     PhotosPicker(
                                     selection: $selectedPhotos,
@@ -505,7 +536,8 @@ struct NewTaskView: View {
                                 VoiceInput(
                                     text: $text,
                                     placeholder: session == nil ? "描述目标，或点按麦克风…" : "回复当前会话…",
-                                    minHeight: session == nil ? 72 : 52,
+                                    axis: .horizontal,
+                                    minHeight: 44,
                                     onError: { message in
                                         withAnimation(.easeOut(duration: 0.18)) { voiceNotice = message }
                                     }
@@ -690,13 +722,6 @@ struct NewTaskView: View {
             .foregroundStyle(ZColor.ink).background(ZColor.paper)
             .navigationTitle(session == nil ? "新任务" : "回复")
             .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .cancellationAction) {
-                    Button { dismiss() } label: { Image(systemName: "xmark") }
-                        .foregroundStyle(ZColor.ink)
-                        .accessibilityLabel("关闭")
-                }
-            }
             .fileImporter(
                 isPresented: $showingFileImporter,
                 allowedContentTypes: [.pdf, .plainText, .commaSeparatedText, .json, .image, .movie, .data],

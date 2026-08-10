@@ -76,6 +76,8 @@ describe("TasksView", () => {
     expect(markup).toContain("优化任务搜索与语义标题");
     expect(markup).toContain("项目 · zimlo");
     expect(markup).not.toContain("Agent 正在执行");
+    expect(markup).not.toContain("Agent 正在推进");
+    expect(markup).not.toContain("回复、审阅或恢复");
     expect(markup).toContain("aria-label=\"管理任务\"");
     expect(markup).toContain("Codex");
     expect(markup).not.toContain("/Users/kai/Code/zimlo");
@@ -86,6 +88,14 @@ describe("TasksView", () => {
     const markup = renderToStaticMarkup(<TasksView projects={[project]} sessions={[session]} tasks={[task]} posts={[post]} preferences={[]} send={vi.fn()} onOpen={vi.fn()} />);
     expect(markup).toContain("任务搜索与语义标题已经优化");
     expect(markup).not.toContain("<strong>优化任务搜索与语义标题</strong>");
+  });
+
+  it("does not repeat the review state as a subtitle under the task title", () => {
+    const reviewTask = { ...task, state: "user_review" as const };
+    const markup = renderToStaticMarkup(<TasksView projects={[project]} sessions={[session]} tasks={[reviewTask]} posts={[post]} preferences={[]} send={vi.fn()} onOpen={vi.fn()} />);
+
+    expect(markup.match(/待你审阅/g)).toHaveLength(1);
+    expect(markup).not.toContain("结果已就绪，等待你审阅");
   });
 
   it("groups indistinguishable process-only sessions from the same runtime and directory", () => {

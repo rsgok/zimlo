@@ -18,12 +18,23 @@ final class SpeechCapture: ObservableObject {
 
     private enum CaptureError: LocalizedError {
         case recognizerUnavailable
+        case audioInputUnavailable
 
         var errorDescription: String? {
             switch self {
             case .recognizerUnavailable:
                 return "语音识别暂时不可用，请稍后重试"
+            case .audioInputUnavailable:
+                return SpeechCaptureErrorRules.audioInputUnavailableMessage(isSimulator: Self.isSimulator)
             }
+        }
+
+        private static var isSimulator: Bool {
+#if targetEnvironment(simulator)
+            true
+#else
+            false
+#endif
         }
     }
 
@@ -41,9 +52,17 @@ final class SpeechCapture: ObservableObject {
                 self.error = "语音识别权限未开启，请在系统设置中允许"
                 return
             }
+            let microphoneAllowed = await withCheckedContinuation { continuation in
+                AVAudioApplication.requestRecordPermission { continuation.resume(returning: $0) }
+            }
+            guard !Task.isCancelled else { return }
+            guard microphoneAllowed else {
+                self.error = "麦克风权限未开启，请在系统设置中允许"
+                return
+            }
             do { try self.start(onText: onText) }
             catch {
-                let message = error.localizedDescription
+                let message = self.userFacingMessage(for: error)
                 self.stop()
                 self.error = message
             }
@@ -80,13 +99,18 @@ final class SpeechCapture: ObservableObject {
         audioSessionActive = true
         let request = SFSpeechAudioBufferRecognitionRequest()
         request.shouldReportPartialResults = true
-        // 优先端上识别；设备不支持时退回默认（云端）识别。
+        // Simulator 可能报告支持端上识别，却没有可用模型；真机继续优先端上。
+#if !targetEnvironment(simulator)
         if recognizer.supportsOnDeviceRecognition {
             request.requiresOnDeviceRecognition = true
         }
+#endif
         self.request = request
         let node = engine.inputNode
         let format = node.outputFormat(forBus: 0)
+        guard format.sampleRate > 0, format.channelCount > 0 else {
+            throw CaptureError.audioInputUnavailable
+        }
         node.installTap(onBus: 0, bufferSize: 1_024, format: format) { buffer, _ in request.append(buffer) }
         tapInstalled = true
         engine.prepare()
@@ -96,13 +120,43 @@ final class SpeechCapture: ObservableObject {
             Task { @MainActor in
                 if let text = result?.bestTranscription.formattedString { onText(text) }
                 if let error {
-                    self?.error = error.localizedDescription
+                    self?.error = self?.userFacingMessage(for: error)
                     self?.stop()
                 } else if result?.isFinal == true {
                     self?.stop()
                 }
             }
         }
+    }
+
+    private func userFacingMessage(for error: Error) -> String {
+#if targetEnvironment(simulator)
+        let isSimulator = true
+#else
+        let isSimulator = false
+#endif
+        return SpeechCaptureErrorRules.message(for: error.localizedDescription, isSimulator: isSimulator)
+    }
+}
+
+enum SpeechCaptureErrorRules {
+    static func audioInputUnavailableMessage(isSimulator: Bool) -> String {
+        if isSimulator {
+            return "模拟器没有可用的麦克风输入。请在 Simulator 的 I/O → Audio Input 中选择 Mac 麦克风，或使用真机测试。"
+        }
+        return "当前没有可用的麦克风输入，请检查麦克风权限后重试"
+    }
+
+    static func message(for systemMessage: String, isSimulator: Bool) -> String {
+        let normalized = systemMessage.lowercased()
+        if normalized.contains("failed to initialize recognizer")
+            || normalized.contains("audio input")
+            || normalized.contains("input format") {
+            return isSimulator
+                ? "模拟器无法启动语音识别。请在 Simulator 的 I/O → Audio Input 中选择 Mac 麦克风，或使用真机测试。"
+                : "语音识别启动失败，请检查麦克风和网络后重试"
+        }
+        return systemMessage.isEmpty ? "语音识别暂时不可用，请稍后重试" : systemMessage
     }
 }
 
@@ -117,7 +171,7 @@ struct VoiceInput: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
-            HStack(alignment: .bottom, spacing: 8) {
+            HStack(alignment: .center, spacing: 8) {
                 // 识别期间保持可手动编辑：语音结果追加到已有文本之后。
                 TextField(placeholder, text: $text, axis: axis)
                     .lineLimit(axis == .vertical ? 1...5 : 1...1)

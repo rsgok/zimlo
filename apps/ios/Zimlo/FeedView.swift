@@ -60,16 +60,28 @@ struct NativeFeedView: View {
                 model.markSeen(post.id)
             }
             .overlay(alignment: .top) {
-                if showNewContent {
-                    Text("有新内容")
-                        .font(ZFont.caption.weight(.bold))
-                        .foregroundStyle(ZColor.ink)
-                        .padding(.horizontal, 14).frame(minHeight: 36)
-                        .background(.ultraThinMaterial)
-                        .clipShape(Capsule())
-                        .padding(.top, 12)
-                        .transition(.move(edge: .top).combined(with: .opacity))
+                // ScrollView 会让相邻页面绘制到系统状态栏下面。分页位置本身是
+                // 正确的，但上一张卡底部的“历史内容”会穿透透明状态栏，看起来
+                // 像没有吸附到位。用当前容器的真实安全区遮住这段非交互区域。
+                ZStack(alignment: .top) {
+                    ZColor.canvas
+                        .frame(height: geometry.safeAreaInsets.top)
+                        .frame(maxWidth: .infinity)
+                        .offset(y: -geometry.safeAreaInsets.top)
+                    if showNewContent {
+                        Text("有新内容")
+                            .font(ZFont.caption.weight(.bold))
+                            .foregroundStyle(ZColor.ink)
+                            .padding(.horizontal, 14).frame(minHeight: 36)
+                            .background(.ultraThinMaterial)
+                            .clipShape(Capsule())
+                            .padding(.top, 12)
+                            .transition(.move(edge: .top).combined(with: .opacity))
+                    }
                 }
+                .frame(maxWidth: .infinity, alignment: .top)
+                .allowsHitTesting(false)
+                .accessibilityHidden(true)
             }
         }
     }
@@ -242,13 +254,15 @@ private struct PostCard: View {
 
             Spacer(minLength: mediaContent == nil ? 22 : isImmersiveMedia ? 10 : 8)
 
-            HStack(spacing: 8) {
-                Text(historical ? "历史内容" : session == nil ? "新任务上下文" : "滑动查看任务")
-                Spacer()
+            if historical || session == nil {
+                HStack(spacing: 8) {
+                    Text(historical ? "历史内容" : "新任务上下文")
+                    Spacer()
+                }
+                .font(ZFont.footnote)
+                .foregroundStyle(ZColor.ink.opacity(0.72))
+                .padding(.vertical, 16)
             }
-            .font(ZFont.footnote)
-            .foregroundStyle(ZColor.ink.opacity(0.72))
-            .padding(.vertical, 16)
         }
         .padding(.horizontal, 20)
         .foregroundStyle(isImmersiveMedia ? Color.white : ZColor.ink)

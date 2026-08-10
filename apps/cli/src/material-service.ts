@@ -145,6 +145,35 @@ export class MaterialService {
     }
   }
 
+  /**
+   * Native macOS runs on the same machine as the Bridge, so it can hand a file
+   * directly to the loopback-only API. The bytes still pass through the same
+   * validation, digest check, private storage and snapshot publication as a
+   * paired-device upload; only the unnecessary transport encryption is skipped.
+   */
+  importLocal(material: Omit<Material, "status" | "error">, data: Buffer): Material {
+    const invalid = validateMaterial(material)
+      ?? validateMaterialContent(data, material)
+      ?? (createHash("sha256").update(data).digest("hex") === material.sha256
+        ? null
+        : "物料完整性校验失败。");
+    if (invalid) return this.fail(material, invalid);
+    try {
+      const finalPath = join(this.materialsPath, `${material.id}${safeExtension(material.name)}`);
+      const temporary = `${finalPath}.tmp`;
+      writeFileSync(temporary, data, { mode: 0o600 });
+      renameSync(temporary, finalPath);
+      chmodSync(finalPath, 0o600);
+      const stored = this.runtime.store.upsertMaterial({ ...material, status: "ready" }, finalPath);
+      this.runtime.send({ type: "material.updated", material: stored });
+      return stored;
+    } catch (error) {
+      const failed = this.fail(material, error instanceof Error ? error.message : String(error));
+      this.runtime.send({ type: "material.updated", material: failed });
+      return failed;
+    }
+  }
+
   paths(ids: string[]): string[] {
     return ids.flatMap((id) => {
       const material = this.runtime.store.getMaterial(id);

@@ -5,11 +5,12 @@ import Fastify, { type FastifyError, type FastifyInstance } from "fastify";
 import fastifyStatic from "@fastify/static";
 import fastifyWebsocket from "@fastify/websocket";
 import QRCode from "qrcode";
-import type { ClientCommand, ServerMessage } from "@zimlo/protocol";
+import { ClientCommandSchema, type ClientCommand, type Material, type ServerMessage } from "@zimlo/protocol";
 import { ActionBroker } from "./action-broker.js";
 import { ApiError, classifyIntegrationError, classifyLocalApiError, sendApiError } from "./api-error.js";
 import { CloudService } from "./cloud-service.js";
 import { codexPluginDeepLink, inspectCodexPlugin, installCodexPlugin } from "./codex-plugin.js";
+import { commandError } from "./command-error.js";
 import { DeviceManager, type PairingResult } from "./device-manager.js";
 import { applyFeedDismissSet } from "./feed-dismiss.js";
 import { inspectIntegrationStatuses, installCliIntegrations } from "./integration-status.js";
@@ -32,6 +33,14 @@ interface PairBody {
 interface LocalIntegrationBody {
   target?: "all" | "codex_gui" | "cli";
 }
+
+interface CommandConnection {
+  readonly deviceId: string | null;
+  readonly isLocalAdmin: boolean;
+  send(message: ServerMessage): void;
+}
+
+const MATERIAL_KINDS = new Set<Material["kind"]>(["image", "video", "pdf", "document"]);
 
 export interface BridgeOptions {
   port: number;
@@ -173,6 +182,73 @@ export class BridgeServer {
         return sendApiError(reply, classifyLocalApiError(error, "bootstrap_unavailable", "本机管理设备初始化失败。"));
       }
     });
+    app.get("/api/local/snapshot", async (request, reply) => {
+      if (!isLoopbackAddress(request.ip)) return reply.code(403).send(loopbackOnly());
+      const device = this.devices.localAdmin();
+      return this.runtime.snapshot(device.id);
+    });
+    app.get("/api/local/sessions/:sessionId/events", async (request, reply) => {
+      if (!isLoopbackAddress(request.ip)) return reply.code(403).send(loopbackOnly());
+      const sessionId = (request.params as { sessionId?: string }).sessionId ?? "";
+      if (!this.runtime.store.getSession(sessionId)) {
+        return reply.code(404).send({ code: "session_not_found", message: "这个任务已不存在。", recoverable: false });
+      }
+      return { sessionId, events: this.runtime.store.listEvents(sessionId) };
+    });
+    app.post("/api/local/commands", async (request, reply) => {
+      if (!isLoopbackAddress(request.ip)) return reply.code(403).send(loopbackOnly());
+      const parsed = ClientCommandSchema.safeParse(request.body);
+      if (!parsed.success) {
+        return reply.code(400).send({
+          code: "invalid_command",
+          message: "操作参数不受支持。",
+          recoverable: false,
+        });
+      }
+      const device = this.devices.localAdmin();
+      const messages: ServerMessage[] = [];
+      const connection: CommandConnection = {
+        deviceId: device.id,
+        isLocalAdmin: true,
+        send: (message) => messages.push(message),
+      };
+      await this.handleCommand(connection, parsed.data);
+      return { ok: true, messages, snapshot: this.runtime.snapshot(device.id) };
+    });
+    app.put("/api/local/materials/:materialId", async (request, reply) => {
+      if (!isLoopbackAddress(request.ip)) return reply.code(403).send(loopbackOnly());
+      const materialId = (request.params as { materialId?: string }).materialId ?? "";
+      if (!Buffer.isBuffer(request.body)) {
+        return reply.code(400).send({ code: "material_body_required", message: "文件内容为空。", recoverable: false });
+      }
+      const header = (name: string): string => String(request.headers[name] ?? "");
+      const kindHeader = header("x-zimlo-kind");
+      if (!MATERIAL_KINDS.has(kindHeader as Material["kind"])) {
+        return reply.code(400).send({ code: "material_kind_invalid", message: "文件类型不受支持。", recoverable: false });
+      }
+      const kind = kindHeader as Material["kind"];
+      const encodedName = header("x-zimlo-name");
+      let name = encodedName;
+      try { name = decodeURIComponent(encodedName); } catch { /* validated below */ }
+      const material = this.materials.importLocal({
+        id: materialId,
+        kind,
+        name,
+        mimeType: header("x-zimlo-mime"),
+        sizeBytes: request.body.length,
+        sha256: header("x-zimlo-sha256"),
+        origin: "user",
+        createdAt: new Date().toISOString(),
+      }, request.body);
+      if (material.status === "failed") {
+        return reply.code(400).send({
+          code: "material_invalid",
+          message: material.error ?? "文件无法导入。",
+          recoverable: false,
+        });
+      }
+      return reply.code(201).send(material);
+    });
     app.get("/api/local/status", async (request, reply) => {
       if (!isLoopbackAddress(request.ip)) return reply.code(403).send(loopbackOnly());
       try {
@@ -311,7 +387,7 @@ export class BridgeServer {
     for (const connection of this.connections) connection.send(message);
   }
 
-  private async handleCommand(connection: SecureSocket, command: ClientCommand): Promise<void> {
+  private async handleCommand(connection: CommandConnection, command: ClientCommand): Promise<void> {
     const deviceId = connection.deviceId;
     if (!deviceId) return;
     switch (command.type) {
@@ -475,7 +551,7 @@ export class BridgeServer {
       case "task.command.retry": {
         const retried = this.taskCommands.retry(command.commandId);
         if (retried) connection.send({ type: "task.command.updated", command: retried });
-        else connection.send({ type: "error", code: "task_command_not_found", message: "这条任务指令已不存在。" });
+        else connection.send(commandError(command, "task_command_not_found", "这条任务指令已不存在。"));
         return;
       }
       case "task.command.cancel": {
@@ -546,13 +622,13 @@ export class BridgeServer {
         return;
       }
       case "task.pin": {
-        if (!this.runtime.store.getSession(command.sessionId)) return connection.send({ type: "error", code: "session_not_found", message: "这个任务已不存在。" });
+        if (!this.runtime.store.getSession(command.sessionId)) return connection.send(commandError(command, "session_not_found", "这个任务已不存在。"));
         const result = setTaskPinnedIdempotent(this.runtime.store, deviceId, command.sessionId, command.pinned, command.idempotencyKey);
         connection.send({ type: "task.preference.updated", preference: result.preference });
         return;
       }
       case "task.archive": {
-        if (!this.runtime.store.getSession(command.sessionId)) return connection.send({ type: "error", code: "session_not_found", message: "这个任务已不存在。" });
+        if (!this.runtime.store.getSession(command.sessionId)) return connection.send(commandError(command, "session_not_found", "这个任务已不存在。"));
         const result = setTaskArchivedIdempotent(this.runtime.store, deviceId, command.sessionId, command.archived, command.idempotencyKey);
         connection.send({ type: "task.preference.updated", preference: result.preference });
         return;
@@ -567,10 +643,10 @@ export class BridgeServer {
       case "trust.policy.update": {
         const device = this.runtime.store.getDevice(deviceId);
         if (!connection.isLocalAdmin && !device?.canManageTrust) {
-          return connection.send({ type: "error", code: "forbidden", message: "这台设备没有修改自动化策略的权限。" });
+          return connection.send(commandError(command, "forbidden", "这台设备没有修改自动化策略的权限。"));
         }
         if (!this.runtime.store.getProject(command.projectId)) {
-          return connection.send({ type: "error", code: "project_not_found", message: "这个 Project 已不存在。" });
+          return connection.send(commandError(command, "project_not_found", "这个 Project 已不存在。"));
         }
         const policy = this.runtime.store.updateTrustPolicy(command.projectId, command.preset, deviceId);
         this.runtime.store.saveIdempotentResult(`${deviceId}:${command.idempotencyKey}`, policy.projectId, { ok: true });
@@ -596,11 +672,11 @@ export class BridgeServer {
             )
           : command.endpoint ?? null;
         if (!endpoint) {
-          return connection.send({
-            type: "error",
-            code: "notification_cloud_unavailable",
-            message: "Cloudflare 通知服务尚未连接，设备 token 已保留在手机上并会在重连后重试。",
-          });
+          return connection.send(commandError(
+            command,
+            "notification_cloud_unavailable",
+            "Cloudflare 通知服务尚未连接，设备 token 已保留在手机上，请在服务恢复后重试。",
+          ));
         }
         const registration = this.runtime.store.upsertPushDevice(deviceId, endpoint, command.publicKey);
         this.runtime.store.saveIdempotentResult(`${deviceId}:${command.idempotencyKey}`, deviceId, { ok: true });
@@ -620,7 +696,7 @@ export class BridgeServer {
           bio: command.bio,
           defaultProvider: command.defaultProvider,
         });
-        if (!project) return connection.send({ type: "error", code: "project_not_found", message: "这个 Project 已不存在。" });
+        if (!project) return connection.send(commandError(command, "project_not_found", "这个 Project 已不存在。"));
         // Project Agent identity is shared by every task Timeline for this
         // project, so every connected device must receive the new profile.
         this.broadcast({ type: "project.updated", project });

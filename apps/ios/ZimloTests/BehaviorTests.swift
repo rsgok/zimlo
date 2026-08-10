@@ -94,6 +94,139 @@ final class PairingLinkRulesTests: XCTestCase {
     }
 }
 
+final class TaskHeaderRulesTests: XCTestCase {
+    func testNavigationTitleUsesFirstConciseClauseWhileTaskInputStaysComplete() {
+        let input = "下一周我要对这个产品做宣发，包括在小红书上和 X 上，所以需要准备完整宣发材料"
+        XCTAssertEqual(
+            TaskHeaderRules.navigationTitle(sessionTitle: input, taskInput: input),
+            "下一周我要对这个产品做宣发"
+        )
+    }
+
+    func testNavigationTitleKeepsAConciseAuthoredTitle() {
+        XCTAssertEqual(
+            TaskHeaderRules.navigationTitle(sessionTitle: "产品宣发准备", taskInput: "准备一整套跨平台产品宣发材料"),
+            "产品宣发准备"
+        )
+    }
+
+    func testRequiredActionOnlyAppearsForRealUserWork() {
+        XCTAssertNil(TaskHeaderRules.requiredAction(currentState: "idle", pendingActionTitle: nil, hasLatestConclusion: true))
+        XCTAssertNil(TaskHeaderRules.requiredAction(currentState: "running", pendingActionTitle: nil, hasLatestConclusion: true))
+        XCTAssertEqual(
+            TaskHeaderRules.requiredAction(currentState: "user_review", pendingActionTitle: nil, hasLatestConclusion: true),
+            "审阅最新结论"
+        )
+        XCTAssertEqual(
+            TaskHeaderRules.requiredAction(currentState: "waiting_input", pendingActionTitle: nil, hasLatestConclusion: false),
+            "回复 Agent，让任务继续"
+        )
+        XCTAssertEqual(
+            TaskHeaderRules.requiredAction(currentState: "running", pendingActionTitle: "允许执行测试", hasLatestConclusion: true),
+            "允许执行测试"
+        )
+    }
+
+    func testStateLabelsNeverExposeProtocolValues() {
+        XCTAssertEqual(TaskHeaderRules.stateLabel("idle"), "可继续")
+        XCTAssertEqual(TaskHeaderRules.stateLabel("user_review"), "待你审阅")
+    }
+}
+
+final class CoreActionMotionRulesTests: XCTestCase {
+    func testComposerAndOfflineStatesTakePriorityOverAmbientMotion() {
+        XCTAssertEqual(
+            state(connected: true, composing: true, taskStates: ["running"]),
+            .composing
+        )
+        XCTAssertEqual(
+            state(connected: false, taskStates: ["running"]),
+            .offline
+        )
+    }
+
+    func testAttentionStatesOverrideRunningWork() {
+        XCTAssertEqual(
+            state(connected: true, pendingActionCount: 1, taskStates: ["running"]),
+            .attention
+        )
+        XCTAssertEqual(
+            state(connected: true, taskStates: ["user_review"]),
+            .attention
+        )
+        XCTAssertEqual(
+            state(connected: true, commandStates: ["failed"]),
+            .attention
+        )
+    }
+
+    func testActiveAndIdleStatesReflectRealWork() {
+        XCTAssertEqual(state(connected: true, taskStates: ["running"]), .active)
+        XCTAssertEqual(state(connected: true, commandStates: ["queued"]), .active)
+        XCTAssertEqual(state(connected: true, pendingOutboxCount: 1), .active)
+        XCTAssertEqual(state(connected: true), .idle)
+    }
+
+    private func state(
+        connected: Bool,
+        composing: Bool = false,
+        pendingActionCount: Int = 0,
+        failedOutboxCount: Int = 0,
+        pendingOutboxCount: Int = 0,
+        taskStates: [String] = [],
+        commandStates: [String] = []
+    ) -> CoreActionMotionState {
+        CoreActionMotionRules.state(
+            connected: connected,
+            isComposerPresented: composing,
+            pendingActionCount: pendingActionCount,
+            failedOutboxCount: failedOutboxCount,
+            pendingOutboxCount: pendingOutboxCount,
+            taskStates: taskStates,
+            commandStates: commandStates
+        )
+    }
+}
+
+final class OutboxFeedbackRulesTests: XCTestCase {
+    func testBackgroundReadAndSettingsSyncStaySilent() {
+        for type in ["feed.seen", "task.timeline.seen", "notification.device.register", "trust.policy.update", "material.register"] {
+            XCTAssertNil(OutboxFeedbackRules.queuedNotice(commandType: type, sent: true))
+            XCTAssertNil(OutboxFeedbackRules.duplicateNotice(commandType: type))
+        }
+    }
+
+    func testBackgroundSyncDoesNotEnterGlobalPendingStatus() {
+        for type in ["feed.seen", "task.timeline.seen", "feed.dismiss.set", "notification.device.register", "material.register"] {
+            XCTAssertFalse(OutboxFeedbackRules.showsPendingStatus(commandType: type))
+        }
+        XCTAssertTrue(OutboxFeedbackRules.showsPendingStatus(commandType: "task.create"))
+        XCTAssertTrue(OutboxFeedbackRules.showsPendingStatus(commandType: "trust.policy.update"))
+    }
+
+    func testUserAuthoredCommandsUseHumanFacingCopy() {
+        XCTAssertEqual(OutboxFeedbackRules.queuedNotice(commandType: "task.create", sent: true), "任务已发送，等待 Mac 接收")
+        XCTAssertEqual(OutboxFeedbackRules.queuedNotice(commandType: "task.follow_up", sent: true), "回复已发送，等待 Mac 接收")
+        XCTAssertEqual(OutboxFeedbackRules.queuedNotice(commandType: "action.decide", sent: true), "决定已发送，等待 Mac 确认")
+        XCTAssertEqual(OutboxFeedbackRules.queuedNotice(commandType: "task.create", sent: false), "已保存在手机，连接 Mac 后自动发送")
+    }
+}
+
+final class SpeechCaptureErrorRulesTests: XCTestCase {
+    func testSimulatorRecognizerFailureExplainsHowToRestoreAudioInput() {
+        let message = SpeechCaptureErrorRules.message(for: "Failed to initialize recognizer", isSimulator: true)
+        XCTAssertTrue(message.contains("Audio Input"))
+        XCTAssertTrue(message.contains("真机"))
+    }
+
+    func testUnrelatedRecognizerErrorIsPreserved() {
+        XCTAssertEqual(
+            SpeechCaptureErrorRules.message(for: "No speech was detected", isSimulator: true),
+            "No speech was detected"
+        )
+    }
+}
+
 final class SnapshotCacheMigrationTests: XCTestCase {
     func testEnvelopeRoundTrip() throws {
         let envelope = CachedSnapshot(snapshot: .empty, savedAt: Date(timeIntervalSince1970: 1_700_000_000))
@@ -231,6 +364,17 @@ final class OutboxFlowTests: XCTestCase {
         XCTAssertEqual(model.notice, "已移出 Feed", "旧计时任务不能清掉同文案的新提示")
     }
 
+    func testFeedReadReceiptQueuesSilentlyWithoutGlobalPendingStatus() {
+        let model = makeModel()
+
+        model.markSeen("p1")
+
+        XCTAssertEqual(model.outboxEntries.map(\.command.type), ["feed.seen"])
+        XCTAssertEqual(model.pendingOutboxCount, 0)
+        XCTAssertEqual(model.waitingOutboxCount, 0)
+        XCTAssertNil(model.notice)
+    }
+
     func testCancelQueuedFollowUp() {
         let model = makeModel()
         XCTAssertTrue(model.followUp(sessionId: "s1", text: "继续"))
@@ -281,6 +425,73 @@ final class OutboxFlowTests: XCTestCase {
         let entries = try? JSONDecoder().decode([OutboxEntry].self, from: stored ?? Data())
         XCTAssertEqual(entries?.count, 1)
         XCTAssertEqual(entries?.first?.semanticKey, "task.follow_up:s1:继续跑测试")
+    }
+
+    func testCorrelatedServerErrorMarksOnlyTheRejectedEntry() throws {
+        let model = makeModel()
+        model.updateTrustPolicy(projectId: "project-missing-1", preset: "safe_automation")
+        model.updateTrustPolicy(projectId: "project-missing-2", preset: "ask")
+        let rejected = try XCTUnwrap(model.outboxEntries.first {
+            $0.command.values["projectId"] == .string("project-missing-1")
+        })
+
+        XCTAssertTrue(model.markOutboxFailed(
+            code: "project_not_found",
+            error: "这个 Project 已不存在。",
+            idempotencyKey: rejected.command.idempotencyKey,
+            hostId: "host-1"
+        ))
+        XCTAssertEqual(model.failedOutboxCount, 1)
+        XCTAssertEqual(model.waitingOutboxCount, 1)
+        XCTAssertEqual(model.outboxEntries.first { $0.id == rejected.id }?.lastError, "这个 Project 已不存在。")
+        XCTAssertNil(model.outboxEntries.first {
+            $0.command.values["projectId"] == .string("project-missing-2")
+        }?.lastError)
+    }
+
+    func testLegacyProjectNotFoundSafelyMatchesOneStaleEntry() {
+        let model = makeModel()
+        model.updateTrustPolicy(projectId: "project-legacy", preset: "safe_automation")
+
+        XCTAssertTrue(model.markOutboxFailed(
+            code: "project_not_found",
+            error: "这个 Project 已不存在。",
+            idempotencyKey: nil,
+            hostId: "host-1"
+        ))
+        XCTAssertEqual(model.failedOutboxCount, 1)
+        XCTAssertEqual(model.waitingOutboxCount, 0)
+    }
+
+    func testLegacyProjectNotFoundDoesNotGuessBetweenMultipleEntries() {
+        let model = makeModel()
+        model.updateTrustPolicy(projectId: "project-legacy-1", preset: "safe_automation")
+        model.updateTrustPolicy(projectId: "project-legacy-2", preset: "ask")
+
+        XCTAssertFalse(model.markOutboxFailed(
+            code: "project_not_found",
+            error: "这个 Project 已不存在。",
+            idempotencyKey: nil,
+            hostId: "host-1"
+        ))
+        XCTAssertEqual(model.failedOutboxCount, 0)
+        XCTAssertEqual(model.waitingOutboxCount, 2)
+    }
+
+    func testManualRetryReturnsFailedEntryToWaiting() throws {
+        let model = makeModel()
+        model.updateTrustPolicy(projectId: "project-missing", preset: "safe_automation")
+        let entry = try XCTUnwrap(model.outboxEntries.first)
+        XCTAssertTrue(model.markOutboxFailed(
+            code: "project_not_found",
+            error: "这个 Project 已不存在。",
+            idempotencyKey: entry.command.idempotencyKey,
+            hostId: "host-1"
+        ))
+
+        model.retryOutboxEntry(entry)
+        XCTAssertEqual(model.failedOutboxCount, 0)
+        XCTAssertEqual(model.waitingOutboxCount, 1)
     }
 }
 
@@ -451,8 +662,8 @@ final class TaskDirectoryProjectionTests: XCTestCase {
         XCTAssertEqual(collapsed.managedSessions.map(\.id), ["s1", "process-old"])
         XCTAssertEqual(collapsed.runningCount, 2)
         XCTAssertEqual(collapsed.posts.map(\.id), (0..<10).reversed().map { "p\($0)" })
-        XCTAssertEqual(collapsed.visiblePosts.count, 8)
-        XCTAssertEqual(collapsed.remainingPostCount, 2)
+        XCTAssertEqual(collapsed.visiblePosts.count, 3)
+        XCTAssertEqual(collapsed.remainingPostCount, 7)
         XCTAssertEqual(collapsed.workspacePaths, ["/tmp/p1", "/tmp/p1-secondary"])
 
         let expanded = AgentDetailProjection(snapshot: snapshot, project: agentProject, showAllActivity: true)

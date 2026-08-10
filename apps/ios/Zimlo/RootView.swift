@@ -48,6 +48,7 @@ struct RootView: View {
                         connectionLabel: connectionLabel,
                         onBack: clearDetail,
                         status: detailStatus,
+                        statusColor: detailStatusColor,
                         onRetry: { model.bridge.retryNow() }
                     )
                 }
@@ -182,23 +183,28 @@ struct RootView: View {
             } label: {
                 ViewThatFits(in: .horizontal) {
                     HStack(spacing: 8) {
-                        Circle().fill(model.bridge.connected ? ZColor.sage : Color.orange).frame(width: 6, height: 6)
+                        Circle().fill(outboxStatusColor).frame(width: 6, height: 6)
                         TimelineView(.periodic(from: .now, by: 30)) { _ in
                             Text(statusLine)
                         }
-                        if model.pendingOutboxCount > 0 { Text("\(model.pendingOutboxCount) 条").bold() }
+                        if model.failedOutboxCount > 0 {
+                            Text("\(model.failedOutboxCount) 条失败").bold()
+                        } else if model.waitingOutboxCount > 0 {
+                            Text("\(model.waitingOutboxCount) 条").bold()
+                        }
                         if !model.bridge.connected { Text("查看重连步骤").foregroundStyle(ZColor.muted) }
                     }
                     VStack(alignment: .leading, spacing: 4) {
                         HStack(spacing: 8) {
-                            Circle().fill(model.bridge.connected ? ZColor.sage : Color.orange).frame(width: 6, height: 6)
+                            Circle().fill(outboxStatusColor).frame(width: 6, height: 6)
                             TimelineView(.periodic(from: .now, by: 30)) { _ in
                                 Text(statusLine)
                                     .fixedSize(horizontal: false, vertical: true)
                             }
                         }
                         HStack(spacing: 8) {
-                            if model.pendingOutboxCount > 0 { Text("\(model.pendingOutboxCount) 条待确认").bold() }
+                            if model.failedOutboxCount > 0 { Text("\(model.failedOutboxCount) 条同步失败").bold() }
+                            if model.waitingOutboxCount > 0 { Text("\(model.waitingOutboxCount) 条待确认").bold() }
                             if !model.bridge.connected { Text("查看重连步骤").foregroundStyle(ZColor.muted) }
                         }
                     }
@@ -244,13 +250,23 @@ struct RootView: View {
     }
 
     private var statusLine: String {
+        if model.failedOutboxCount > 0 {
+            return model.waitingOutboxCount > 0
+                ? "部分手机操作同步失败"
+                : "手机操作同步失败，点按处理"
+        }
         if model.bridge.connected {
-            return model.pendingOutboxCount > 0 ? "手机操作正在等待 Mac 确认" : "当前离线，操作已保存在手机"
+            return model.waitingOutboxCount > 0 ? "手机操作正在等待 Mac 确认" : "已与 Mac 同步"
         }
         if let savedAt = model.snapshotSavedAt {
             return "当前离线 · 数据更新于 \(relative(savedAt))"
         }
         return "当前离线，操作已保存在手机"
+    }
+
+    private var outboxStatusColor: Color {
+        if model.failedOutboxCount > 0 { return ZColor.coralText }
+        return model.bridge.connected ? ZColor.sage : Color.orange
     }
 
     private func userFacingBridgeError(_ error: String) -> String {
@@ -272,8 +288,14 @@ struct RootView: View {
     }
 
     private var topBarTitle: String {
-        if let session = model.selectedSession { return session.title }
-        if let project = model.selectedProject { return project.agentProfile.displayName }
+        if let session = model.selectedSession {
+            let taskInput = TaskDetailProjection.originalInput(
+                sessionTitle: session.title,
+                sessionEvents: model.events[session.id] ?? []
+            )
+            return TaskHeaderRules.navigationTitle(sessionTitle: session.title, taskInput: taskInput)
+        }
+        if model.selectedProject != nil { return "Agent" }
         switch model.selectedTab {
         case .feed: return "Feed"
         case .tasks: return "任务"
@@ -284,10 +306,24 @@ struct RootView: View {
     }
 
     private var detailStatus: String? {
-        if let session = model.selectedSession {
-            return ["running": "进行中", "waiting": "等待中", "failed": "失败", "completed": "已完成"][session.status] ?? session.status
-        }
-        return model.selectedProject == nil ? nil : "Agent"
+        if selectedSessionState != nil { return TaskHeaderRules.stateLabel(selectedSessionState ?? "") }
+        return nil
+    }
+
+    private var selectedSessionState: String? {
+        guard let session = model.selectedSession else { return nil }
+        guard !session.correlationUncertain else { return session.status }
+        return model.snapshot.tasks.lazy
+            .filter { $0.sessionId == session.id }
+            .max { $0.updatedAt < $1.updatedAt }?
+            .state ?? session.status
+    }
+
+    private var detailStatusColor: Color? {
+        guard let state = selectedSessionState else { return nil }
+        if ["failed", "waiting", "waiting_input", "user_review"].contains(state) { return ZColor.coralText }
+        if ["running", "reviewing"].contains(state) { return ZColor.sageText }
+        return ZColor.secondaryInk
     }
 
     private var connectionLabel: String? {
@@ -312,34 +348,8 @@ private struct BottomBar: View {
         HStack(spacing: 0) {
             tabButton(.feed, "rectangle.stack.fill", "Feed")
             tabButton(.tasks, "checklist", "Tasks")
-            Button {
-                if let session = model.selectedSession {
-                    model.conversationSessionId = session.id
-                    model.newTaskProjectId = projectID(for: session)
-                } else if model.selectedProject != nil {
-                    model.conversationSessionId = nil
-                    model.newTaskProjectId = model.selectedProject?.id
-                } else if model.selectedTab == .feed,
-                          let id = model.activeFeedSessionId,
-                          let session = model.snapshot.sessions.first(where: { $0.id == id }) {
-                    model.conversationSessionId = session.id
-                    model.newTaskProjectId = model.activeFeedProjectId ?? projectID(for: session)
-                } else {
-                    model.conversationSessionId = nil
-                    model.newTaskProjectId = nil
-                }
-                model.showingNewTask = true
-            } label: {
-                Image(systemName: "bubble.left.and.bubble.right.fill")
-                    .font(.system(size: dynamicTypeSize.isAccessibilitySize ? 22 : 20, weight: .black))
-                    .frame(width: 48, height: 44)
-                    .foregroundStyle(ZColor.onAccent)
-                    .background(ZColor.acid)
-                    .clipShape(RoundedRectangle(cornerRadius: 13, style: .continuous))
-            }
+            CoreActionButton(state: coreActionState) { openComposer() }
             .frame(maxWidth: .infinity, minHeight: 44)
-            .foregroundStyle(ZColor.ink.opacity(0.66))
-            .accessibilityLabel("对话")
             tabButton(.agents, "person.2.fill", "Agents")
             Button {
                 clearDetail()
@@ -392,6 +402,38 @@ private struct BottomBar: View {
         model.selectedTab == .settings && model.selectedSession == nil && model.selectedProject == nil
     }
 
+    private var coreActionState: CoreActionMotionState {
+        CoreActionMotionRules.state(
+            connected: model.bridge.connected,
+            isComposerPresented: model.showingNewTask,
+            pendingActionCount: model.snapshot.actions.lazy.filter { $0.state == "pending" }.count,
+            failedOutboxCount: model.failedOutboxCount,
+            pendingOutboxCount: model.waitingOutboxCount,
+            taskStates: model.snapshot.tasks.map(\.state),
+            commandStates: model.snapshot.commands.map(\.state)
+        )
+    }
+
+    private func openComposer() {
+        Haptics.selection()
+        if let session = model.selectedSession {
+            model.conversationSessionId = session.id
+            model.newTaskProjectId = projectID(for: session)
+        } else if model.selectedProject != nil {
+            model.conversationSessionId = nil
+            model.newTaskProjectId = model.selectedProject?.id
+        } else if model.selectedTab == .feed,
+                  let id = model.activeFeedSessionId,
+                  let session = model.snapshot.sessions.first(where: { $0.id == id }) {
+            model.conversationSessionId = session.id
+            model.newTaskProjectId = model.activeFeedProjectId ?? projectID(for: session)
+        } else {
+            model.conversationSessionId = nil
+            model.newTaskProjectId = nil
+        }
+        model.showingNewTask = true
+    }
+
     private func projectID(for session: AgentSession) -> String? {
         if let projectID = session.projectId { return projectID }
         guard let cwd = session.cwd else { return nil }
@@ -409,3 +451,155 @@ private struct BottomBar: View {
         model.selectedProject = nil
     }
 }
+
+private struct CoreActionButton: View {
+    let state: CoreActionMotionState
+    let action: () -> Void
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    var body: some View {
+        Button(action: action) {
+            OrbitNodeMark(state: state)
+                .frame(width: 60, height: 60)
+                .contentShape(Rectangle())
+                .accessibilityHidden(true)
+        }
+        .buttonStyle(CoreActionButtonStyle(reduceMotion: reduceMotion))
+        .accessibilityLabel(Text("新任务"))
+        .accessibilityValue(Text(state.accessibilityValue))
+        .accessibilityHint(Text("打开任务输入框"))
+    }
+}
+
+private struct CoreActionButtonStyle: ButtonStyle {
+    let reduceMotion: Bool
+
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .scaleEffect(configuration.isPressed && !reduceMotion ? 0.90 : 1)
+            .animation(
+                reduceMotion ? nil : .spring(response: 0.24, dampingFraction: 0.68),
+                value: configuration.isPressed
+            )
+    }
+}
+
+private struct OrbitNodeMark: View {
+    let state: CoreActionMotionState
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.scenePhase) private var scenePhase
+
+    var body: some View {
+        TimelineView(.animation(
+            minimumInterval: 1.0 / 24.0,
+            paused: reduceMotion || scenePhase != .active || !state.animates
+        )) { context in
+            mark(at: reduceMotion ? 0 : context.date.timeIntervalSinceReferenceDate)
+        }
+    }
+
+    private func mark(at time: TimeInterval) -> some View {
+        let values = motionValues(at: time)
+        let tone = state == .attention ? ZColor.coralText : state == .offline ? ZColor.muted : ZColor.sageText
+        return ZStack {
+            Circle()
+                .fill(ZColor.raised)
+                .overlay(Circle().stroke(ZColor.line, lineWidth: 1))
+                .frame(width: 42, height: 42)
+                .scaleEffect(values.nodeScale)
+
+            OrbitArc()
+                .stroke(tone.opacity(values.arcOpacity), style: StrokeStyle(lineWidth: 3.5, lineCap: .round))
+                .frame(width: 52, height: 52)
+                .rotationEffect(.degrees(values.rotation))
+
+            satellite(tone: tone, values: values)
+
+            Image(systemName: "plus")
+                .font(.system(size: 19, weight: .bold))
+                .foregroundStyle(state == .offline ? ZColor.muted : ZColor.ink)
+        }
+        .frame(width: 60, height: 60)
+    }
+
+    private func satellite(tone: Color, values: MotionValues) -> some View {
+        let angle = (58 + values.rotation) * Double.pi / 180
+        let radius = 26.0
+        return Circle()
+            .fill(tone)
+            .frame(width: 6, height: 6)
+            .scaleEffect(values.satelliteScale)
+            .offset(x: cos(angle) * radius, y: sin(angle) * radius)
+    }
+
+    private func motionValues(at time: TimeInterval) -> MotionValues {
+        let idleWave = (sin(time * 2 * .pi / 4.2) + 1) / 2
+        let attentionWave = (sin(time * 2 * .pi / 1.8) + 1) / 2
+        switch state {
+        case .idle:
+            return MotionValues(
+                rotation: 0, nodeScale: 0.985 + idleWave * 0.025,
+                arcOpacity: 0.68 + idleWave * 0.24,
+                satelliteScale: 0.88 + idleWave * 0.16
+            )
+        case .active:
+            return MotionValues(
+                rotation: time.truncatingRemainder(dividingBy: 8) / 8 * 360,
+                nodeScale: 1, arcOpacity: 0.94, satelliteScale: 1
+            )
+        case .attention:
+            return MotionValues(
+                rotation: sin(time * 2 * .pi / 3.2) * 5,
+                nodeScale: 1, arcOpacity: 0.88 + attentionWave * 0.12,
+                satelliteScale: 0.82 + attentionWave * 0.42
+            )
+        case .offline:
+            return MotionValues(
+                rotation: 0, nodeScale: 1, arcOpacity: 0.42,
+                satelliteScale: 0.86
+            )
+        case .composing:
+            return MotionValues(
+                rotation: 16, nodeScale: 0.94, arcOpacity: 1,
+                satelliteScale: 1
+            )
+        }
+    }
+
+    private struct MotionValues {
+        let rotation: Double
+        let nodeScale: Double
+        let arcOpacity: Double
+        let satelliteScale: Double
+    }
+}
+
+private struct OrbitArc: Shape {
+    func path(in rect: CGRect) -> Path {
+        var path = Path()
+        path.addArc(
+            center: CGPoint(x: rect.midX, y: rect.midY),
+            radius: min(rect.width, rect.height) / 2,
+            startAngle: .degrees(-92),
+            endAngle: .degrees(58),
+            clockwise: false
+        )
+        return path
+    }
+}
+
+#if DEBUG
+#Preview("轨道节点状态") {
+    HStack(spacing: 18) {
+        ForEach(CoreActionMotionState.allCases, id: \.self) { state in
+            VStack(spacing: 4) {
+                OrbitNodeMark(state: state).frame(width: 60, height: 60)
+                Text(state.rawValue).font(.caption2).foregroundStyle(ZColor.muted)
+            }
+        }
+    }
+    .padding()
+    .background(ZColor.canvas)
+    .environment(\.colorScheme, .dark)
+}
+#endif

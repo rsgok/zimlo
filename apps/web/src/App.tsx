@@ -3,6 +3,7 @@ import type { TaskCommand } from "@zimlo/protocol";
 import { FeedView } from "./components/FeedView";
 import { AppTopBar } from "./components/AppTopBar";
 import { AppIcon } from "./components/AppIcon";
+import { CoreActionButton, coreActionState } from "./components/CoreActionButton";
 import { AgentProfileDetail } from "./components/AgentProfileDetail";
 import { AgentsView } from "./components/AgentsView";
 import { OutboxSheet, restoreDraftForEntry } from "./components/OutboxSheet";
@@ -64,8 +65,19 @@ export function App() {
     return [];
   }), [bridge.pendingCommandEntries, bridge.snapshot.sessions, bridge.snapshot.workspaces]);
   const commands = useMemo(() => [...localTaskCommands, ...bridge.snapshot.commands], [bridge.snapshot.commands, localTaskCommands]);
+  const coreAction = coreActionState({
+    connected: bridge.connected,
+    composerOpen: newTaskOpen,
+    pendingActionCount: bridge.snapshot.actions.filter((action) => action.state === "pending").length,
+    failedOutboxCount: bridge.pendingCommandEntries.filter((entry) => entry.state === "failed").length,
+    pendingOutboxCount: bridge.pendingCommandEntries.filter((entry) => entry.state !== "failed").length,
+    taskStates: bridge.snapshot.tasks.map((task) => task.state),
+    commandStates: commands.map((command) => command.state),
+  });
 
   const mountTab = useCallback((next: Tab) => {
+    setSelectedSessionId(null);
+    setSelectedProjectId(null);
     setTab(next);
     setMountedTabs((current) => current.has(next) ? current : new Set(current).add(next));
   }, []);
@@ -215,14 +227,7 @@ export function App() {
           <span className="bottom-nav-icon"><AppIcon name="tasks" /></span>
           <span className="bottom-nav-label">任务</span>
         </button>
-        <button
-          className={`new-task-nav ${newTaskOpen ? "active" : ""}`}
-          aria-pressed={newTaskOpen}
-          onClick={openConversation}
-          aria-label="打开对话"
-        >
-          <span className="bottom-nav-icon bottom-nav-create"><AppIcon name="conversation" /></span>
-        </button>
+        <CoreActionButton state={coreAction} onClick={openConversation} />
         <button aria-current={tab === "agents" ? "page" : undefined} className={tab === "agents" ? "active" : ""} onClick={() => mountTab("agents")}>
           <span className="bottom-nav-icon"><AppIcon name="agents" /></span>
           <span className="bottom-nav-label">Agents</span>
@@ -259,11 +264,10 @@ export function App() {
           project={selectedProject}
           sessions={bridge.snapshot.sessions.filter((session) => session.projectId === selectedProject.id)}
           posts={bridge.snapshot.posts.filter((post) => post.projectId === selectedProject.id)}
-          commands={commands}
           trustPolicy={bridge.snapshot.trustPolicies.find((policy) => policy.projectId === selectedProject.id)}
           trustAudit={bridge.snapshot.trustAudit.filter((entry) => entry.projectId === selectedProject.id)}
           trustEnabled={bridge.snapshot.features.projectTrustPolicy}
-          userAvatarId={bridge.snapshot.userProfile.avatarId}
+          connected={bridge.connected}
           send={send}
           onOpenTask={openSession}
           onNewTask={openNewTask}

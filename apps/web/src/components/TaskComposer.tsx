@@ -18,8 +18,6 @@ interface TaskComposerProps {
   onSubmitted?: () => void;
 }
 
-type NewTaskStep = "input" | "agent" | "runtime";
-
 export function defaultWorkspaceId(workspaces: TrustedWorkspace[], preferredId?: string, savedId?: string | null): string {
   if (preferredId && workspaces.some((workspace) => workspace.id === preferredId)) return preferredId;
   if (savedId && workspaces.some((workspace) => workspace.id === savedId)) return savedId;
@@ -43,8 +41,7 @@ export function TaskComposer({ workspaces, projects, initialProjectId = null, se
   const [text, setText] = useState(savedDraft);
   const [projectQuery, setProjectQuery] = useState("");
   const [voiceNotice, setVoiceNotice] = useState<string | null>(null);
-  const [step, setStep] = useState<NewTaskStep>("input");
-  const [runtimeConfirmed, setRuntimeConfirmed] = useState(false);
+  const [choosingAgent, setChoosingAgent] = useState(false);
   const [materials, setMaterials] = useState<Array<{
     id: string;
     file: File;
@@ -56,6 +53,7 @@ export function TaskComposer({ workspaces, projects, initialProjectId = null, se
   const materialURLs = useRef(new Set<string>());
   const sending = useRef(false);
   const sheetRef = useRef<HTMLElement | null>(null);
+  const dragStartY = useRef<number | null>(null);
   useModalFocus(sheetRef);
   const orderedWorkspaces = useMemo(() => [...workspaces].sort((left, right) => right.lastUsedAt.localeCompare(left.lastUsedAt) || left.label.localeCompare(right.label, "zh-CN")), [workspaces]);
   const visibleWorkspaces = useMemo(() => {
@@ -149,14 +147,13 @@ export function TaskComposer({ workspaces, projects, initialProjectId = null, se
     if (nextDefault && nextWorkspace.providers.includes(nextDefault)) setProvider(nextDefault);
     else if (!nextWorkspace.providers.includes(provider) && nextWorkspace.providers[0]) setProvider(nextWorkspace.providers[0]);
     setProjectQuery("");
-    setRuntimeConfirmed(false);
-    setStep("runtime");
+    setChoosingAgent(false);
   };
 
   const contentReady = Boolean(text.trim() && materials.every((item) => item.state === "ready"));
   const canSubmit = session
     ? contentReady
-    : Boolean(workspaceId && contentReady && runtimeConfirmed && availableProviders.includes(provider));
+    : Boolean(workspaceId && contentReady && availableProviders.includes(provider));
   const submit = () => {
     if (!canSubmit || sending.current) return;
     sending.current = true;
@@ -177,56 +174,53 @@ export function TaskComposer({ workspaces, projects, initialProjectId = null, se
     onClose();
   };
 
-  const handleInputAction = () => {
-    if (session) {
-      submit();
+  const title = session ? "回复" : "新任务";
+  const resetSheetDrag = () => {
+    dragStartY.current = null;
+    const sheet = sheetRef.current;
+    if (!sheet) return;
+    sheet.style.transition = "transform 180ms ease-out";
+    sheet.style.transform = "translateY(0)";
+    window.setTimeout(() => {
+      if (sheetRef.current !== sheet) return;
+      sheet.style.removeProperty("transform");
+      sheet.style.removeProperty("transition");
+    }, 190);
+  };
+  const finishSheetDrag = (clientY: number) => {
+    const start = dragStartY.current;
+    if (start === null) return;
+    const distance = clientY - start;
+    if (distance > 86) {
+      onClose();
       return;
     }
-    if (!contentReady) return;
-    setStep("agent");
+    resetSheetDrag();
   };
-
-  const goBack = () => {
-    if (step === "runtime") {
-      setRuntimeConfirmed(false);
-      setStep("agent");
-    } else if (step === "agent") {
-      setStep("input");
-    }
-  };
-
-  const title = session
-    ? "回复"
-    : step === "input"
-      ? "新任务"
-      : step === "agent"
-        ? "选择 Agent"
-        : "选择执行方式";
-  const stepNumber = step === "input" ? 1 : step === "agent" ? 2 : 3;
-  const acceptsMaterials = Boolean(session || step === "input");
 
   return (
     <div className="composer-backdrop" role="presentation" onMouseDown={(event) => {
       if (event.currentTarget === event.target) onClose();
     }}>
-      <section className={`new-task-sheet ${session ? "is-follow-up" : `is-new-task is-step-${step}`}`} role="dialog" aria-modal="true" aria-labelledby="new-task-title" ref={sheetRef}
-        onDragOver={(event) => { if (!acceptsMaterials) return; event.preventDefault(); event.dataTransfer.dropEffect = "copy"; }}
-        onDrop={(event) => { if (!acceptsMaterials) return; event.preventDefault(); void addFiles([...event.dataTransfer.files]); }}
+      <section className={`new-task-sheet ${session ? "is-follow-up" : "is-new-task"}`} role="dialog" aria-modal="true" aria-labelledby="new-task-title" ref={sheetRef}
+        onDragOver={(event) => { event.preventDefault(); event.dataTransfer.dropEffect = "copy"; }}
+        onDrop={(event) => { event.preventDefault(); void addFiles([...event.dataTransfer.files]); }}
         onPaste={(event) => {
-          if (!acceptsMaterials) return;
           const files = [...event.clipboardData.files];
           if (files.length) { event.preventDefault(); void addFiles(files); }
         }}>
         {voiceNotice && <div className="composer-floating-notice" role="status">{voiceNotice}</div>}
-        <header className="new-task-header">
-          <div className="new-task-header-leading">
-            {!session && step !== "input" && <button type="button" onClick={goBack} aria-label="返回上一步"><AppIcon name="arrow-left" /></button>}
-            <h2 id="new-task-title">{title}</h2>
-          </div>
-          {!session && <div className="composer-step-progress" aria-label={`步骤 ${stepNumber}/3`}>
-            {[1, 2, 3].map((item) => <span className={item <= stepNumber ? "is-active" : ""} key={item} />)}
-          </div>}
-          <button className="new-task-close" type="button" onClick={onClose} aria-label="关闭输入面板"><AppIcon name="close" /></button>
+        <header className="new-task-header"
+          onPointerDown={(event) => { dragStartY.current = event.clientY; sheetRef.current?.style.removeProperty("transition"); event.currentTarget.setPointerCapture(event.pointerId); }}
+          onPointerMove={(event) => {
+            const start = dragStartY.current;
+            if (start === null || !sheetRef.current) return;
+            sheetRef.current.style.transform = `translateY(${Math.max(0, event.clientY - start)}px)`;
+          }}
+          onPointerUp={(event) => finishSheetDrag(event.clientY)}
+          onPointerCancel={resetSheetDrag}>
+          <span className="new-task-grabber" aria-hidden="true" />
+          <h2 id="new-task-title">{title}</h2>
         </header>
         <div className="new-task-scroll">
           {session && <div className="composer-current-session">
@@ -234,14 +228,15 @@ export function TaskComposer({ workspaces, projects, initialProjectId = null, se
             <strong>{session.title}</strong>
             <ProviderBadge provider={session.provider} labelMode="icon" />
           </div>}
-          {(session || step === "input") && <section className="composer-brief" aria-label={session ? "回复" : "任务内容"}>
+          <section className="composer-brief" aria-label={session ? "回复" : "任务内容"}>
+            {!session && <div className="composer-field-heading"><strong>任务内容</strong><span>{text.trim() ? "草稿已保存" : "草稿自动保存"}</span></div>}
             <div className="composer-input-row">
               <input ref={attachmentInput} type="file" multiple hidden accept="image/jpeg,image/png,image/webp,image/heic,image/heif,video/mp4,video/quicktime,video/x-m4v,application/pdf,text/plain,text/markdown,text/csv,application/json,.doc,.docx,.xls,.xlsx,.ppt,.pptx" onChange={(event) => { void addFiles([...event.target.files ?? []]); event.currentTarget.value = ""; }} />
               <button className="composer-attach-button" type="button" onClick={() => attachmentInput.current?.click()} disabled={materials.length >= 10} aria-label="添加附件" title="添加附件">
                 <AppIcon name="paperclip" />
               </button>
-              <VoiceInput compact singleLine value={text} onChange={setText} ariaLabel={session ? "回复" : "任务目标"} placeholder={session ? "输入回复…" : "描述目标…"} onSubmit={handleInputAction} onError={setVoiceNotice} />
-              <button className="composer-send-button" type="button" onClick={handleInputAction} disabled={session ? !canSubmit : !contentReady} aria-label={session ? "发送消息" : "继续选择 Agent"} title={session ? "发送" : "下一步"}>
+              <VoiceInput compact singleLine value={text} onChange={setText} ariaLabel={session ? "回复" : "任务目标"} placeholder={session ? "输入回复…" : "描述目标，或点按麦克风…"} onSubmit={submit} onError={setVoiceNotice} />
+              <button className="composer-send-button" type="button" onClick={submit} disabled={!canSubmit} aria-label={session ? "发送消息" : "开始任务"} title={session ? "发送" : "开始任务"}>
                 <AppIcon name="arrow-up" />
               </button>
             </div>
@@ -264,14 +259,22 @@ export function TaskComposer({ workspaces, projects, initialProjectId = null, se
                 </article>;
               })}
             </div>}
-          </section>}
+          </section>
 
-          {!session && step === "agent" && <section className="composer-step-panel composer-agent-step" aria-label="选择 Agent">
-            <label className="composer-project-search">
-              <span aria-hidden="true">⌕</span>
-              <input autoFocus value={projectQuery} onChange={(event) => setProjectQuery(event.target.value)} placeholder="搜索 Agent 或项目" aria-label="搜索 Agent" />
-            </label>
-            <div className="composer-agent-list" role="radiogroup" aria-label="选择 Agent">
+          {!session && <section className="composer-destination" aria-label="交给谁">
+            <div className="composer-field-heading"><strong>交给谁</strong><span>已沿用最近选择</span></div>
+            <button className="composer-agent-summary" type="button" onClick={() => setChoosingAgent((current) => !current)} disabled={workspaces.length === 0} aria-expanded={choosingAgent}>
+              <AgentAvatar avatar={agentAvatar} className={`composer-agent-avatar ${selectedAgent ? agentAvatarStyle(selectedAgent.id) : ""}`} alt="" />
+              <span className="composer-agent-summary-copy"><strong>{agentName}</strong><small>{selectedAgent ? `${selectedAgent.name} · 已记住项目上下文` : selectedWorkspace?.label ?? "暂无可信项目"}</small></span>
+              <ProviderBadge provider={provider} labelMode="icon" />
+              <span className="composer-agent-change">{choosingAgent ? "收起" : "更换"}</span>
+            </button>
+            {choosingAgent && <div className="composer-agent-picker">
+              <label className="composer-project-search">
+                <span aria-hidden="true">⌕</span>
+                <input autoFocus value={projectQuery} onChange={(event) => setProjectQuery(event.target.value)} placeholder="搜索 Agent 或项目" aria-label="搜索 Agent" />
+              </label>
+              <div className="composer-agent-list" role="radiogroup" aria-label="选择 Agent">
               {visibleWorkspaces.map((workspace) => {
                 const agent = projectByPath.get(workspace.path);
                 const selected = workspace.id === workspaceId;
@@ -287,29 +290,20 @@ export function TaskComposer({ workspaces, projects, initialProjectId = null, se
                 );
               })}
               {visibleWorkspaces.length === 0 && <p className="composer-empty-search">没有匹配的 Agent</p>}
-            </div>
-            {workspaces.length === 0 && <p className="composer-warning">先在 Mac 的 Codex 或 Claude Code 中打开一次项目，Zimlo 才能安全地把任务交给它。</p>}
-          </section>}
-
-          {!session && step === "runtime" && <section className="composer-step-panel composer-runtime-step" aria-label="选择执行方式">
-            <div className="composer-selected-agent">
-              <AgentAvatar avatar={agentAvatar} className={`composer-agent-avatar ${selectedAgent ? agentAvatarStyle(selectedAgent.id) : ""}`} alt="" />
-              <strong>{agentName}</strong>
-            </div>
-            <div className="composer-runtime-grid" role="radiogroup" aria-label="选择执行方式">
+              </div>
+              <div className="composer-runtime-inline" role="radiogroup" aria-label="执行方式">
+                <span>执行方式</span>
               {(["codex", "claude"] satisfies Provider[]).map((item) => {
-                const selected = runtimeConfirmed && provider === item;
-                return <button type="button" role="radio" aria-checked={selected} className={selected ? "selected" : ""} disabled={!availableProviders.includes(item)} onClick={() => { setProvider(item); setRuntimeConfirmed(true); }} key={item}>
+                const selected = provider === item;
+                return <button type="button" role="radio" aria-checked={selected} className={selected ? "selected" : ""} disabled={!availableProviders.includes(item)} onClick={() => setProvider(item)} key={item}>
                   <ProviderBadge provider={item} labelMode="icon" />
                   <span>{item === "codex" ? "Codex" : "Claude Code"}</span>
                   {selected && <span className="composer-selected-check" aria-hidden="true">✓</span>}
                 </button>;
               })}
-            </div>
-            <button className="composer-final-submit" type="button" onClick={submit} disabled={!canSubmit}>
-              <span>开始任务</span>
-              <AppIcon name="arrow-up" />
-            </button>
+              </div>
+            </div>}
+            {workspaces.length === 0 && <p className="composer-warning">先在 Mac 的 Codex 或 Claude Code 中打开一次项目，Zimlo 才能安全地把任务交给它。</p>}
           </section>}
 
         </div>

@@ -131,13 +131,6 @@ function stateLabel(session: Session, state: string): string {
   return STATE_LABELS[state] ?? state;
 }
 
-function taskNextStep(session: Session, state: string): string | null {
-  if (state === "waiting_input" || state === "waiting") return "需要你的回复";
-  if (state === "failed") return "查看原因并重试";
-  if (state === "user_review" || state === "reviewing" || state === "running" || isReadyTask(session, state)) return null;
-  return null;
-}
-
 interface TaskRowProps {
   session: Session;
   task: TaskRecord | undefined;
@@ -154,7 +147,6 @@ const TaskRow = memo(function TaskRow({ session, task, preference, post, process
   const state = effectiveState(session, task);
   const location = sessionLocation(session);
   const tone = statePriority(state) === 0 ? "attention" : statePriority(state) === 1 ? "active" : session.status;
-  const nextStep = taskNextStep(session, state);
   return (
     <article className={`task-row task-row-${statePriority(state) === 0 ? "attention" : statePriority(state) === 1 ? "active" : "settled"}`}>
       <button className="task-row-main" onClick={() => onOpen(session.id)}>
@@ -164,7 +156,6 @@ const TaskRow = memo(function TaskRow({ session, task, preference, post, process
         <span className="task-copy">
           <strong>{processCount > 1 ? `${runtimeLabel(session.provider)} 在 ${location.label} 运行 ${processCount} 个任务` : taskTitle(session, task, post)}</strong>
           <small>{location.kind === "project" ? "项目" : "目录"} · {location.label}<span aria-hidden="true"> · </span>{processCount > 1 ? `${processCount} 个活跃进程已归组` : relativeTime(session.lastActivityAt, now)}</small>
-          {nextStep && <span className="task-next-step">{nextStep}</span>}
         </span>
         <span className="task-side">
           <span className={`task-state-pill task-state-${tone}`}>{stateLabel(session, state)}</span>
@@ -300,10 +291,10 @@ export function TasksView({ projects, sessions, tasks, posts = EMPTY_POSTS, pref
       ...filtered.filter((session) => statePriority(effectiveState(session, taskBySession.get(session.id))) >= 2).slice(0, 6),
     ];
   const groups = [
-    { id: "pinned", label: "已置顶", hint: "重要任务", sessions: visible.filter((session) => effectivePreferenceBySession.get(session.id)?.pinnedAt) },
-    { id: "attention", label: "待你处理", hint: "回复、审阅或恢复", sessions: visible.filter((session) => !effectivePreferenceBySession.get(session.id)?.pinnedAt && statePriority(effectiveState(session, taskBySession.get(session.id))) === 0) },
-    { id: "active", label: "正在工作", hint: "Agent 正在推进", sessions: visible.filter((session) => !effectivePreferenceBySession.get(session.id)?.pinnedAt && statePriority(effectiveState(session, taskBySession.get(session.id))) === 1) },
-    { id: "recent", label: showArchived ? "已归档" : "可继续与最近完成", hint: showArchived ? "不影响当前注意力" : "随时回看或继续", sessions: visible.filter((session) => !effectivePreferenceBySession.get(session.id)?.pinnedAt && statePriority(effectiveState(session, taskBySession.get(session.id))) >= 2) },
+    { id: "pinned", label: "已置顶", sessions: visible.filter((session) => effectivePreferenceBySession.get(session.id)?.pinnedAt) },
+    { id: "attention", label: "待你处理", sessions: visible.filter((session) => !effectivePreferenceBySession.get(session.id)?.pinnedAt && statePriority(effectiveState(session, taskBySession.get(session.id))) === 0) },
+    { id: "active", label: "正在工作", sessions: visible.filter((session) => !effectivePreferenceBySession.get(session.id)?.pinnedAt && statePriority(effectiveState(session, taskBySession.get(session.id))) === 1) },
+    { id: "recent", label: showArchived ? "已归档" : "可继续与最近完成", sessions: visible.filter((session) => !effectivePreferenceBySession.get(session.id)?.pinnedAt && statePriority(effectiveState(session, taskBySession.get(session.id))) >= 2) },
   ].filter((group) => group.sessions.length > 0);
 
   return (
@@ -344,7 +335,7 @@ export function TasksView({ projects, sessions, tasks, posts = EMPTY_POSTS, pref
       {groups.map((group) => (
         <section className={`task-group task-group-${group.id}`} key={group.id}>
           <header>
-            <div><h3>{group.label}</h3><span>{group.hint}</span></div>
+            <h3>{group.label}</h3>
             <strong>{group.sessions.length}</strong>
           </header>
           <div className="task-list">

@@ -48,8 +48,7 @@ describe("AgentProfileDetail", () => {
         project={project}
         sessions={[]}
         posts={[]}
-        commands={[]}
-        userAvatarId="user-02"
+        connected
         send={vi.fn()}
         onOpenTask={vi.fn()}
         onNewTask={vi.fn()}
@@ -62,6 +61,13 @@ describe("AgentProfileDetail", () => {
     expect(markup).toContain("/Projects/zimlo");
     expect(markup).toContain("其他已识别目录");
     expect(markup).toContain("/Projects/zimlo-release");
+    expect(markup).toContain("在线");
+    expect(markup).toContain("连接");
+    expect(markup).toContain("Runtime");
+    expect(markup).toContain("自动化");
+    expect(markup).not.toContain("历史任务");
+    expect(markup).not.toContain("app-top-bar");
+    expect(markup.match(/＋ 新任务/g)).toHaveLength(1);
   });
 
   it("keeps older Agent activity behind an explicit history action", () => {
@@ -70,8 +76,7 @@ describe("AgentProfileDetail", () => {
         project={project}
         sessions={[]}
         posts={Array.from({ length: 10 }, (_, index) => post(index))}
-        commands={[]}
-        userAvatarId="user-02"
+        connected
         send={vi.fn()}
         onOpenTask={vi.fn()}
         onNewTask={vi.fn()}
@@ -80,8 +85,9 @@ describe("AgentProfileDetail", () => {
     );
 
     expect(markup).toContain("动态 9");
-    expect(markup).toContain("动态 2");
-    expect(markup).not.toContain("动态 1");
-    expect(markup).toContain("查看其余 2 条历史动态");
+    expect(markup).toContain("动态 7");
+    expect(markup).not.toContain("动态 6");
+    expect(markup).toContain("最近动态");
+    expect(markup).toContain(">查看全部<");
   });
 });

@@ -87,6 +87,7 @@ for size in 16 32 128 256 512; do
 done
 iconutil -c icns "${iconset}" -o "${app_path}/Contents/Resources/AppIcon.icns"
 cp "${icon_source}" "${app_path}/Contents/Resources/AppIcon-1024.png"
+ditto "${repo_root}/apps/ios/Zimlo/Resources/avatars" "${app_path}/Contents/Resources/avatars"
 
 typeset -a sign_options
 sign_options=(--force --options runtime --sign "${sign_identity}")
