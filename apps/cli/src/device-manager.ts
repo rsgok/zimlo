@@ -81,6 +81,11 @@ export class DeviceManager {
     };
   }
 
+  cancelPairing(pairingId: string): boolean {
+    this.prunePairings();
+    return this.pairings.delete(pairingId);
+  }
+
   completePairing(input: {
     pairingId: string;
     clientPublicKey: string;

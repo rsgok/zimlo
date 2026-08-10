@@ -294,6 +294,19 @@ export class BridgeServer {
         ));
       }
     });
+    app.delete("/api/local/pairing/:pairingId", async (request, reply) => {
+      if (!isLoopbackAddress(request.ip)) return reply.code(403).send(loopbackOnly());
+      const pairingId = (request.params as { pairingId?: string }).pairingId ?? "";
+      const watcher = this.pairingWatchers.get(pairingId);
+      watcher?.abort();
+      this.pairingWatchers.delete(pairingId);
+      const localCancelled = this.devices.cancelPairing(pairingId);
+      const cloudCancelled = this.cloud.enabled ? await this.cloud.cancelPairing(pairingId) : true;
+      if (!localCancelled && !cloudCancelled) {
+        return reply.code(410).send({ code: "pairing_expired", message: "这个连接码已经失效。", recoverable: true });
+      }
+      return { ok: true };
+    });
     app.post("/api/pair", async (request, reply) => {
       const body = request.body as PairBody | null;
       if (!body?.pairingId || !body.clientPublicKey || !body.proof) {
@@ -731,6 +744,7 @@ export class BridgeServer {
   }
 
   private async createPairingPayload(): Promise<{
+    pairingId: string;
     pairUrl: string;
     qrDataUrl: string;
     expiresAt: string;
@@ -763,6 +777,7 @@ export class BridgeServer {
       this.startCloudPairingWatcher(result);
     }
     return {
+      pairingId: result.pairingId,
       pairUrl: result.pairUrl,
       qrDataUrl: await QRCode.toDataURL(result.pairUrl, { margin: 1, width: 320 }),
       expiresAt: result.expiresAt,

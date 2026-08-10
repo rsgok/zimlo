@@ -26,8 +26,15 @@ struct NativeComposerOverlay: View {
         context.sessionID.flatMap { id in store.snapshot.sessions.first { $0.id == id } }
     }
     private var project: Project? {
-        let id = context.projectID ?? session?.projectId
-        return id.flatMap { projectID in store.snapshot.projects.first { $0.id == projectID } }
+        if let projectID = context.projectID,
+           let project = store.snapshot.projects.first(where: { $0.id == projectID }) {
+            return project
+        }
+        if let session { return store.snapshot.project(for: session) }
+        guard let workspace = selectedWorkspace else { return nil }
+        return store.snapshot.projects.first { project in
+            project.paths.contains { path in workspace.path == path || workspace.path.hasPrefix(path + "/") }
+        }
     }
     private var selectedWorkspace: TrustedWorkspace? {
         store.snapshot.workspaces.first { $0.id == workspaceID }
@@ -97,7 +104,7 @@ struct NativeComposerOverlay: View {
 
     private var header: some View {
         HStack(spacing: 12) {
-            NativeAgentAvatar(avatar: project?.agentProfile.avatar ?? "●", size: 38)
+            NativeTaskAvatar(project: project, provider: session?.provider ?? provider, size: 38)
             VStack(alignment: .leading, spacing: 2) {
                 Text(session == nil ? "新任务" : "回复 Agent")
                     .font(.system(size: 17, weight: .bold, design: .rounded))
@@ -124,15 +131,17 @@ struct NativeComposerOverlay: View {
                 }
             }
             .labelsHidden()
-            .frame(maxWidth: .infinity)
+            .pickerStyle(.menu)
             .onChange(of: workspaceID) { _, _ in coerceProvider() }
 
             Picker("Runtime", selection: $provider) {
                 ForEach(Provider.allCases) { item in Text(item.label).tag(item) }
             }
             .labelsHidden()
-            .frame(width: 150)
+            .pickerStyle(.menu)
         }
+        .fixedSize(horizontal: true, vertical: false)
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 
     private var inputRow: some View {

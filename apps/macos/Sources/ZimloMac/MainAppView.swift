@@ -137,14 +137,7 @@ private struct NativeSidebarView: View {
     var body: some View {
         VStack(spacing: 0) {
             HStack(spacing: 10) {
-                ZStack {
-                    RoundedRectangle(cornerRadius: 9, style: .continuous)
-                        .fill(NativeTheme.acid)
-                    Image(systemName: "sparkles")
-                        .font(.system(size: 13, weight: .black))
-                        .foregroundStyle(NativeTheme.paper)
-                }
-                .frame(width: 31, height: 31)
+                NativeAppIcon(size: 34)
                 VStack(alignment: .leading, spacing: 1) {
                     Text("Zimlo").font(.system(size: 15, weight: .bold, design: .rounded))
                     Text(serviceState.label)

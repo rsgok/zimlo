@@ -212,7 +212,7 @@ final class WindowCoordinator: NSObject, NSWindowDelegate {
 }
 
 @MainActor
-private enum WindowBrandAssets {
+enum WindowBrandAssets {
     static let icon: NSImage = {
         for resource in [("AppIcon-1024", "png"), ("AppIcon", "icns")] {
             guard let url = Bundle.main.url(forResource: resource.0, withExtension: resource.1),

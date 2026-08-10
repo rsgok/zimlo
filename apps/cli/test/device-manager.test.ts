@@ -50,6 +50,27 @@ describe("DeviceManager cloud pairing", () => {
     store.close();
   });
 
+  it("invalidates a generated pairing when it is cancelled", () => {
+    const root = mkdtempSync(join(tmpdir(), "zimlo-device-manager-"));
+    roots.push(root);
+    const store = new ZimloStore(join(root, "zimlo.db"));
+    const devices = new DeviceManager(store);
+    const pairing = devices.createPairing("https://cloud.example");
+    const fragment = new URLSearchParams(new URL(pairing.pairUrl).hash.slice(1));
+    const client = createKeyPair();
+    const secret = fromBase64Url(fragment.get("secret")!);
+    const pairKey = derivePairKey(client.privateKey, fromBase64Url(fragment.get("bridgeKey")!), secret);
+
+    expect(devices.cancelPairing(pairing.pairingId)).toBe(true);
+    expect(devices.cancelPairing(pairing.pairingId)).toBe(false);
+    expect(devices.completePairing({
+      pairingId: pairing.pairingId,
+      clientPublicKey: toBase64Url(client.publicKey),
+      proof: makeProof(pairKey, `client:${pairing.pairingId}`),
+    })).toBeNull();
+    store.close();
+  });
+
   it("migrates existing active phones to the new permission defaults only once", () => {
     const root = mkdtempSync(join(tmpdir(), "zimlo-device-manager-"));
     roots.push(root);

@@ -20,15 +20,17 @@ struct NativeFeedView: View {
     }
 
     var body: some View {
-        ScrollView {
-            LazyVStack(alignment: .leading, spacing: 15) {
-                header
+        VStack(spacing: 0) {
+            header
+                .padding(.horizontal, 30)
+                .padding(.vertical, 22)
+                .frame(maxWidth: 960)
+                .frame(maxWidth: .infinity)
+            Divider().opacity(0.42)
+            ScrollView {
+                LazyVStack(alignment: .leading, spacing: 28) {
                 if posts.isEmpty {
-                    ContentUnavailableView(
-                        "今天没有需要打断你的事",
-                        systemImage: "sparkles",
-                        description: Text("Agent 有值得阅读的结论或需要你决定时，会出现在这里。")
-                    )
+                    ContentUnavailableView("All Caught Up", systemImage: "checkmark.circle.fill")
                     .frame(maxWidth: .infinity, minHeight: 360)
                     .foregroundStyle(NativeTheme.muted)
                 } else {
@@ -36,14 +38,17 @@ struct NativeFeedView: View {
                         NativeFeedCard(store: store, post: post)
                     }
                 }
+                }
+                .scrollTargetLayout()
+                .padding(.horizontal, 30)
+                .padding(.vertical, 28)
+                .frame(maxWidth: 960, alignment: .leading)
+                .frame(maxWidth: .infinity, alignment: .center)
             }
-            .padding(.horizontal, 28)
-            .padding(.vertical, 24)
-            .frame(maxWidth: 880, alignment: .leading)
-            .frame(maxWidth: .infinity, alignment: .center)
+            .scrollTargetBehavior(.viewAligned)
         }
         .background(NativeTheme.paper)
-        .navigationTitle("Feed")
+        .navigationTitle("For You")
         .toolbar {
             ToolbarItem {
                 Button { Task { await store.refresh() } } label: {
@@ -55,32 +60,46 @@ struct NativeFeedView: View {
     }
 
     private var header: some View {
-        HStack(alignment: .bottom, spacing: 20) {
-            VStack(alignment: .leading, spacing: 6) {
-                Text("现在值得你看")
-                    .font(.system(size: 28, weight: .bold, design: .rounded))
-                    .foregroundStyle(NativeTheme.ink)
-                Text("只保留结论、风险和真正需要你的下一步。")
-                    .font(.system(size: 13, weight: .medium))
-                    .foregroundStyle(NativeTheme.muted)
-            }
-            Spacer()
-            if let first = posts.first, !store.snapshot.seenPostIds.contains(first.id) {
-                Label("\(posts.filter { !store.snapshot.seenPostIds.contains($0.id) }.count) 条未读", systemImage: "circle.fill")
-                    .font(.system(size: 11, weight: .bold))
-                    .foregroundStyle(NativeTheme.acid)
-            }
-        }
-        .padding(.bottom, 6)
+        Text("For You")
+            .font(.system(size: 28, weight: .bold, design: .rounded))
+            .foregroundStyle(NativeTheme.ink)
+            .frame(maxWidth: .infinity, alignment: .leading)
+    }
+}
+
+enum NativeFeedArchiveGesture {
+    static let archiveThreshold: CGFloat = 112
+
+    static func horizontalOffset(for translation: CGSize) -> CGFloat {
+        guard translation.width < 0,
+              abs(translation.width) > abs(translation.height) * 1.15 else { return 0 }
+        return translation.width
+    }
+
+    static func shouldArchive(translation: CGSize, predicted: CGSize) -> Bool {
+        horizontalOffset(for: translation) <= -archiveThreshold
+            || horizontalOffset(for: predicted) <= -(archiveThreshold * 1.55)
     }
 }
 
 private struct NativeFeedCard: View {
     @ObservedObject var store: NativeAppStore
     let post: FeedPost
+    @State private var dragOffset: CGFloat = 0
+    @State private var isArchiving = false
 
     private var project: Project? {
-        post.projectId.flatMap { id in store.snapshot.projects.first { $0.id == id } }
+        if let id = post.projectId,
+           let project = store.snapshot.projects.first(where: { $0.id == id }) {
+            return project
+        }
+        guard let sessionID = post.sessionId,
+              let session = store.snapshot.sessions.first(where: { $0.id == sessionID }) else { return nil }
+        return store.snapshot.project(for: session)
+    }
+    private var session: AgentSession? {
+        guard let sessionID = post.sessionId else { return nil }
+        return store.snapshot.sessions.first(where: { $0.id == sessionID })
     }
     private var pendingAction: PendingAction? {
         post.sessionId.flatMap(store.snapshot.pendingAction(for:))
@@ -88,13 +107,27 @@ private struct NativeFeedCard: View {
     private var isUnread: Bool { !store.snapshot.seenPostIds.contains(post.id) }
 
     var body: some View {
-        Group {
-            if let sessionID = post.sessionId {
-                NavigationLink(value: NativeRoute.task(sessionID)) { cardBody }
-                    .buttonStyle(.plain)
-            } else {
-                cardBody
+        ZStack(alignment: .trailing) {
+            archiveBackground
+            Group {
+                if let sessionID = post.sessionId {
+                    NavigationLink(value: NativeRoute.task(sessionID)) { cardBody }
+                        .buttonStyle(.plain)
+                } else {
+                    cardBody
+                }
             }
+            .offset(x: dragOffset)
+            .opacity(isArchiving ? 0.72 : 1)
+        }
+        .clipShape(RoundedRectangle(cornerRadius: 19, style: .continuous))
+        .highPriorityGesture(archiveGesture)
+        .accessibilityAction(named: "归档") { archive() }
+        .onAppear {
+            // Lazy stacks may reuse a card's view state if an archive is undone
+            // before the row is fully discarded. Always re-enter at rest.
+            dragOffset = 0
+            isArchiving = false
         }
         .task(id: post.id) {
             guard isUnread else { return }
@@ -103,8 +136,52 @@ private struct NativeFeedCard: View {
             await store.markFeedSeen(post.id)
         }
         .contextMenu {
-            Button("从 Feed 移除", systemImage: "eye.slash") {
-                Task { await store.dismissFeedItem(post.id, dismissed: true) }
+            Button("归档", systemImage: "archivebox") {
+                archive()
+            }
+        }
+    }
+
+    private var archiveBackground: some View {
+        RoundedRectangle(cornerRadius: 19, style: .continuous)
+            .fill(NativeTheme.sage.opacity(0.18))
+            .overlay(alignment: .trailing) {
+                Label("归档", systemImage: "archivebox.fill")
+                    .font(.system(size: 12, weight: .bold))
+                    .foregroundStyle(NativeTheme.sage)
+                    .padding(.trailing, 30)
+                    .opacity(min(1, abs(dragOffset) / NativeFeedArchiveGesture.archiveThreshold))
+            }
+    }
+
+    private var archiveGesture: some Gesture {
+        DragGesture(minimumDistance: 12)
+            .onChanged { value in
+                guard !isArchiving else { return }
+                dragOffset = NativeFeedArchiveGesture.horizontalOffset(for: value.translation)
+            }
+            .onEnded { value in
+                guard !isArchiving else { return }
+                if NativeFeedArchiveGesture.shouldArchive(
+                    translation: value.translation,
+                    predicted: value.predictedEndTranslation
+                ) {
+                    archive()
+                } else {
+                    withAnimation(.spring(response: 0.32, dampingFraction: 0.82)) { dragOffset = 0 }
+                }
+            }
+    }
+
+    private func archive() {
+        guard !isArchiving else { return }
+        isArchiving = true
+        withAnimation(.easeIn(duration: 0.18)) { dragOffset = -1_100 }
+        Task {
+            try? await Task.sleep(for: .milliseconds(180))
+            if !(await store.dismissFeedItem(post.id, dismissed: true)) {
+                isArchiving = false
+                withAnimation(.spring(response: 0.34, dampingFraction: 0.82)) { dragOffset = 0 }
             }
         }
     }
@@ -112,7 +189,11 @@ private struct NativeFeedCard: View {
     private var cardBody: some View {
         VStack(alignment: .leading, spacing: 0) {
             HStack(spacing: 11) {
-                NativeAgentAvatar(avatar: project?.agentProfile.avatar ?? "●", size: 36)
+                if let project {
+                    NativeAgentAvatar(avatar: project.agentProfile.avatar, size: 36)
+                } else {
+                    NativeTaskAvatar(project: nil, provider: session?.provider ?? .codex, size: 36)
+                }
                 VStack(alignment: .leading, spacing: 2) {
                     Text(project?.agentProfile.displayName ?? post.agentId)
                         .font(.system(size: 12, weight: .bold))
@@ -161,6 +242,8 @@ private struct NativeFeedCard: View {
                     .padding(.top, 16)
             }
 
+            Spacer(minLength: 24)
+
             HStack(spacing: 10) {
                 if let proof = post.proof, !proof.isEmpty {
                     Label(proof, systemImage: "checkmark.seal.fill")
@@ -182,7 +265,8 @@ private struct NativeFeedCard: View {
             }
             .padding(.top, 18)
         }
-        .padding(21)
+        .padding(28)
+        .frame(maxWidth: .infinity, minHeight: 360, alignment: .topLeading)
         .nativeCard(cornerRadius: 19)
         .overlay(alignment: .leading) {
             RoundedRectangle(cornerRadius: 2)

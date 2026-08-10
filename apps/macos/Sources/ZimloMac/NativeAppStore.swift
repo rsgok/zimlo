@@ -150,6 +150,7 @@ struct NativeNotice: Identifiable, Equatable {
 @MainActor
 final class NativeAppStore: ObservableObject {
     @Published private(set) var snapshot = NativeSnapshot.empty
+    @Published private(set) var devices: [NativeDevice] = []
     @Published private(set) var loadState: NativeLoadState = .idle
     @Published private(set) var eventsBySession: [String: [UnifiedEvent]] = [:]
     @Published private(set) var importingFiles = false
@@ -191,6 +192,9 @@ final class NativeAppStore: ObservableObject {
         do {
             let response = try await client.send(command)
             snapshot = response.snapshot
+            if let nextDevices = response.messages.first(where: { $0.type == "devices.list" })?.devices {
+                devices = nextDevices.filter(\.isActivePhone).sorted { $0.lastSeenAt > $1.lastSeenAt }
+            }
             if let error = response.messages.first(where: { $0.type == "error" }) {
                 throw BridgeAPIError(
                     code: error.code ?? "command_failed",
@@ -204,6 +208,17 @@ final class NativeAppStore: ObservableObject {
             showNotice(error.localizedDescription, tone: .failure)
             return false
         }
+    }
+
+    func loadDevices() async {
+        _ = await send(ClientCommand(type: "devices.request"))
+    }
+
+    func revokeDevice(_ device: NativeDevice) async -> Bool {
+        await send(
+            ClientCommand(type: "device.revoke", ["deviceId": .string(device.id)]),
+            notice: "已移除 \(device.name)"
+        )
     }
 
     func loadEvents(sessionID: String) async {
@@ -238,8 +253,9 @@ final class NativeAppStore: ObservableObject {
         _ = await send(ClientCommand(type: "feed.seen", ["postId": .string(postID)]))
     }
 
-    func dismissFeedItem(_ itemID: String, dismissed: Bool) async {
-        _ = await send(ClientCommand(type: "feed.dismiss.set", [
+    @discardableResult
+    func dismissFeedItem(_ itemID: String, dismissed: Bool) async -> Bool {
+        await send(ClientCommand(type: "feed.dismiss.set", [
             "itemId": .string(itemID),
             "dismissed": .bool(dismissed),
             "idempotencyKey": .string(UUID().uuidString),
