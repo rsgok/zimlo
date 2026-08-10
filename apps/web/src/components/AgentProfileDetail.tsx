@@ -1,11 +1,10 @@
 import { useMemo, useRef, useState } from "react";
 import { USER_AVATAR_IDS } from "@zimlo/protocol";
-import type { ClientCommand, FeedPost, Project, ProjectTrustPolicy, Session, TaskCommand, TrustAuditEntry, UserAvatarId } from "@zimlo/protocol";
-import { AppTopBar } from "./AppTopBar";
+import type { ClientCommand, FeedPost, Project, ProjectTrustPolicy, Session, TrustAuditEntry } from "@zimlo/protocol";
+import { AppIcon } from "./AppIcon";
 import { FormattedText } from "./FormattedText";
 import { agentAvatarStyle, agentBio } from "./AgentsView";
 import { ProviderBadge } from "./ProviderBadge";
-import { collapseProcessSessions } from "./TasksView";
 import { AgentAvatar, UserAvatar } from "./UserAvatar";
 import { relativeTime, useNow } from "../lib/nowTicker";
 import { useModalFocus } from "./useModalFocus";
@@ -14,11 +13,10 @@ interface AgentProfileDetailProps {
   project: Project;
   sessions: Session[];
   posts: FeedPost[];
-  commands: TaskCommand[];
   trustPolicy?: ProjectTrustPolicy | undefined;
   trustAudit?: TrustAuditEntry[] | undefined;
   trustEnabled?: boolean | undefined;
-  userAvatarId: UserAvatarId;
+  connected: boolean;
   send: (command: ClientCommand) => boolean;
   onOpenTask: (sessionId: string) => void;
   onNewTask: (projectId: string) => void;
@@ -45,7 +43,7 @@ async function copyPath(value: string): Promise<boolean> {
   }
 }
 
-export function AgentProfileDetail({ project, sessions, posts, commands, trustPolicy, trustAudit = [], trustEnabled = true, userAvatarId, send, onOpenTask, onNewTask, onClose }: AgentProfileDetailProps) {
+export function AgentProfileDetail({ project, sessions, posts, trustPolicy, trustAudit = [], trustEnabled = true, connected, send, onOpenTask, onNewTask, onClose }: AgentProfileDetailProps) {
   const [editing, setEditing] = useState(false);
   const [displayName, setDisplayName] = useState(project.agentProfile.displayName);
   const [avatar, setAvatar] = useState(project.agentProfile.avatar);
@@ -56,38 +54,36 @@ export function AgentProfileDetail({ project, sessions, posts, commands, trustPo
   const now = useNow();
   const panelRef = useRef<HTMLElement | null>(null);
   useModalFocus(panelRef);
-  const sessionIds = useMemo(() => new Set(sessions.map((session) => session.id)), [sessions]);
   const sessionById = useMemo(() => new Map(sessions.map((session) => [session.id, session])), [sessions]);
-  const running = collapseProcessSessions(sessions).sessions.filter((session) => session.status === "running").length;
   const visibleBio = agentBio(project);
   const workspacePaths = useMemo(() => [...new Set([project.primaryPath, ...project.paths].filter(Boolean))], [project.paths, project.primaryPath]);
-  const timeline = useMemo(() => [
-    ...posts.map((post) => ({ type: "post" as const, id: post.id, at: post.createdAt, post })),
-    ...commands.filter((command) => (command.sessionId && sessionIds.has(command.sessionId)) || command.workspaceId === project.id)
-      .map((command) => ({ type: "command" as const, id: command.id, at: command.createdAt, command })),
-  ].sort((left, right) => right.at.localeCompare(left.at)), [commands, posts, project.id, sessionIds]);
+  const timeline = useMemo(() => posts
+    .map((post) => ({ id: post.id, at: post.createdAt, post }))
+    .sort((left, right) => right.at.localeCompare(left.at)), [posts]);
 
   return (
     <div className="detail-backdrop" role="presentation">
       <section className="detail-panel agent-profile-detail" role="dialog" aria-modal="true" aria-label={project.agentProfile.displayName} ref={panelRef}>
-        <AppTopBar detail title="Agent" onBack={onClose} />
         <section className="agent-profile-header">
+          <div className="detail-page-controls is-agent-profile">
+            <button type="button" onClick={onClose} aria-label="返回"><AppIcon name="arrow-left" /></button>
+          </div>
           <div className="agent-profile-identity">
             <AgentAvatar avatar={project.agentProfile.avatar} className={`agent-avatar agent-profile-avatar ${agentAvatarStyle(project.id)}`} alt="" />
             <div className="agent-profile-copy">
-              <span className="eyebrow">Agent Profile</span>
               <h1>{project.agentProfile.displayName}</h1>
+              {project.name !== project.agentProfile.displayName && <span className="agent-project-name">{project.name}</span>}
               <p className={visibleBio ? "" : "is-placeholder"}>{visibleBio ?? "还没有设置专长与工作方式。编辑资料后，团队更容易理解这个 Agent 适合做什么。"}</p>
             </div>
+          </div>
+          <div className="agent-profile-status" aria-label="Agent 状态">
+            <div><strong className={connected ? "is-online" : "is-offline"}><i aria-hidden="true" />{connected ? "在线" : "离线"}</strong><span>连接</span></div>
+            <div><strong className="agent-provider-meta">{project.agentProfile.defaultProvider ? <><ProviderBadge provider={project.agentProfile.defaultProvider} labelMode="icon" />{project.agentProfile.defaultProvider === "codex" ? "Codex" : "Claude"}</> : "自动"}</strong><span>Runtime</span></div>
+            <div><strong className={trustPolicy?.preset === "safe_automation" ? "is-online" : ""}>{trustPolicy?.preset === "safe_automation" ? "开启" : "询问"}</strong><span>自动化</span></div>
           </div>
           <div className="agent-profile-actions">
             <button className="primary-button" onClick={() => onNewTask(project.id)}>＋ 新任务</button>
             <button className="secondary-button" onClick={() => setEditing((value) => !value)}>{editing ? "取消" : "编辑资料"}</button>
-          </div>
-          <div className="agent-profile-stats" aria-label="Agent 概况">
-            <div><strong>{running}</strong><span>正在工作</span></div>
-            <div><strong>{project.sessionCount}</strong><span>历史任务</span></div>
-            <div><strong className="agent-provider-meta">{project.agentProfile.defaultProvider ? <><ProviderBadge provider={project.agentProfile.defaultProvider} labelMode="icon" />{project.agentProfile.defaultProvider === "codex" ? "Codex" : "Claude"}</> : "自动"}</strong><span>默认 Runtime</span></div>
           </div>
           {editing && (
             <form className="agent-profile-editor" onSubmit={(event) => {
@@ -160,19 +156,8 @@ export function AgentProfileDetail({ project, sessions, posts, commands, trustPo
           {trustAudit.length > 0 && <details><summary>最近自动化记录</summary>{trustAudit.slice(0, 8).map((entry) => <p key={entry.id}><strong>{entry.decision === "auto_allowed" ? "自动允许" : "已询问"}</strong> · {entry.category} · {entry.actionSummary}</p>)}</details>}
         </section>}
         <section className="agent-timeline" aria-label="Agent Timeline">
-          <header className="timeline-heading"><h2>重要动态</h2><span>跨任务汇总 · 最新在上</span></header>
+          <header className="timeline-heading"><h2>最近动态</h2>{timeline.length > 3 && <button type="button" onClick={() => setShowAllActivity((current) => !current)}>{showAllActivity ? "收起" : "查看全部"}</button>}</header>
           {timeline.slice(0, showAllActivity ? timeline.length : 3).map((item) => {
-            if (item.type === "command") {
-              const session = item.command.sessionId ? sessionById.get(item.command.sessionId) : undefined;
-              return <article className="agent-timeline-item is-user" key={`command:${item.id}`}>
-                <UserAvatar avatarId={userAvatarId} className="agent-timeline-avatar" alt="" />
-                <div className="agent-timeline-content">
-                  <div className="agent-timeline-meta"><strong>你</strong><time>{relativeTime(item.at, now)}</time></div>
-                  <FormattedText text={item.command.text} />
-                  <div className="agent-timeline-footer"><span>{item.command.state === "running" ? "执行中" : item.command.state === "queued" ? "已排队" : item.command.state === "failed" ? "发送失败" : "已发送"}</span>{session && <button onClick={() => onOpenTask(session.id)}>查看任务 →</button>}</div>
-                </div>
-              </article>;
-            }
             const session = item.post.sessionId ? sessionById.get(item.post.sessionId) : undefined;
             return <article className={`agent-timeline-item timeline-${item.post.kind}`} key={`post:${item.id}`}>
               <AgentAvatar avatar={project.agentProfile.avatar} className={`agent-timeline-avatar ${agentAvatarStyle(project.id)}`} alt="" />
@@ -183,10 +168,6 @@ export function AgentProfileDetail({ project, sessions, posts, commands, trustPo
               </div>
             </article>;
           })}
-          {!showAllActivity && timeline.length > 3 && (
-            <button className="agent-timeline-more" onClick={() => setShowAllActivity(true)}>查看全部 {timeline.length} 条动态</button>
-          )}
-          {showAllActivity && timeline.length > 3 && <button className="agent-timeline-more" onClick={() => setShowAllActivity(false)}>收起历史动态</button>}
           {timeline.length === 0 && <div className="timeline-empty"><strong>还没有 Agent 动态</strong><p>布置第一个任务后，重要进展会汇总在这里。</p></div>}
         </section>
       </section>

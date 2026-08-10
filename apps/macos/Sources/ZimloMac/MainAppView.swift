@@ -1,300 +1,262 @@
-import AppKit
 import SwiftUI
-import WebKit
-
-struct MainAppRoute: Equatable {
-    static let defaultPort = 4747
-
-    let url: URL
-
-    static func resolve(descriptor: ServiceDescriptor?) -> MainAppRoute {
-        let port: Int
-        if let descriptor,
-           HealthCheck.isCompatible(protocolVersion: descriptor.protocolVersion),
-           (1...65_535).contains(descriptor.port) {
-            port = descriptor.port
-        } else {
-            port = defaultPort
-        }
-
-        var components = URLComponents()
-        components.scheme = "http"
-        components.host = "127.0.0.1"
-        components.port = port
-        components.path = "/"
-        components.queryItems = [
-            URLQueryItem(name: "shell", value: "macos"),
-            URLQueryItem(name: "theme", value: "dark"),
-        ]
-        return MainAppRoute(url: components.url!)
-    }
-
-    func allowsNavigation(to candidate: URL) -> Bool {
-        guard candidate.scheme?.lowercased() == "http",
-              let host = candidate.host?.lowercased(),
-              ["127.0.0.1", "localhost", "::1"].contains(host) else {
-            return false
-        }
-        return candidate.port == url.port
-    }
-
-    func request(reloadID: UUID) -> URLRequest {
-        var components = URLComponents(url: url, resolvingAgainstBaseURL: false)!
-        components.queryItems = (components.queryItems ?? []) + [
-            URLQueryItem(name: "desktopReload", value: reloadID.uuidString),
-        ]
-        var request = URLRequest(
-            url: components.url!,
-            cachePolicy: .reloadIgnoringLocalAndRemoteCacheData
-        )
-        request.setValue("no-cache", forHTTPHeaderField: "Cache-Control")
-        return request
-    }
-}
-
-enum MainAppLoadPhase: Equatable {
-    case loading
-    case loaded
-    case failed(String)
-}
 
 struct MainAppView: View {
-    let route: MainAppRoute
+    let route: LocalBridgeRoute
     @ObservedObject var service: ServiceController
 
-    @State private var phase: MainAppLoadPhase = .loading
-    @State private var reloadID = UUID()
+    @StateObject private var store: NativeAppStore
+    @State private var section: NativeSection = .feed
+    @State private var path: [NativeRoute] = []
+    @State private var composer: NativeComposerContext?
+
+    init(route: LocalBridgeRoute, service: ServiceController) {
+        self.route = route
+        self.service = service
+        _store = StateObject(wrappedValue: NativeAppStore(
+            client: .live(baseURL: route.baseURL)
+        ))
+    }
 
     var body: some View {
         ZStack {
-            ZColor.paper.ignoresSafeArea()
-            MainAppWebView(
-                route: route,
-                reloadID: reloadID,
-                phase: $phase
-            )
+            NativeTheme.paper.ignoresSafeArea()
+            NavigationSplitView {
+                NativeSidebarView(
+                    selection: $section,
+                    serviceState: service.state,
+                    coreState: composer == nil
+                        ? (service.isReady ? store.snapshot.coreState : .offline)
+                        : .composing,
+                    onCompose: { composer = NativeComposerContext() }
+                )
+                .navigationSplitViewColumnWidth(min: 210, ideal: 236, max: 270)
+            } detail: {
+                NavigationStack(path: $path) {
+                    sectionRoot
+                        .navigationDestination(for: NativeRoute.self) { route in
+                            destination(for: route)
+                        }
+                }
+            }
+            .navigationSplitViewStyle(.balanced)
 
-            switch phase {
-            case .loading:
-                loadingView
-            case .loaded:
-                EmptyView()
-            case .failed(let message):
-                failureView(message: message)
+            loadOverlay
+
+            if let composer {
+                NativeComposerOverlay(
+                    context: composer,
+                    store: store,
+                    onDismiss: { self.composer = nil }
+                )
+                .transition(.opacity.combined(with: .scale(scale: 0.985)))
+                .zIndex(4)
+            }
+
+            if let notice = store.notice {
+                NativeNoticeView(notice: notice)
+                    .transition(.move(edge: .top).combined(with: .opacity))
+                    .zIndex(6)
             }
         }
-        .frame(minWidth: 860, minHeight: 600)
+        .frame(minWidth: 920, minHeight: 640)
         .preferredColorScheme(.dark)
-        .onChange(of: service.state) { previous, current in
-            guard previous != .ready, current == .ready else { return }
-            phase = .loading
-            reloadID = UUID()
+        .task { await store.run() }
+        .onChange(of: section) { _, _ in path.removeAll() }
+        .onChange(of: service.state) { _, current in
+            guard current == .ready else { return }
+            Task { await store.refresh() }
+        }
+        .animation(.snappy(duration: 0.24), value: composer != nil)
+        .animation(.easeOut(duration: 0.18), value: store.notice)
+    }
+
+    @ViewBuilder
+    private var sectionRoot: some View {
+        switch section {
+        case .feed:
+            NativeFeedView(store: store)
+        case .tasks:
+            NativeTasksView(store: store)
+        case .agents:
+            NativeAgentsView(store: store)
+        case .settings:
+            NativeSettingsView(store: store, service: service)
         }
     }
 
-    private var loadingView: some View {
-        VStack(spacing: 14) {
-            ProgressView()
-                .controlSize(.regular)
-                .tint(ZColor.acid)
-            Text("正在连接本地 Zimlo…")
-                .font(.system(size: 13, weight: .semibold))
-                .foregroundStyle(ZColor.muted)
+    @ViewBuilder
+    private func destination(for route: NativeRoute) -> some View {
+        switch route {
+        case .task(let sessionID):
+            if let session = store.snapshot.sessions.first(where: { $0.id == sessionID }) {
+                NativeTaskProfileView(
+                    store: store,
+                    session: session,
+                    onReply: { composer = NativeComposerContext(sessionID: sessionID) }
+                )
+            } else {
+                NativeMissingView(title: "这个任务已不存在", detail: "它可能已经从 Bridge 清理；返回列表即可继续。")
+            }
+        case .agent(let projectID):
+            if let project = store.snapshot.projects.first(where: { $0.id == projectID }) {
+                NativeAgentProfileView(
+                    store: store,
+                    project: project,
+                    onNewTask: { composer = NativeComposerContext(projectID: projectID) }
+                )
+            } else {
+                NativeMissingView(title: "这个 Agent 已不存在", detail: "项目可能已经移除或不再受信任。")
+            }
         }
-        .padding(24)
-        .background(ZColor.surface.opacity(0.96))
-        .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
-        .overlay {
-            RoundedRectangle(cornerRadius: 16, style: .continuous)
-                .stroke(ZColor.border, lineWidth: 1)
-        }
-        .accessibilityElement(children: .combine)
-        .accessibilityLabel("正在连接本地 Zimlo")
     }
 
-    private func failureView(message: String) -> some View {
-        VStack(spacing: 15) {
-            ZStack {
-                Circle()
-                    .fill(ZColor.coralSoft)
-                    .frame(width: 54, height: 54)
-                Image(systemName: "wifi.exclamationmark")
-                    .font(.system(size: 22, weight: .bold))
-                    .foregroundStyle(ZColor.coral)
+    @ViewBuilder
+    private var loadOverlay: some View {
+        switch store.loadState {
+        case .idle, .loading:
+            NativeLoadingView(message: "正在连接本地 Zimlo…")
+        case .failed(let message):
+            NativeFailureView(message: message) {
+                Task {
+                    if !service.isReady { await service.retry() }
+                    await store.refresh()
+                }
             }
-            Text("本地界面暂时无法连接")
-                .font(.system(size: 21, weight: .bold, design: .rounded))
-                .foregroundStyle(ZColor.ink)
-            Text(message)
-                .font(.system(size: 13, weight: .medium))
-                .foregroundStyle(ZColor.muted)
-                .multilineTextAlignment(.center)
-                .frame(maxWidth: 360)
-            Button {
-                phase = .loading
-                reloadID = UUID()
-            } label: {
-                Label("重新加载", systemImage: "arrow.clockwise")
-                    .font(.system(size: 13, weight: .bold))
-                    .foregroundStyle(ZColor.onAccent)
-                    .padding(.horizontal, 18)
-                    .frame(height: 38)
-                    .background(ZColor.acid)
-                    .clipShape(RoundedRectangle(cornerRadius: 11, style: .continuous))
-            }
-            .buttonStyle(.plain)
-            .accessibilityHint("重新连接本地 Zimlo 服务")
+        case .loaded:
+            EmptyView()
         }
-        .padding(.horizontal, 38)
-        .padding(.vertical, 34)
-        .background(ZColor.surface.opacity(0.98))
-        .clipShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
-        .overlay {
-            RoundedRectangle(cornerRadius: 20, style: .continuous)
-                .stroke(ZColor.border, lineWidth: 1)
-        }
-        .shadow(color: .black.opacity(0.28), radius: 22, y: 10)
     }
 }
 
-private struct MainAppWebView: NSViewRepresentable {
-    let route: MainAppRoute
-    let reloadID: UUID
-    @Binding var phase: MainAppLoadPhase
+private struct NativeSidebarView: View {
+    @Binding var selection: NativeSection
+    let serviceState: ServiceState
+    let coreState: CoreActionState
+    let onCompose: () -> Void
 
-    func makeCoordinator() -> Coordinator {
-        Coordinator(route: route, phase: $phase)
+    var body: some View {
+        VStack(spacing: 0) {
+            HStack(spacing: 10) {
+                ZStack {
+                    RoundedRectangle(cornerRadius: 9, style: .continuous)
+                        .fill(NativeTheme.acid)
+                    Image(systemName: "sparkles")
+                        .font(.system(size: 13, weight: .black))
+                        .foregroundStyle(NativeTheme.paper)
+                }
+                .frame(width: 31, height: 31)
+                VStack(alignment: .leading, spacing: 1) {
+                    Text("Zimlo").font(.system(size: 15, weight: .bold, design: .rounded))
+                    Text(serviceState.label)
+                        .font(.system(size: 10, weight: .medium))
+                        .foregroundStyle(serviceState == .ready ? NativeTheme.sage : NativeTheme.muted)
+                }
+                Spacer()
+            }
+            .padding(.horizontal, 14)
+            .padding(.top, 12)
+            .padding(.bottom, 16)
+
+            List(NativeSection.allCases, selection: $selection) { item in
+                Label {
+                    VStack(alignment: .leading, spacing: 1) {
+                        Text(item.title).font(.system(size: 13, weight: .semibold))
+                        Text(item.subtitle)
+                            .font(.system(size: 9.5, weight: .medium))
+                            .foregroundStyle(NativeTheme.muted)
+                    }
+                } icon: {
+                    Image(systemName: item.symbol)
+                        .font(.system(size: 13, weight: .semibold))
+                        .foregroundStyle(selection == item ? NativeTheme.acid : NativeTheme.muted)
+                        .frame(width: 19)
+                }
+                .tag(item)
+                .padding(.vertical, 4)
+            }
+            .listStyle(.sidebar)
+            .scrollContentBackground(.hidden)
+
+            NativeCoreActionButton(state: coreState, action: onCompose)
+                .padding(12)
+        }
+        .background(NativeTheme.surface.opacity(0.78))
+    }
+}
+
+struct NativeMissingView: View {
+    let title: String
+    let detail: String
+
+    var body: some View {
+        ContentUnavailableView(title, systemImage: "questionmark.folder", description: Text(detail))
+            .foregroundStyle(NativeTheme.ink)
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .background(NativeTheme.paper)
+    }
+}
+
+private struct NativeLoadingView: View {
+    let message: String
+    var body: some View {
+        VStack(spacing: 13) {
+            ProgressView().controlSize(.regular).tint(NativeTheme.acid)
+            Text(message).font(.system(size: 13, weight: .semibold)).foregroundStyle(NativeTheme.muted)
+        }
+        .padding(24)
+        .nativeCard()
+        .shadow(color: .black.opacity(0.24), radius: 20, y: 8)
+    }
+}
+
+private struct NativeFailureView: View {
+    let message: String
+    let retry: () -> Void
+    var body: some View {
+        VStack(spacing: 13) {
+            Image(systemName: "wifi.exclamationmark")
+                .font(.system(size: 24, weight: .bold))
+                .foregroundStyle(NativeTheme.coral)
+            Text("本地服务暂时无法连接")
+                .font(.system(size: 20, weight: .bold, design: .rounded))
+            Text(message)
+                .font(.system(size: 12, weight: .medium))
+                .foregroundStyle(NativeTheme.muted)
+                .multilineTextAlignment(.center)
+                .frame(maxWidth: 360)
+            Button("重新连接", action: retry).buttonStyle(.borderedProminent).tint(NativeTheme.acid)
+        }
+        .padding(32)
+        .nativeCard(cornerRadius: 20)
+        .shadow(color: .black.opacity(0.28), radius: 24, y: 10)
+    }
+}
+
+private struct NativeNoticeView: View {
+    let notice: NativeNotice
+    private var color: Color {
+        switch notice.tone {
+        case .neutral: NativeTheme.ink
+        case .success: NativeTheme.sage
+        case .failure: NativeTheme.coral
+        }
     }
 
-    func makeNSView(context: Context) -> WKWebView {
-        let configuration = WKWebViewConfiguration()
-        configuration.websiteDataStore = .default()
-        configuration.defaultWebpagePreferences.preferredContentMode = .desktop
-        configuration.userContentController.addUserScript(WKUserScript(
-            source: """
-                document.documentElement.dataset.zimloShell = 'macos';
-                document.documentElement.dataset.theme = 'dark';
-                document.documentElement.classList.add('mac-dark');
-                """,
-            injectionTime: .atDocumentStart,
-            forMainFrameOnly: true
-        ))
-        configuration.userContentController.add(
-            context.coordinator,
-            name: WebSpeechBridge.messageHandlerName
-        )
-
-        let webView = WKWebView(frame: .zero, configuration: configuration)
-        webView.navigationDelegate = context.coordinator
-        webView.uiDelegate = context.coordinator
-        context.coordinator.attach(to: webView)
-        webView.underPageBackgroundColor = NSColor(
-            calibratedRed: 0.045,
-            green: 0.052,
-            blue: 0.049,
-            alpha: 1
-        )
-        context.coordinator.lastReloadID = reloadID
-        webView.load(route.request(reloadID: reloadID))
-        return webView
-    }
-
-    func updateNSView(_ webView: WKWebView, context: Context) {
-        context.coordinator.route = route
-        context.coordinator.phase = $phase
-        guard context.coordinator.lastReloadID != reloadID else { return }
-        context.coordinator.lastReloadID = reloadID
-        webView.load(route.request(reloadID: reloadID))
-    }
-
-    @MainActor
-    final class Coordinator: NSObject, WKNavigationDelegate, WKUIDelegate, WKScriptMessageHandler {
-        var route: MainAppRoute
-        var phase: Binding<MainAppLoadPhase>
-        var lastReloadID: UUID?
-        private let speechBridge = WebSpeechBridge()
-
-        init(route: MainAppRoute, phase: Binding<MainAppLoadPhase>) {
-            self.route = route
-            self.phase = phase
+    var body: some View {
+        HStack(spacing: 9) {
+            Image(systemName: notice.tone == .failure ? "exclamationmark.circle.fill" : "checkmark.circle.fill")
+                .foregroundStyle(color)
+            Text(notice.text).font(.system(size: 12, weight: .semibold))
         }
-
-        func attach(to webView: WKWebView) {
-            speechBridge.attach(to: webView)
-        }
-
-        func userContentController(
-            _ userContentController: WKUserContentController,
-            didReceive message: WKScriptMessage
-        ) {
-            speechBridge.handle(message)
-        }
-
-        func webView(
-            _ webView: WKWebView,
-            runOpenPanelWith parameters: WKOpenPanelParameters,
-            initiatedByFrame frame: WKFrameInfo,
-            completionHandler: @escaping @MainActor ([URL]?) -> Void
-        ) {
-            let panel = NSOpenPanel()
-            panel.canChooseFiles = true
-            panel.canChooseDirectories = parameters.allowsDirectories
-            panel.allowsMultipleSelection = parameters.allowsMultipleSelection
-
-            let complete: @MainActor (NSApplication.ModalResponse) -> Void = { response in
-                completionHandler(response == .OK ? panel.urls : nil)
-            }
-            if let window = webView.window {
-                panel.beginSheetModal(for: window, completionHandler: complete)
-            } else {
-                panel.begin(completionHandler: complete)
-            }
-        }
-
-        func webView(
-            _ webView: WKWebView,
-            decidePolicyFor navigationAction: WKNavigationAction,
-            decisionHandler: @escaping @MainActor (WKNavigationActionPolicy) -> Void
-        ) {
-            guard let candidate = navigationAction.request.url,
-                  route.allowsNavigation(to: candidate) else {
-                decisionHandler(.cancel)
-                return
-            }
-            decisionHandler(.allow)
-        }
-
-        func webView(_ webView: WKWebView, didStartProvisionalNavigation navigation: WKNavigation?) {
-            phase.wrappedValue = .loading
-        }
-
-        func webView(_ webView: WKWebView, didFinish navigation: WKNavigation?) {
-            phase.wrappedValue = .loaded
-        }
-
-        func webView(
-            _ webView: WKWebView,
-            didFailProvisionalNavigation navigation: WKNavigation?,
-            withError error: Error
-        ) {
-            report(error)
-        }
-
-        func webView(_ webView: WKWebView, didFail navigation: WKNavigation?, withError error: Error) {
-            report(error)
-        }
-
-        private func report(_ error: Error) {
-            let code = (error as? URLError)?.code
-            guard code != .cancelled else { return }
-            let message: String
-            switch code {
-            case .cannotConnectToHost, .networkConnectionLost, .notConnectedToInternet, .timedOut:
-                message = "请确认后台服务正在运行，然后重试。关闭这个窗口不会停止服务。"
-            default:
-                message = "页面加载失败。请稍后重试，或从菜单栏检查后台服务。"
-            }
-            phase.wrappedValue = .failed(message)
-        }
+        .foregroundStyle(NativeTheme.ink)
+        .padding(.horizontal, 15)
+        .frame(minHeight: 38)
+        .background(.ultraThinMaterial)
+        .clipShape(Capsule())
+        .overlay(Capsule().stroke(color.opacity(0.25), lineWidth: 1))
+        .shadow(color: .black.opacity(0.24), radius: 14, y: 5)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+        .padding(.top, 12)
+        .allowsHitTesting(false)
     }
 }

@@ -77,7 +77,7 @@ final class WindowCoordinator: NSObject, NSWindowDelegate {
     private static let menuDismissalDelay = Duration.milliseconds(180)
     private var onboardingWindow: NSWindow?
     private var mainAppWindow: NSWindow?
-    private var mainAppRoute: MainAppRoute?
+    private var mainAppRoute: LocalBridgeRoute?
 
     /// MenuBarExtra dismisses its AppKit panel with a transform animation. On
     /// macOS 26, ordering another window during that same animation can crash
@@ -137,7 +137,7 @@ final class WindowCoordinator: NSObject, NSWindowDelegate {
     func showMainApp() {
         let descriptor = (try? Data(contentsOf: ServiceController.serviceDescriptorURL))
             .flatMap(ServiceDescriptor.decode)
-        let route = MainAppRoute.resolve(descriptor: descriptor)
+        let route = LocalBridgeRoute.resolve(descriptor: descriptor)
 
         if let mainAppWindow {
             if mainAppRoute != route {
@@ -155,7 +155,7 @@ final class WindowCoordinator: NSObject, NSWindowDelegate {
         let content = MainAppView(route: route, service: AppModel.shared.service)
         let window = NSWindow(
             contentRect: NSRect(origin: .zero, size: MainWindowLayout.initialContentSize),
-            styleMask: [.titled, .closable, .miniaturizable, .resizable],
+            styleMask: [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView],
             backing: .buffered,
             defer: false
         )
@@ -194,7 +194,7 @@ final class WindowCoordinator: NSObject, NSWindowDelegate {
         guard sender === onboardingWindow || sender === mainAppWindow else {
             return true
         }
-        // Keep the SwiftUI/WKWebView hierarchy alive for the lifetime of the
+        // Keep the native SwiftUI hierarchy alive for the lifetime of the
         // menu-bar app. Releasing and rebuilding it while NSStatusBarWindow is
         // draining can crash AppKit on macOS 26; hiding is also much faster on
         // the next open.
@@ -205,47 +205,9 @@ final class WindowCoordinator: NSObject, NSWindowDelegate {
     private func installBrandChrome(on window: NSWindow) {
         window.title = "Zimlo"
         window.titleVisibility = .hidden
-        window.titlebarAppearsTransparent = false
+        window.titlebarAppearsTransparent = true
+        window.titlebarSeparatorStyle = .none
         window.miniwindowImage = WindowBrandAssets.icon
-
-        let accessory = NSTitlebarAccessoryViewController()
-        accessory.layoutAttribute = .left
-        accessory.view = makeWindowBrandView()
-        window.addTitlebarAccessoryViewController(accessory)
-    }
-
-    private func makeWindowBrandView() -> NSView {
-        let brand = NSView(frame: NSRect(x: 0, y: 0, width: 94, height: 28))
-
-        let icon = NSImageView(image: WindowBrandAssets.icon)
-        icon.translatesAutoresizingMaskIntoConstraints = false
-        icon.imageScaling = .scaleProportionallyUpOrDown
-        icon.imageAlignment = .alignCenter
-
-        let title = NSTextField(labelWithString: "Zimlo")
-        title.translatesAutoresizingMaskIntoConstraints = false
-        title.font = .systemFont(ofSize: 12, weight: .semibold)
-        title.textColor = .labelColor
-        title.lineBreakMode = .byClipping
-
-        brand.addSubview(icon)
-        brand.addSubview(title)
-        brand.setAccessibilityElement(true)
-        brand.setAccessibilityLabel("Zimlo")
-
-        NSLayoutConstraint.activate([
-            brand.widthAnchor.constraint(equalToConstant: 94),
-            brand.heightAnchor.constraint(equalToConstant: 28),
-            icon.leadingAnchor.constraint(equalTo: brand.leadingAnchor, constant: 5),
-            icon.centerYAnchor.constraint(equalTo: brand.centerYAnchor),
-            icon.widthAnchor.constraint(equalToConstant: 22),
-            icon.heightAnchor.constraint(equalToConstant: 22),
-            title.leadingAnchor.constraint(equalTo: icon.trailingAnchor, constant: 7),
-            title.trailingAnchor.constraint(lessThanOrEqualTo: brand.trailingAnchor, constant: -4),
-            title.centerYAnchor.constraint(equalTo: brand.centerYAnchor),
-        ])
-
-        return brand
     }
 }
 

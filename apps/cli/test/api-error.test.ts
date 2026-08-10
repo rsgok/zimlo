@@ -140,4 +140,49 @@ describe("local API stable errors", () => {
     expect(body.ready).toBe(true);
     expect(body.integrations.length).toBeGreaterThan(0);
   });
+
+  it("serves the native macOS snapshot and validates local commands", async () => {
+    const { localUrl } = await createBridge();
+    const snapshot = await fetch(`${localUrl}/api/local/snapshot`);
+    expect(snapshot.status).toBe(200);
+    const snapshotBody = await snapshot.json() as { host?: { platform?: string }; sequence?: number };
+    expect(snapshotBody.host?.platform).toBe("macos");
+    expect(snapshotBody.sequence).toBeTypeOf("number");
+
+    const invalid = await fetch(`${localUrl}/api/local/commands`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ type: "not.real" }),
+    });
+    const invalidBody = await expectStableError(invalid, 400);
+    expect(invalidBody.code).toBe("invalid_command");
+
+    const valid = await fetch(`${localUrl}/api/local/commands`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ type: "snapshot.request" }),
+    });
+    expect(valid.status).toBe(200);
+    const validBody = await valid.json() as { ok: boolean; messages: Array<{ type: string }>; snapshot: { sequence: number } };
+    expect(validBody.ok).toBe(true);
+    expect(validBody.messages[0]?.type).toBe("session.snapshot");
+    expect(validBody.snapshot.sequence).toBeTypeOf("number");
+  });
+
+  it("rejects an unsupported native material kind without throwing", async () => {
+    const { localUrl } = await createBridge();
+    const response = await fetch(`${localUrl}/api/local/materials/material-1`, {
+      method: "PUT",
+      headers: {
+        "content-type": "application/octet-stream",
+        "x-zimlo-kind": "archive",
+        "x-zimlo-name": "test.zip",
+        "x-zimlo-mime": "application/zip",
+        "x-zimlo-sha256": "0".repeat(64),
+      },
+      body: new Uint8Array([0x50, 0x4b]),
+    });
+    const body = await expectStableError(response, 400);
+    expect(body.code).toBe("material_kind_invalid");
+  });
 });

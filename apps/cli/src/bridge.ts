@@ -5,7 +5,7 @@ import Fastify, { type FastifyError, type FastifyInstance } from "fastify";
 import fastifyStatic from "@fastify/static";
 import fastifyWebsocket from "@fastify/websocket";
 import QRCode from "qrcode";
-import type { ClientCommand, ServerMessage } from "@zimlo/protocol";
+import { ClientCommandSchema, type ClientCommand, type Material, type ServerMessage } from "@zimlo/protocol";
 import { ActionBroker } from "./action-broker.js";
 import { ApiError, classifyIntegrationError, classifyLocalApiError, sendApiError } from "./api-error.js";
 import { CloudService } from "./cloud-service.js";
@@ -33,6 +33,14 @@ interface PairBody {
 interface LocalIntegrationBody {
   target?: "all" | "codex_gui" | "cli";
 }
+
+interface CommandConnection {
+  readonly deviceId: string | null;
+  readonly isLocalAdmin: boolean;
+  send(message: ServerMessage): void;
+}
+
+const MATERIAL_KINDS = new Set<Material["kind"]>(["image", "video", "pdf", "document"]);
 
 export interface BridgeOptions {
   port: number;
@@ -174,6 +182,73 @@ export class BridgeServer {
         return sendApiError(reply, classifyLocalApiError(error, "bootstrap_unavailable", "本机管理设备初始化失败。"));
       }
     });
+    app.get("/api/local/snapshot", async (request, reply) => {
+      if (!isLoopbackAddress(request.ip)) return reply.code(403).send(loopbackOnly());
+      const device = this.devices.localAdmin();
+      return this.runtime.snapshot(device.id);
+    });
+    app.get("/api/local/sessions/:sessionId/events", async (request, reply) => {
+      if (!isLoopbackAddress(request.ip)) return reply.code(403).send(loopbackOnly());
+      const sessionId = (request.params as { sessionId?: string }).sessionId ?? "";
+      if (!this.runtime.store.getSession(sessionId)) {
+        return reply.code(404).send({ code: "session_not_found", message: "这个任务已不存在。", recoverable: false });
+      }
+      return { sessionId, events: this.runtime.store.listEvents(sessionId) };
+    });
+    app.post("/api/local/commands", async (request, reply) => {
+      if (!isLoopbackAddress(request.ip)) return reply.code(403).send(loopbackOnly());
+      const parsed = ClientCommandSchema.safeParse(request.body);
+      if (!parsed.success) {
+        return reply.code(400).send({
+          code: "invalid_command",
+          message: "操作参数不受支持。",
+          recoverable: false,
+        });
+      }
+      const device = this.devices.localAdmin();
+      const messages: ServerMessage[] = [];
+      const connection: CommandConnection = {
+        deviceId: device.id,
+        isLocalAdmin: true,
+        send: (message) => messages.push(message),
+      };
+      await this.handleCommand(connection, parsed.data);
+      return { ok: true, messages, snapshot: this.runtime.snapshot(device.id) };
+    });
+    app.put("/api/local/materials/:materialId", async (request, reply) => {
+      if (!isLoopbackAddress(request.ip)) return reply.code(403).send(loopbackOnly());
+      const materialId = (request.params as { materialId?: string }).materialId ?? "";
+      if (!Buffer.isBuffer(request.body)) {
+        return reply.code(400).send({ code: "material_body_required", message: "文件内容为空。", recoverable: false });
+      }
+      const header = (name: string): string => String(request.headers[name] ?? "");
+      const kindHeader = header("x-zimlo-kind");
+      if (!MATERIAL_KINDS.has(kindHeader as Material["kind"])) {
+        return reply.code(400).send({ code: "material_kind_invalid", message: "文件类型不受支持。", recoverable: false });
+      }
+      const kind = kindHeader as Material["kind"];
+      const encodedName = header("x-zimlo-name");
+      let name = encodedName;
+      try { name = decodeURIComponent(encodedName); } catch { /* validated below */ }
+      const material = this.materials.importLocal({
+        id: materialId,
+        kind,
+        name,
+        mimeType: header("x-zimlo-mime"),
+        sizeBytes: request.body.length,
+        sha256: header("x-zimlo-sha256"),
+        origin: "user",
+        createdAt: new Date().toISOString(),
+      }, request.body);
+      if (material.status === "failed") {
+        return reply.code(400).send({
+          code: "material_invalid",
+          message: material.error ?? "文件无法导入。",
+          recoverable: false,
+        });
+      }
+      return reply.code(201).send(material);
+    });
     app.get("/api/local/status", async (request, reply) => {
       if (!isLoopbackAddress(request.ip)) return reply.code(403).send(loopbackOnly());
       try {
@@ -312,7 +387,7 @@ export class BridgeServer {
     for (const connection of this.connections) connection.send(message);
   }
 
-  private async handleCommand(connection: SecureSocket, command: ClientCommand): Promise<void> {
+  private async handleCommand(connection: CommandConnection, command: ClientCommand): Promise<void> {
     const deviceId = connection.deviceId;
     if (!deviceId) return;
     switch (command.type) {

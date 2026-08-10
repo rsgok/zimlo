@@ -1,7 +1,7 @@
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it, vi } from "vitest";
 import { EMPTY_CAPABILITIES, type FeedPost, type Project, type Session, type TaskCommand, type TaskRecord, type UnifiedEvent } from "@zimlo/protocol";
-import { buildTaskTimeline, conciseInstruction, SessionDetail } from "./SessionDetail";
+import { buildTaskTimeline, conciseInstruction, SessionDetail, taskNavigationTitle, taskOriginalInput } from "./SessionDetail";
 
 const session: Session = {
   id: "session-a",
@@ -192,16 +192,28 @@ describe("SessionDetail", () => {
     expect(markup).toContain("还没有需要阅读的更新");
   });
 
-  it("shows the full task input while keeping the app heading concise", () => {
+  it("shows the full task input while keeping concise page semantics", () => {
     const longInput = `${"请完整保留任务输入。".repeat(30)}结尾验收词`;
     const longInstruction = { ...events[0]!, payload: { prompt: longInput } };
     const markup = renderToStaticMarkup(
       <SessionDetail session={session} events={[longInstruction]} actions={[]} posts={[]} commands={[]} userAvatarId="user-01" send={vi.fn()} onClose={vi.fn()} />,
     );
 
-    expect(markup).toContain(">任务详情<");
+    expect(markup).toContain('class="task-profile-header" aria-label="修复 Feed 交互"');
+    expect(markup).not.toContain("app-top-bar");
     expect(markup).toContain("结尾验收词");
     expect(markup).not.toContain("查看完整输入");
+  });
+
+  it("uses authored task titles but falls back to a concise original input", () => {
+    expect(taskNavigationTitle("修复 Feed 交互", "一段不同的完整任务输入")).toBe("修复 Feed 交互");
+    expect(taskNavigationTitle("Codex · 019fb818", "请重构任务详情，保留最新结论和下一步")).toBe("请重构任务详情");
+  });
+
+  it("does not mistake a late follow-up for the original task when the opening event is missing", () => {
+    const lateFollowUp = { ...events[0]!, occurredAt: "2026-07-22T09:30:00.000Z", payload: { prompt: "push all" } };
+    expect(taskOriginalInput(session, [lateFollowUp])).toBe("修复 Feed 交互");
+    expect(taskOriginalInput(session, [events[0]!])).toBe("左滑进入当前任务详情");
   });
 
   it("only shows a human next action when review is actually required", () => {

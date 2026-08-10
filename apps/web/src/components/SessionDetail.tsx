@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { ClientCommand, FeedPost, Material, PendingAction, Project, Session, TaskCommand, TaskRecord, UnifiedEvent, UserAvatarId } from "@zimlo/protocol";
-import { AppTopBar } from "./AppTopBar";
+import { AppIcon } from "./AppIcon";
 import { ActionPanel } from "./ActionPanel";
 import { FormattedText } from "./FormattedText";
 import { agentAvatarStyle } from "./AgentsView";
@@ -56,7 +56,7 @@ const STATUS_LABELS: Record<string, string> = {
   unknown: "状态未知",
   waiting_input: "等你回复",
   reviewing: "检查中",
-  user_review: "等待反馈",
+  user_review: "待你审阅",
 };
 
 const COMMAND_LABELS: Record<TaskCommand["state"], string> = {
@@ -94,6 +94,36 @@ function cleanDisplayText(value: string): string {
     .replace(/::(?:git-[\w-]+|created-thread)\{[^\n]*\}/gu, "")
     .replace(/\n{3,}/gu, "\n\n")
     .trim();
+}
+
+export function taskNavigationTitle(sessionTitle: string, taskInput: string, maxLength = 18): string {
+  const normalize = (value: string) => value.trim().replace(/^[#>*`-]+/u, "").trim().replace(/\s+/gu, " ");
+  const normalizedSession = normalize(sessionTitle);
+  const normalizedInput = normalize(taskInput);
+  const authoredSessionTitle = Boolean(
+    normalizedSession
+    && normalizedSession !== normalizedInput
+    && !normalizedSession.startsWith("Codex ·")
+    && !normalizedSession.startsWith("Claude ·")
+    && normalizedSession.length <= maxLength,
+  );
+  const source = authoredSessionTitle ? normalizedSession : normalizedInput || normalizedSession;
+  if (!source) return "任务";
+  const clauseBreak = source.search(/[，。！？；：,.!?;:\n]/u);
+  const prefix = clauseBreak >= 0 ? source.slice(0, clauseBreak).trim() : source;
+  const clause = prefix.length >= 4 ? prefix : source;
+  return clause.length > maxLength ? `${clause.slice(0, maxLength)}…` : clause;
+}
+
+export function taskOriginalInput(session: Session, instructions: UnifiedEvent[]): string {
+  const firstInstruction = instructions[0];
+  if (!firstInstruction) return cleanDisplayText(session.title);
+  const eventInput = cleanDisplayText(instructionText(firstInstruction) || session.title);
+  const createdAt = new Date(session.createdAt).getTime();
+  const eventAt = new Date(firstInstruction.occurredAt).getTime();
+  const missingOpeningTurn = Number.isFinite(createdAt) && Number.isFinite(eventAt) && eventAt - createdAt > 120_000;
+  const generatedTitle = /^(?:Codex|Claude) ·/u.test(session.title.trim());
+  return missingOpeningTurn && !generatedTitle ? cleanDisplayText(session.title) : eventInput;
 }
 
 export function conciseInstruction(value: string, maxLength = 420): string {
@@ -259,8 +289,7 @@ export function SessionDetail({ session, project, events, actions, posts, comman
   const instructions = [...events]
     .filter((event) => event.kind === "user_instruction")
     .sort((left, right) => left.sequence - right.sequence);
-  const firstInstruction = instructions[0];
-  const rawTaskInput = cleanDisplayText(firstInstruction ? instructionText(firstInstruction) || session.title : session.title);
+  const rawTaskInput = taskOriginalInput(session, instructions);
   const location = sessionLocation(session);
   const pendingAction = actions.find((action) => action.state === "pending");
   const pendingActions = actions.filter((action) => action.state === "pending");
@@ -280,24 +309,6 @@ export function SessionDetail({ session, project, events, actions, posts, comman
   const cursorIndex = timelineCursor ? timeline.findIndex((item) => item.aliases.includes(timelineCursor)) : -1;
   const unreadCount = timeline.length === 0 || timelineCursor === timelineIds[0] ? 0 : cursorIndex >= 0 ? cursorIndex : timeline.length;
 
-  // “已定位”：打开时滚动到最早一条未读（时间线上新→旧排列，最早未读即游标前一条；
-  // 游标缺失时全部未读，定位到最旧一条）。
-  const timelineItemRefs = useRef(new Map<string, HTMLElement>());
-  const positionedUnreadRef = useRef(false);
-  const firstUnreadIndex = unreadCount > 0 ? (cursorIndex > 0 ? cursorIndex - 1 : timeline.length - 1) : -1;
-  useEffect(() => {
-    if (positionedUnreadRef.current || timeline.length === 0) return;
-    positionedUnreadRef.current = true;
-    if (firstUnreadIndex < 0) return;
-    const target = timeline[firstUnreadIndex];
-    if (!target) return;
-    timelineItemRefs.current.get(`${target.type}:${target.id}`)?.scrollIntoView({ block: "center" });
-  }, [firstUnreadIndex, timeline]);
-  const setTimelineItemRef = (key: string) => (node: HTMLElement | null) => {
-    if (node) timelineItemRefs.current.set(key, node);
-    else timelineItemRefs.current.delete(key);
-  };
-
   useEffect(() => {
     const latest = timelineIds[0];
     if (!latest || latest === timelineCursor) return;
@@ -316,9 +327,11 @@ export function SessionDetail({ session, project, events, actions, posts, comman
   return (
     <div className="detail-backdrop" role="presentation">
       <section className="detail-panel" role="dialog" aria-modal="true" aria-label={session.title} ref={panelRef}>
-        <AppTopBar detail title="任务详情" onBack={onClose} action={<span className={`task-status task-status-${currentState}`}>{STATUS_LABELS[currentState] ?? currentState}</span>} />
-
-        <section className="task-profile-header">
+        <section className="task-profile-header" aria-label={taskNavigationTitle(session.title, rawTaskInput)}>
+          <div className="detail-page-controls">
+            <button type="button" onClick={onClose} aria-label="返回"><AppIcon name="arrow-left" /></button>
+            <span className={`task-status task-status-${currentState}`}>{STATUS_LABELS[currentState] ?? currentState}</span>
+          </div>
           <div className="task-profile-identity">
             {project
               ? <AgentAvatar avatar={project.agentProfile.avatar} className={`task-runtime-avatar ${agentAvatarStyle(project.id)}`} alt="" />
@@ -354,12 +367,12 @@ export function SessionDetail({ session, project, events, actions, posts, comman
         </section>
 
         <section className="task-timeline" aria-label="任务 Timeline">
-          <header className="timeline-heading"><h2>动态</h2><span>{unreadCount > 0 ? `${unreadCount} 条未读 · 已定位` : "关键轮次在第一层"}</span></header>
+          <header className="timeline-heading"><h2>动态</h2><span>{unreadCount > 0 ? `${unreadCount} 条未读` : "关键轮次在第一层"}</span></header>
           {timeline.map((item) => {
             if (item.type === "post") {
               const detailCount = item.details.length + item.post.highlights.length + (item.post.proof ? 1 : 0);
               return (
-              <article className={`task-timeline-item timeline-${item.post.kind}`} data-timeline-level="primary" key={`post:${item.id}`} ref={setTimelineItemRef(`post:${item.id}`)}>
+              <article className={`task-timeline-item timeline-${item.post.kind}`} data-timeline-level="primary" key={`post:${item.id}`}>
                 {project
                   ? <AgentAvatar avatar={project.agentProfile.avatar} className={`timeline-avatar ${agentAvatarStyle(project.id)}`} alt="" />
                   : <span className={`timeline-avatar timeline-avatar-agent provider-avatar provider-${session.provider}`} aria-label={session.provider === "codex" ? "Codex" : "Claude Code"}><ProviderIcon provider={session.provider} /></span>}
@@ -379,7 +392,7 @@ export function SessionDetail({ session, project, events, actions, posts, comman
               );
             }
             if (item.type === "command") return (
-              <article className={`task-timeline-item timeline-command timeline-command-${item.command.state}`} data-timeline-level="primary" key={`command:${item.id}`} ref={setTimelineItemRef(`command:${item.id}`)}>
+              <article className={`task-timeline-item timeline-command timeline-command-${item.command.state}`} data-timeline-level="primary" key={`command:${item.id}`}>
                 <UserAvatar avatarId={userAvatarId} className="timeline-avatar timeline-avatar-user" alt="" />
                 <div className="timeline-content">
                   <div className="timeline-meta"><strong>你</strong><span>{item.command.kind === "create" ? "创建任务" : "追加指令"}</span><time>· {readableDate(item.at)}</time></div>
@@ -402,7 +415,7 @@ export function SessionDetail({ session, project, events, actions, posts, comman
             const summary = item.instruction ? conciseInstruction(instructionText(item.instruction)) : readablePayload(item.event.payload);
             const failedEvent = item.details.find((event) => ["tests_failed", "failed", "blocked"].includes(event.kind));
             return (
-              <article className={`task-timeline-item timeline-${failedEvent || ["tests_failed", "failed", "blocked"].includes(item.event.kind) ? "failure" : "progress"}`} data-timeline-level="primary" key={`turn:${item.id}`} ref={setTimelineItemRef(`turn:${item.id}`)}>
+              <article className={`task-timeline-item timeline-${failedEvent || ["tests_failed", "failed", "blocked"].includes(item.event.kind) ? "failure" : "progress"}`} data-timeline-level="primary" key={`turn:${item.id}`}>
                 {item.instruction
                   ? <UserAvatar avatarId={userAvatarId} className="timeline-avatar timeline-avatar-user" alt="" />
                   : project
