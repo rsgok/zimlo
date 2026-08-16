@@ -35,6 +35,8 @@
 		10000000000000000000001B /* BehaviorTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 200000000000000000000020 /* BehaviorTests.swift */; };
 		10000000000000000000001D /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 200000000000000000000022 /* Assets.xcassets */; };
 		10000000000000000000001E /* MaterialSupport.swift in Sources */ = {isa = PBXBuildFile; fileRef = 200000000000000000000023 /* MaterialSupport.swift */; };
+		10000000000000000000001F /* providers in Resources */ = {isa = PBXBuildFile; fileRef = 200000000000000000000025 /* providers */; };
+		100000000000000000000020 /* ZimloContract.generated.swift in Sources */ = {isa = PBXBuildFile; fileRef = 200000000000000000000024 /* ZimloContract.generated.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -90,6 +92,8 @@
 		200000000000000000000020 /* BehaviorTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BehaviorTests.swift; sourceTree = "<group>"; };
 		200000000000000000000022 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Resources/Assets.xcassets; sourceTree = "<group>"; };
 		200000000000000000000023 /* MaterialSupport.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MaterialSupport.swift; sourceTree = "<group>"; };
+		200000000000000000000024 /* ZimloContract.generated.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ZimloContract.generated.swift; sourceTree = "<group>"; };
+		200000000000000000000025 /* providers */ = {isa = PBXFileReference; lastKnownFileType = folder; name = providers; path = ../../shared/branding/providers; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -125,6 +129,8 @@
 				200000000000000000000021,
 				200000000000000000000022,
 				200000000000000000000023,
+				200000000000000000000024,
+				200000000000000000000025,
 			);
 		};
 		500000000000000000000003 /* ZimloTests */ = {isa = PBXGroup; path = ZimloTests; sourceTree = "<group>"; children = (20000000000000000000000F, 20000000000000000000001F, 200000000000000000000020,); };
@@ -200,7 +206,7 @@
 /* End PBXProject section */
 
 /* Begin PBXResourcesBuildPhase section */
-		600000000000000000000002 = {isa = PBXResourcesBuildPhase; buildActionMask = 2147483647; files = (10000000000000000000000E, 100000000000000000000015, 10000000000000000000001D,); runOnlyForDeploymentPostprocessing = 0; };
+		600000000000000000000002 = {isa = PBXResourcesBuildPhase; buildActionMask = 2147483647; files = (10000000000000000000000E, 100000000000000000000015, 10000000000000000000001D, 10000000000000000000001F,); runOnlyForDeploymentPostprocessing = 0; };
 		600000000000000000000005 = {isa = PBXResourcesBuildPhase; buildActionMask = 2147483647; files = (); runOnlyForDeploymentPostprocessing = 0; };
 /* End PBXResourcesBuildPhase section */
 
@@ -228,6 +234,7 @@
 				10000000000000000000000D, 100000000000000000000011, 100000000000000000000014,
 				100000000000000000000016, 100000000000000000000017, 100000000000000000000018,
 				100000000000000000000019,
+				100000000000000000000020,
 				10000000000000000000001C,
 				10000000000000000000001E,
 			);

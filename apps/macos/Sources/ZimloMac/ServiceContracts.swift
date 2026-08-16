@@ -12,8 +12,7 @@ struct HealthResponse: Decodable {
 }
 
 enum HealthCheck {
-    /// 与 apps/cli version.ts 的 ZIMLO_PROTOCOL_VERSION 对齐。
-    static let expectedProtocolVersion = 4
+    static let expectedProtocolVersion = ZimloContract.protocolVersion
 
     static func isCompatible(protocolVersion: Int?) -> Bool {
         protocolVersion == expectedProtocolVersion

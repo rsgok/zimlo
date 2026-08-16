@@ -1,5 +1,9 @@
 # Zimlo MVP 架构
 
+仓库边界、风险分级和后续重构顺序见
+[`ARCHITECTURE_AUDIT.md`](./ARCHITECTURE_AUDIT.md)。本文件描述当前运行时行为，审计文件描述
+代码组织方式与演进约束。
+
 ## Codex GUI 集成
 
 Codex GUI 不提供 CLI 的 `/hooks` 浏览器，因此 Zimlo 不再把用户级 `~/.codex/hooks.json` 当作 GUI 安装入口。`@zimlo/cli` 内置一个可物化的 Personal 插件模板：

@@ -659,7 +659,7 @@ final class HostBridgeClient: ObservableObject {
         let (data, response) = try await URLSession.shared.data(for: request)
         guard let http = response as? HTTPURLResponse, http.statusCode == 200,
               let value = try JSONSerialization.jsonObject(with: data) as? [String: Any],
-              value["protocolVersion"] as? Int == 4 else {
+              value["protocolVersion"] as? Int == ZimloContract.protocolVersion else {
             throw PairingError.incompatibleVersion
         }
     }

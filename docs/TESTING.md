@@ -14,11 +14,16 @@ node apps/cli/dist/index.js codex-plugin status
 ## 自动验证
 
 ```bash
+pnpm architecture:check
 pnpm test
 pnpm typecheck
 pnpm build
 node apps/cli/dist/index.js doctor
 ```
+
+核心仓库可直接运行 `pnpm check`。发布或大范围重构使用 `pnpm check:all`，它会额外验证
+macOS Swift package、`landing-page` 与 `work-report`，并在结束后恢复报告的已跟踪事实快照。协议或产品版本只修改
+`config/zimlo-contract.json`，随后运行 `pnpm contract:generate`；生成文件不允许手改。
 
 `pnpm test` 覆盖 Codex/Claude fixture parser、Project 回填与卡片归属、测试命令识别、脱敏、Feed 发帖去重与结束检查点、Action Broker 幂等与重启过期、网络地址判断、协议加密/防重放，以及 Codex app-server 审批值映射。
 

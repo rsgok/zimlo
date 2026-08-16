@@ -8,9 +8,6 @@ import type {
   ApprovalCategory,
   FeedCard,
   FeedPost,
-  FeedPostKind,
-  FeedTemplate,
-  FeedContent,
   Material,
   NotificationSettings,
   PendingAction,
@@ -18,7 +15,6 @@ import type {
   ProjectTrustPolicy,
   PushDeviceRegistration,
   Session,
-  SessionCapabilities,
   Snapshot,
   TaskCommand,
   TaskPreference,
@@ -31,61 +27,37 @@ import type {
 } from "@zimlo/protocol";
 import { ephemeralWorkspaceKind, persistableProjectForCwd, projectContextForCwd } from "./project-context.js";
 import { sanitizeEventPayload } from "./sanitization.js";
+import {
+  actionFromRow,
+  cardFromRow,
+  defaultTemplate,
+  deviceFromRow,
+  eventFromRow,
+  feedPostFromRow,
+  json,
+  materialFromRow,
+  normalizeTemplate,
+  notificationSettingsFromRow,
+  pushDeviceFromRow,
+  sessionFromRow,
+  taskCommandFromRow,
+  taskFromRow,
+  trustAuditFromRow,
+  trustPolicyFromRow,
+  type DeviceRecord,
+  type DeviceRow,
+  type StoredFeedContentV2,
+} from "./store-codecs.js";
+import { initializeStoreSchema } from "./store-schema.js";
 
-interface DeviceRow {
-  id: string;
-  name: string;
-  key_base64: string;
-  created_at: string;
-  last_seen_at: string;
-  revoked_at: string | null;
-  is_local_admin: number;
-  can_approve: number;
-  can_manage_trust: number;
-}
-
-export interface DeviceRecord {
-  id: string;
-  name: string;
-  keyBase64: string;
-  createdAt: string;
-  lastSeenAt: string;
-  revokedAt: string | null;
-  isLocalAdmin: boolean;
-  canApprove: boolean;
-  canManageTrust: boolean;
-}
-
+export type { DeviceRecord } from "./store-codecs.js";
 export type FeedDecisionKind = "post" | "skip" | "implicit_skip";
 
-interface StoredFeedContentV2 {
-  template: FeedTemplate;
-  headline: string;
-  takeaway: string;
-  highlights: string[];
-  proof?: string;
-  content?: FeedContent;
-}
-
-function defaultTemplate(kind: string): FeedTemplate {
-  const templates: Partial<Record<FeedPostKind, FeedTemplate>> = {
-    progress: "grid",
-    decision: "sticky",
-    attention: "marker",
-    result: "paper",
-    failure: "marker",
-  };
-  return templates[kind as FeedPostKind] ?? "paper";
-}
-
-function normalizeTemplate(value: unknown, kind: string): FeedTemplate {
-  return typeof value === "string" && ["paper", "grid", "sticky", "marker", "poster"].includes(value)
-    ? value as FeedTemplate
-    : defaultTemplate(kind);
-}
-
-function json<T>(value: string): T {
-  return JSON.parse(value) as T;
+interface ProjectRelations {
+  locations: Map<string, string[]>;
+  providers: Map<string, Project["providers"]>;
+  sessionCounts: Map<string, number>;
+  postCounts: Map<string, number>;
 }
 
 export function isForeignKeyConstraintFailure(error: unknown): boolean {
@@ -134,305 +106,7 @@ export class ZimloStore {
   }
 
   private migrate(): void {
-    this.database.exec(`
-      CREATE TABLE IF NOT EXISTS projects (
-        id TEXT PRIMARY KEY,
-        name TEXT NOT NULL,
-        created_at TEXT NOT NULL,
-        last_used_at TEXT NOT NULL
-      );
-      CREATE INDEX IF NOT EXISTS projects_last_used_idx ON projects(last_used_at DESC);
-
-      CREATE TABLE IF NOT EXISTS project_locations (
-        path TEXT PRIMARY KEY,
-        project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
-        first_seen_at TEXT NOT NULL,
-        last_seen_at TEXT NOT NULL
-      );
-      CREATE INDEX IF NOT EXISTS project_locations_project_idx ON project_locations(project_id, last_seen_at DESC);
-
-      CREATE TABLE IF NOT EXISTS sessions (
-        id TEXT PRIMARY KEY,
-        project_id TEXT REFERENCES projects(id) ON DELETE SET NULL,
-        provider TEXT NOT NULL,
-        surface TEXT NOT NULL DEFAULT 'unknown',
-        provider_session_id TEXT NOT NULL,
-        title TEXT NOT NULL,
-        cwd TEXT,
-        transcript_path TEXT,
-        status TEXT NOT NULL,
-        last_activity_at TEXT NOT NULL,
-        created_at TEXT NOT NULL,
-        active_pid INTEGER,
-        process_started_at TEXT,
-        tty TEXT,
-        correlation_uncertain INTEGER NOT NULL DEFAULT 0,
-        capabilities_json TEXT NOT NULL,
-        UNIQUE(provider, provider_session_id)
-      );
-      CREATE INDEX IF NOT EXISTS sessions_activity_idx ON sessions(last_activity_at DESC);
-
-      CREATE TABLE IF NOT EXISTS events (
-        sequence INTEGER PRIMARY KEY AUTOINCREMENT,
-        id TEXT NOT NULL UNIQUE,
-        provider TEXT NOT NULL,
-        session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
-        provider_session_id TEXT NOT NULL,
-        turn_id TEXT,
-        item_id TEXT,
-        kind TEXT NOT NULL,
-        source TEXT NOT NULL,
-        occurred_at TEXT NOT NULL,
-        payload_json TEXT NOT NULL,
-        provenance TEXT NOT NULL
-      );
-      CREATE INDEX IF NOT EXISTS events_session_idx ON events(session_id, sequence DESC);
-      CREATE INDEX IF NOT EXISTS events_occurred_idx ON events(occurred_at);
-
-      CREATE TABLE IF NOT EXISTS cards (
-        id TEXT PRIMARY KEY,
-        session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
-        turn_id TEXT,
-        kind TEXT NOT NULL,
-        title TEXT NOT NULL,
-        summary TEXT NOT NULL,
-        priority INTEGER NOT NULL,
-        status TEXT NOT NULL,
-        action_ids_json TEXT NOT NULL,
-        updated_at TEXT NOT NULL,
-        provenance TEXT NOT NULL
-      );
-      CREATE INDEX IF NOT EXISTS cards_feed_idx ON cards(priority DESC, updated_at DESC);
-
-      CREATE TABLE IF NOT EXISTS feed_posts (
-        id TEXT PRIMARY KEY,
-        project_id TEXT REFERENCES projects(id) ON DELETE SET NULL,
-        task_id TEXT NOT NULL,
-        run_id TEXT NOT NULL,
-        agent_id TEXT NOT NULL,
-        session_id TEXT REFERENCES sessions(id) ON DELETE SET NULL,
-        kind TEXT NOT NULL,
-        title TEXT NOT NULL,
-        body TEXT NOT NULL,
-        dedupe_key TEXT NOT NULL,
-        source TEXT NOT NULL,
-        created_at TEXT NOT NULL,
-        content_json TEXT,
-        UNIQUE(agent_id, run_id, dedupe_key)
-      );
-      CREATE INDEX IF NOT EXISTS feed_posts_timeline_idx ON feed_posts(created_at DESC);
-
-      CREATE TABLE IF NOT EXISTS materials (
-        id TEXT PRIMARY KEY,
-        kind TEXT NOT NULL,
-        name TEXT NOT NULL,
-        mime_type TEXT NOT NULL,
-        size_bytes INTEGER NOT NULL,
-        sha256 TEXT NOT NULL,
-        width INTEGER,
-        height INTEGER,
-        duration_ms INTEGER,
-        preview_material_id TEXT,
-        origin TEXT NOT NULL,
-        status TEXT NOT NULL,
-        local_path TEXT,
-        created_at TEXT NOT NULL,
-        error TEXT
-      );
-      CREATE INDEX IF NOT EXISTS materials_created_idx ON materials(created_at DESC);
-
-      CREATE TABLE IF NOT EXISTS tasks (
-        id TEXT PRIMARY KEY,
-        run_id TEXT NOT NULL,
-        agent_id TEXT NOT NULL,
-        session_id TEXT REFERENCES sessions(id) ON DELETE SET NULL,
-        state TEXT NOT NULL,
-        reason TEXT NOT NULL,
-        updated_at TEXT NOT NULL
-      );
-      CREATE INDEX IF NOT EXISTS tasks_updated_idx ON tasks(updated_at DESC);
-
-      CREATE TABLE IF NOT EXISTS task_commands (
-        id TEXT PRIMARY KEY,
-        idempotency_key TEXT NOT NULL UNIQUE,
-        kind TEXT NOT NULL,
-        provider TEXT NOT NULL,
-        session_id TEXT REFERENCES sessions(id) ON DELETE SET NULL,
-        workspace_id TEXT,
-        cwd TEXT NOT NULL,
-        text TEXT NOT NULL,
-        material_ids_json TEXT NOT NULL DEFAULT '[]',
-        state TEXT NOT NULL,
-        created_at TEXT NOT NULL,
-        updated_at TEXT NOT NULL,
-        error TEXT
-      );
-      CREATE INDEX IF NOT EXISTS task_commands_state_idx ON task_commands(state, created_at);
-
-      CREATE TABLE IF NOT EXISTS feed_seen (
-        device_id TEXT NOT NULL REFERENCES devices(id) ON DELETE CASCADE,
-        post_id TEXT NOT NULL REFERENCES feed_posts(id) ON DELETE CASCADE,
-        seen_at TEXT NOT NULL,
-        PRIMARY KEY(device_id, post_id)
-      );
-
-      CREATE TABLE IF NOT EXISTS feed_dismissed (
-        device_id TEXT NOT NULL REFERENCES devices(id) ON DELETE CASCADE,
-        item_id TEXT NOT NULL,
-        dismissed_at TEXT NOT NULL,
-        PRIMARY KEY(device_id, item_id)
-      );
-      CREATE TABLE IF NOT EXISTS task_timeline_cursors (
-        device_id TEXT NOT NULL,
-        session_id TEXT NOT NULL,
-        item_id TEXT NOT NULL,
-        seen_at TEXT NOT NULL,
-        PRIMARY KEY(device_id, session_id)
-      );
-
-      CREATE TABLE IF NOT EXISTS task_preferences (
-        session_id TEXT PRIMARY KEY REFERENCES sessions(id) ON DELETE CASCADE,
-        pinned_at TEXT,
-        archived_at TEXT
-      );
-
-      CREATE TABLE IF NOT EXISTS feed_checkpoints (
-        agent_id TEXT NOT NULL,
-        run_id TEXT NOT NULL,
-        task_id TEXT,
-        session_id TEXT REFERENCES sessions(id) ON DELETE SET NULL,
-        started_at TEXT NOT NULL,
-        decision_kind TEXT,
-        decision_at TEXT,
-        decision_ref TEXT,
-        PRIMARY KEY(agent_id, run_id)
-      );
-
-      CREATE TABLE IF NOT EXISTS actions (
-        action_id TEXT PRIMARY KEY,
-        session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
-        upstream_request_id TEXT,
-        kind TEXT NOT NULL,
-        title TEXT NOT NULL,
-        detail TEXT NOT NULL,
-        decisions_json TEXT NOT NULL,
-        expires_at TEXT NOT NULL,
-        state TEXT NOT NULL,
-        created_at TEXT NOT NULL,
-        resolved_at TEXT
-      );
-      CREATE INDEX IF NOT EXISTS actions_state_idx ON actions(state, expires_at);
-
-      CREATE TABLE IF NOT EXISTS file_offsets (
-        path TEXT PRIMARY KEY,
-        offset INTEGER NOT NULL,
-        size INTEGER NOT NULL,
-        modified_at TEXT NOT NULL
-      );
-
-      CREATE TABLE IF NOT EXISTS devices (
-        id TEXT PRIMARY KEY,
-        name TEXT NOT NULL,
-        key_base64 TEXT NOT NULL,
-        created_at TEXT NOT NULL,
-        last_seen_at TEXT NOT NULL,
-        revoked_at TEXT,
-        is_local_admin INTEGER NOT NULL DEFAULT 0,
-        can_approve INTEGER NOT NULL DEFAULT 1,
-        can_manage_trust INTEGER NOT NULL DEFAULT 1
-      );
-
-      CREATE TABLE IF NOT EXISTS project_trust_policies (
-        project_id TEXT PRIMARY KEY REFERENCES projects(id) ON DELETE CASCADE,
-        preset TEXT NOT NULL,
-        auto_allow_json TEXT NOT NULL,
-        updated_at TEXT NOT NULL,
-        updated_by_device_id TEXT NOT NULL
-      );
-
-      CREATE TABLE IF NOT EXISTS trust_audit (
-        id TEXT PRIMARY KEY,
-        project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
-        session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
-        device_id TEXT NOT NULL,
-        category TEXT NOT NULL,
-        decision TEXT NOT NULL,
-        reason TEXT NOT NULL,
-        action_summary TEXT NOT NULL,
-        created_at TEXT NOT NULL
-      );
-      CREATE INDEX IF NOT EXISTS trust_audit_created_idx ON trust_audit(created_at DESC);
-
-      CREATE TABLE IF NOT EXISTS notification_settings (
-        device_id TEXT PRIMARY KEY REFERENCES devices(id) ON DELETE CASCADE,
-        enabled INTEGER NOT NULL DEFAULT 0,
-        approvals INTEGER NOT NULL DEFAULT 1,
-        failures INTEGER NOT NULL DEFAULT 1,
-        show_task_title INTEGER NOT NULL DEFAULT 0,
-        updated_at TEXT NOT NULL
-      );
-
-      CREATE TABLE IF NOT EXISTS push_devices (
-        device_id TEXT PRIMARY KEY REFERENCES devices(id) ON DELETE CASCADE,
-        platform TEXT NOT NULL,
-        endpoint TEXT NOT NULL,
-        public_key TEXT NOT NULL,
-        active INTEGER NOT NULL DEFAULT 1,
-        registered_at TEXT NOT NULL,
-        updated_at TEXT NOT NULL
-      );
-
-      CREATE TABLE IF NOT EXISTS user_profile (
-        id INTEGER PRIMARY KEY CHECK (id = 1),
-        avatar_id TEXT NOT NULL,
-        updated_at TEXT NOT NULL
-      );
-
-      CREATE TABLE IF NOT EXISTS idempotency (
-        key TEXT PRIMARY KEY,
-        action_id TEXT NOT NULL,
-        result_json TEXT NOT NULL,
-        created_at TEXT NOT NULL
-      );
-
-      CREATE TABLE IF NOT EXISTS metadata (
-        key TEXT PRIMARY KEY,
-        value TEXT NOT NULL
-      );
-    `);
-    const feedColumns = this.database.prepare("PRAGMA table_info(feed_posts)").all() as Array<{ name: string }>;
-    if (!feedColumns.some((column) => column.name === "content_json")) {
-      this.database.exec("ALTER TABLE feed_posts ADD COLUMN content_json TEXT");
-    }
-    if (!feedColumns.some((column) => column.name === "project_id")) {
-      this.database.exec("ALTER TABLE feed_posts ADD COLUMN project_id TEXT REFERENCES projects(id) ON DELETE SET NULL");
-    }
-    const taskCommandColumns = this.database.prepare("PRAGMA table_info(task_commands)").all() as Array<{ name: string }>;
-    if (!taskCommandColumns.some((column) => column.name === "material_ids_json")) {
-      this.database.exec("ALTER TABLE task_commands ADD COLUMN material_ids_json TEXT NOT NULL DEFAULT '[]'");
-    }
-    const projectColumns = this.database.prepare("PRAGMA table_info(projects)").all() as Array<{ name: string }>;
-    if (!projectColumns.some((column) => column.name === "identity_key")) this.database.exec("ALTER TABLE projects ADD COLUMN identity_key TEXT");
-    if (!projectColumns.some((column) => column.name === "agent_display_name")) this.database.exec("ALTER TABLE projects ADD COLUMN agent_display_name TEXT");
-    if (!projectColumns.some((column) => column.name === "agent_avatar")) this.database.exec("ALTER TABLE projects ADD COLUMN agent_avatar TEXT");
-    if (!projectColumns.some((column) => column.name === "agent_bio")) this.database.exec("ALTER TABLE projects ADD COLUMN agent_bio TEXT");
-    if (!projectColumns.some((column) => column.name === "agent_default_provider")) this.database.exec("ALTER TABLE projects ADD COLUMN agent_default_provider TEXT");
-    if (!projectColumns.some((column) => column.name === "agent_updated_at")) this.database.exec("ALTER TABLE projects ADD COLUMN agent_updated_at TEXT");
-    this.database.exec("CREATE INDEX IF NOT EXISTS projects_identity_idx ON projects(identity_key)");
-    const sessionColumns = this.database.prepare("PRAGMA table_info(sessions)").all() as Array<{ name: string }>;
-    if (!sessionColumns.some((column) => column.name === "project_id")) {
-      this.database.exec("ALTER TABLE sessions ADD COLUMN project_id TEXT REFERENCES projects(id) ON DELETE SET NULL");
-    }
-    if (!sessionColumns.some((column) => column.name === "surface")) {
-      this.database.exec("ALTER TABLE sessions ADD COLUMN surface TEXT NOT NULL DEFAULT 'unknown'");
-    }
-    const deviceColumns = this.database.prepare("PRAGMA table_info(devices)").all() as Array<{ name: string }>;
-    if (!deviceColumns.some((column) => column.name === "can_approve")) {
-      this.database.exec("ALTER TABLE devices ADD COLUMN can_approve INTEGER NOT NULL DEFAULT 1");
-    }
-    if (!deviceColumns.some((column) => column.name === "can_manage_trust")) {
-      this.database.exec("ALTER TABLE devices ADD COLUMN can_manage_trust INTEGER NOT NULL DEFAULT 1");
-    }
+    initializeStoreSchema(this.database);
     const permissionDefaultsMigration = this.database.prepare("SELECT value FROM metadata WHERE key = 'device_permissions_default_on_v1'").get() as { value: string } | undefined;
     if (permissionDefaultsMigration?.value !== "1") {
       this.database.prepare(`
@@ -440,10 +114,6 @@ export class ZimloStore {
         WHERE revoked_at IS NULL AND is_local_admin = 0
       `).run();
       this.database.prepare("INSERT OR REPLACE INTO metadata(key, value) VALUES ('device_permissions_default_on_v1', '1')").run();
-    }
-    const actionColumns = this.database.prepare("PRAGMA table_info(actions)").all() as Array<{ name: string }>;
-    if (!actionColumns.some((column) => column.name === "approval_context_json")) {
-      this.database.exec("ALTER TABLE actions ADD COLUMN approval_context_json TEXT");
     }
     this.database.prepare("INSERT OR IGNORE INTO user_profile(id, avatar_id, updated_at) VALUES (1, ?, ?)")
       .run(USER_AVATAR_IDS[randomInt(USER_AVATAR_IDS.length)] ?? USER_AVATAR_IDS[0], new Date().toISOString());
@@ -500,12 +170,13 @@ export class ZimloStore {
 
   getProject(id: string): Project | null {
     const row = this.database.prepare("SELECT * FROM projects WHERE id = ?").get(id) as Record<string, unknown> | undefined;
-    return row ? this.projectFromRow(row) : null;
+    return row ? this.projectFromRow(row, this.loadProjectRelations(id)) : null;
   }
 
   listProjects(): Project[] {
-    return (this.database.prepare("SELECT * FROM projects ORDER BY name COLLATE NOCASE, id").all() as Record<string, unknown>[])
-      .map((row) => this.projectFromRow(row));
+    const rows = this.database.prepare("SELECT * FROM projects ORDER BY name COLLATE NOCASE, id").all() as Record<string, unknown>[];
+    const relations = this.loadProjectRelations();
+    return rows.map((row) => this.projectFromRow(row, relations));
   }
 
   updateAgentProfile(projectId: string, profile: {
@@ -797,14 +468,14 @@ export class ZimloStore {
 
   getSession(id: string): Session | null {
     const row = this.database.prepare("SELECT * FROM sessions WHERE id = ?").get(id) as Record<string, unknown> | undefined;
-    return row ? this.sessionFromRow(row) : null;
+    return row ? sessionFromRow(row) : null;
   }
 
   getSessionByProviderId(provider: string, providerSessionId: string): Session | null {
     const row = this.database
       .prepare("SELECT * FROM sessions WHERE provider = ? AND provider_session_id = ?")
       .get(provider, providerSessionId) as Record<string, unknown> | undefined;
-    return row ? this.sessionFromRow(row) : null;
+    return row ? sessionFromRow(row) : null;
   }
 
   findSessionForAgentTool(provider: Session["provider"], parentPid: number, cwd: string, taskId: string): Session | null {
@@ -817,14 +488,14 @@ export class ZimloStore {
       ORDER BY feed_checkpoints.started_at DESC LIMIT 1
     `).get(provider, taskId) as Record<string, unknown> | undefined;
     if (checkpointMatch) {
-      const session = this.sessionFromRow(checkpointMatch);
+      const session = sessionFromRow(checkpointMatch);
       if (!session.correlationUncertain) return session;
     }
     if (parentPid > 0) {
       const row = this.database.prepare("SELECT * FROM sessions WHERE provider = ? AND active_pid = ? ORDER BY last_activity_at DESC LIMIT 1")
         .get(provider, parentPid) as Record<string, unknown> | undefined;
       if (row) {
-        const session = this.sessionFromRow(row);
+        const session = sessionFromRow(row);
         if (!session.correlationUncertain) return session;
       }
     }
@@ -837,7 +508,7 @@ export class ZimloStore {
       ORDER BY feed_checkpoints.started_at DESC LIMIT 2
     `).all(provider, cutoff) as Record<string, unknown>[];
     if (openCheckpoints.length === 1) {
-      const session = this.sessionFromRow(openCheckpoints[0]!);
+      const session = sessionFromRow(openCheckpoints[0]!);
       if (!session.correlationUncertain) return session;
     }
     if (!cwd) return null;
@@ -847,13 +518,13 @@ export class ZimloStore {
       ORDER BY last_activity_at DESC LIMIT 2
     `).all(provider, cwd) as Record<string, unknown>[];
     if (rows.length !== 1) return null;
-    const session = this.sessionFromRow(rows[0]!);
+    const session = sessionFromRow(rows[0]!);
     return session.correlationUncertain ? null : session;
   }
 
   listSessions(): Session[] {
     return (this.database.prepare("SELECT * FROM sessions ORDER BY last_activity_at DESC").all() as Record<string, unknown>[])
-      .map((row) => this.sessionFromRow(row));
+      .map((row) => sessionFromRow(row));
   }
 
   firstTaskInput(sessionId: string): string | null {
@@ -924,7 +595,7 @@ export class ZimloStore {
     const rows = this.database
       .prepare("SELECT * FROM events WHERE session_id = ? ORDER BY sequence DESC LIMIT ?")
       .all(sessionId, limit) as Record<string, unknown>[];
-    return rows.map((row) => this.eventFromRow(row)).reverse();
+    return rows.map((row) => eventFromRow(row)).reverse();
   }
 
   latestSequence(): number {
@@ -965,7 +636,7 @@ export class ZimloStore {
     const existingDedupe = this.database.prepare(`
       SELECT * FROM feed_posts WHERE agent_id = ? AND run_id = ? AND dedupe_key = ?
     `).get(post.agentId, post.runId, post.dedupeKey) as Record<string, unknown> | undefined;
-    if (existingDedupe) return { post: this.feedPostFromRow(existingDedupe), inserted: false, coalesced: false };
+    if (existingDedupe) return { post: feedPostFromRow(existingDedupe), inserted: false, coalesced: false };
 
     if (post.kind === "progress" && coalesceProgressWithinMs > 0) {
       const windowStart = new Date(Date.parse(post.createdAt) - coalesceProgressWithinMs).toISOString();
@@ -1041,7 +712,7 @@ export class ZimloStore {
       SELECT * FROM feed_posts WHERE agent_id = ? AND run_id = ? AND dedupe_key = ?
     `).get(post.agentId, post.runId, post.dedupeKey) as Record<string, unknown> | undefined;
     if (!existing) throw new Error("Feed 帖子去重冲突，但无法读取原记录。");
-    return { post: this.feedPostFromRow(existing), inserted: false, coalesced: false };
+    return { post: feedPostFromRow(existing), inserted: false, coalesced: false };
   }
 
   listFeedPosts(): FeedPost[] {
@@ -1050,7 +721,7 @@ export class ZimloStore {
       WHERE source = 'agent' AND kind <> 'instruction'
       ORDER BY created_at DESC
       LIMIT 200
-    `).all() as Record<string, unknown>[]).map((row) => this.feedPostFromRow(row));
+    `).all() as Record<string, unknown>[]).map((row) => feedPostFromRow(row));
   }
 
   upsertMaterial(material: Material, localPath: string | null): Material {
@@ -1076,7 +747,7 @@ export class ZimloStore {
 
   getMaterial(id: string): Material | null {
     const row = this.database.prepare("SELECT * FROM materials WHERE id = ?").get(id) as Record<string, unknown> | undefined;
-    return row ? this.materialFromRow(row) : null;
+    return row ? materialFromRow(row) : null;
   }
 
   materialLocalPath(id: string): string | null {
@@ -1086,7 +757,7 @@ export class ZimloStore {
 
   listMaterials(): Material[] {
     return (this.database.prepare("SELECT * FROM materials ORDER BY created_at DESC LIMIT 500").all() as Record<string, unknown>[])
-      .map((row) => this.materialFromRow(row));
+      .map((row) => materialFromRow(row));
   }
 
   latestFeedPost(agentId: string, runId: string, since: string): FeedPost | null {
@@ -1095,7 +766,7 @@ export class ZimloStore {
       WHERE agent_id = ? AND run_id = ? AND source = 'agent' AND created_at >= ?
       ORDER BY created_at DESC LIMIT 1
     `).get(agentId, runId, since) as Record<string, unknown> | undefined;
-    return row ? this.feedPostFromRow(row) : null;
+    return row ? feedPostFromRow(row) : null;
   }
 
   upsertTask(task: TaskRecord): TaskRecord {
@@ -1115,7 +786,7 @@ export class ZimloStore {
 
   listTasks(): TaskRecord[] {
     return (this.database.prepare("SELECT * FROM tasks ORDER BY updated_at DESC").all() as Record<string, unknown>[])
-      .map((row) => this.taskFromRow(row));
+      .map((row) => taskFromRow(row));
   }
 
   insertTaskCommand(command: TaskCommand): { command: TaskCommand; inserted: boolean } {
@@ -1166,22 +837,22 @@ export class ZimloStore {
 
   getTaskCommand(id: string): TaskCommand | null {
     const row = this.database.prepare("SELECT * FROM task_commands WHERE id = ?").get(id) as Record<string, unknown> | undefined;
-    return row ? this.taskCommandFromRow(row) : null;
+    return row ? taskCommandFromRow(row) : null;
   }
 
   getTaskCommandByIdempotencyKey(key: string): TaskCommand | null {
     const row = this.database.prepare("SELECT * FROM task_commands WHERE idempotency_key = ?").get(key) as Record<string, unknown> | undefined;
-    return row ? this.taskCommandFromRow(row) : null;
+    return row ? taskCommandFromRow(row) : null;
   }
 
   listTaskCommands(): TaskCommand[] {
     return (this.database.prepare("SELECT * FROM task_commands ORDER BY created_at DESC LIMIT 200").all() as Record<string, unknown>[])
-      .map((row) => this.taskCommandFromRow(row));
+      .map((row) => taskCommandFromRow(row));
   }
 
   listQueuedTaskCommands(): TaskCommand[] {
     return (this.database.prepare("SELECT * FROM task_commands WHERE state = 'queued' ORDER BY created_at ASC").all() as Record<string, unknown>[])
-      .map((row) => this.taskCommandFromRow(row));
+      .map((row) => taskCommandFromRow(row));
   }
 
   markFeedSeen(deviceId: string, postId: string): boolean {
@@ -1284,13 +955,13 @@ export class ZimloStore {
     if (!row) {
       return { projectId, preset: "ask", autoAllow: [], updatedAt: new Date(0).toISOString(), updatedByDeviceId: "" };
     }
-    return this.trustPolicyFromRow(row);
+    return trustPolicyFromRow(row);
   }
 
   listTrustPolicies(): ProjectTrustPolicy[] {
     const stored = new Map((this.database.prepare("SELECT * FROM project_trust_policies").all() as Record<string, unknown>[])
       .map((row) => {
-        const policy = this.trustPolicyFromRow(row);
+        const policy = trustPolicyFromRow(row);
         return [policy.projectId, policy] as const;
       }));
     return this.listProjects().map((project) => stored.get(project.id) ?? this.getTrustPolicy(project.id));
@@ -1334,14 +1005,14 @@ export class ZimloStore {
     const rows = projectId
       ? this.database.prepare("SELECT * FROM trust_audit WHERE project_id = ? ORDER BY created_at DESC LIMIT ?").all(projectId, limit)
       : this.database.prepare("SELECT * FROM trust_audit ORDER BY created_at DESC LIMIT ?").all(limit);
-    return (rows as Record<string, unknown>[]).map((row) => this.trustAuditFromRow(row));
+    return (rows as Record<string, unknown>[]).map((row) => trustAuditFromRow(row));
   }
 
   getNotificationSettings(deviceId: string): NotificationSettings {
     const row = deviceId
       ? this.database.prepare("SELECT * FROM notification_settings WHERE device_id = ?").get(deviceId) as Record<string, unknown> | undefined
       : undefined;
-    return row ? this.notificationSettingsFromRow(row) : {
+    return row ? notificationSettingsFromRow(row) : {
       enabled: false,
       approvals: true,
       failures: true,
@@ -1390,7 +1061,7 @@ export class ZimloStore {
 
   getPushDevice(deviceId: string): PushDeviceRegistration | null {
     const row = this.database.prepare("SELECT * FROM push_devices WHERE device_id = ?").get(deviceId) as Record<string, unknown> | undefined;
-    return row ? this.pushDeviceFromRow(row) : null;
+    return row ? pushDeviceFromRow(row) : null;
   }
 
   listPushDevices(deviceId = ""): PushDeviceRegistration[] {
@@ -1406,7 +1077,7 @@ export class ZimloStore {
       WHERE push_devices.active = 1 AND devices.revoked_at IS NULL
     `).all() as Record<string, unknown>[];
     return rows.map((row) => ({
-      registration: this.pushDeviceFromRow(row),
+      registration: pushDeviceFromRow(row),
       settings: this.getNotificationSettings(String(row.device_id)),
     }));
   }
@@ -1495,7 +1166,7 @@ export class ZimloStore {
       ORDER BY priority DESC, updated_at DESC
       LIMIT 200
     `).all() as Record<string, unknown>[])
-      .map((row) => this.cardFromRow(row));
+      .map((row) => cardFromRow(row));
   }
 
   resolveActionCards(actionId: string): FeedCard[] {
@@ -1537,19 +1208,19 @@ export class ZimloStore {
 
   getAction(actionId: string): PendingAction | null {
     const row = this.database.prepare("SELECT * FROM actions WHERE action_id = ?").get(actionId) as Record<string, unknown> | undefined;
-    return row ? this.actionFromRow(row) : null;
+    return row ? actionFromRow(row) : null;
   }
 
   listPendingActions(): PendingAction[] {
     return (this.database
       .prepare("SELECT * FROM actions WHERE state IN ('pending', 'submitted') AND expires_at > ? ORDER BY created_at DESC")
-      .all(new Date().toISOString()) as Record<string, unknown>[]).map((row) => this.actionFromRow(row));
+      .all(new Date().toISOString()) as Record<string, unknown>[]).map((row) => actionFromRow(row));
   }
 
   listActions(): PendingAction[] {
     return (this.database
       .prepare("SELECT * FROM actions ORDER BY created_at DESC LIMIT 200")
-      .all() as Record<string, unknown>[]).map((row) => this.actionFromRow(row));
+      .all() as Record<string, unknown>[]).map((row) => actionFromRow(row));
   }
 
   getOffset(path: string): number | null {
@@ -1597,12 +1268,12 @@ export class ZimloStore {
 
   getDevice(id: string): DeviceRecord | null {
     const row = this.database.prepare("SELECT * FROM devices WHERE id = ?").get(id) as DeviceRow | undefined;
-    return row ? this.deviceFromRow(row) : null;
+    return row ? deviceFromRow(row) : null;
   }
 
   listDevices(): DeviceRecord[] {
     return (this.database.prepare("SELECT * FROM devices ORDER BY created_at DESC").all() as unknown as DeviceRow[])
-      .map((row) => this.deviceFromRow(row));
+      .map((row) => deviceFromRow(row));
   }
 
   revokeDevice(id: string): boolean {
@@ -1677,45 +1348,62 @@ export class ZimloStore {
     this.database.prepare("DELETE FROM trust_audit WHERE created_at < ?").run(new Date(Date.now() - 30 * 86_400_000).toISOString());
   }
 
-  private sessionFromRow(row: Record<string, unknown>): Session {
-    return {
-      id: String(row.id),
-      projectId: row.project_id === null || row.project_id === undefined ? null : String(row.project_id),
-      provider: row.provider as Session["provider"],
-      surface: (row.surface ?? "unknown") as Session["surface"],
-      providerSessionId: String(row.provider_session_id),
-      title: String(row.title),
-      cwd: row.cwd === null ? null : String(row.cwd),
-      transcriptPath: row.transcript_path === null ? null : String(row.transcript_path),
-      status: row.status as Session["status"],
-      lastActivityAt: String(row.last_activity_at),
-      createdAt: String(row.created_at),
-      activePid: row.active_pid === null ? null : Number(row.active_pid),
-      processStartedAt: row.process_started_at === null ? null : String(row.process_started_at),
-      tty: row.tty === null ? null : String(row.tty),
-      correlationUncertain: Number(row.correlation_uncertain) === 1,
-      capabilities: json<SessionCapabilities>(String(row.capabilities_json)),
-    };
+
+  private loadProjectRelations(projectId?: string): ProjectRelations {
+    const suffix = projectId ? " WHERE project_id = ?" : "";
+    const parameters = projectId ? [projectId] : [];
+    const locations = new Map<string, string[]>();
+    const providers = new Map<string, Project["providers"]>();
+    const sessionCounts = new Map<string, number>();
+    const postCounts = new Map<string, number>();
+
+    const locationRows = this.database.prepare(`
+      SELECT project_id, path FROM project_locations${suffix}
+      ORDER BY project_id, last_seen_at DESC
+    `).all(...parameters) as Array<{ project_id: string; path: string }>;
+    for (const row of locationRows) {
+      const values = locations.get(row.project_id) ?? [];
+      values.push(row.path);
+      locations.set(row.project_id, values);
+    }
+
+    const providerRows = this.database.prepare(`
+      SELECT project_id, provider FROM sessions${suffix}
+      GROUP BY project_id, provider ORDER BY project_id, provider
+    `).all(...parameters) as Array<{ project_id: string; provider: Project["providers"][number] }>;
+    for (const row of providerRows) {
+      const values = providers.get(row.project_id) ?? [];
+      values.push(row.provider);
+      providers.set(row.project_id, values);
+    }
+
+    const sessionRows = this.database.prepare(`
+      SELECT project_id, COUNT(*) AS count FROM sessions${suffix}
+      GROUP BY project_id
+    `).all(...parameters) as Array<{ project_id: string; count: number }>;
+    for (const row of sessionRows) sessionCounts.set(row.project_id, Number(row.count));
+
+    const postWhere = projectId ? " WHERE source = 'agent' AND project_id = ?" : " WHERE source = 'agent'";
+    const postRows = this.database.prepare(`
+      SELECT project_id, COUNT(*) AS count FROM feed_posts${postWhere}
+      GROUP BY project_id
+    `).all(...parameters) as Array<{ project_id: string; count: number }>;
+    for (const row of postRows) postCounts.set(row.project_id, Number(row.count));
+
+    return { locations, providers, sessionCounts, postCounts };
   }
 
-  private projectFromRow(row: Record<string, unknown>): Project {
+  private projectFromRow(row: Record<string, unknown>, relations: ProjectRelations): Project {
     const id = String(row.id);
-    const locations = this.database.prepare("SELECT path FROM project_locations WHERE project_id = ? ORDER BY last_seen_at DESC")
-      .all(id) as Array<{ path: string }>;
-    const providers = this.database.prepare("SELECT DISTINCT provider FROM sessions WHERE project_id = ? ORDER BY provider")
-      .all(id) as Array<{ provider: Project["providers"][number] }>;
-    const sessionCount = this.database.prepare("SELECT COUNT(*) AS count FROM sessions WHERE project_id = ?")
-      .get(id) as { count: number };
-    const postCount = this.database.prepare("SELECT COUNT(*) AS count FROM feed_posts WHERE project_id = ? AND source = 'agent'")
-      .get(id) as { count: number };
+    const locations = relations.locations.get(id) ?? [];
     return {
       id,
       name: String(row.name),
-      primaryPath: locations[0]?.path ?? "",
-      paths: locations.map((location) => location.path),
-      providers: providers.map((provider) => provider.provider),
-      sessionCount: Number(sessionCount.count),
-      postCount: Number(postCount.count),
+      primaryPath: locations[0] ?? "",
+      paths: locations,
+      providers: relations.providers.get(id) ?? [],
+      sessionCount: relations.sessionCounts.get(id) ?? 0,
+      postCount: relations.postCounts.get(id) ?? 0,
       agentProfile: {
         displayName: row.agent_display_name ? String(row.agent_display_name) : String(row.name),
         avatar: row.agent_avatar ? String(row.agent_avatar) : USER_AVATAR_IDS[0],
@@ -1725,204 +1413,6 @@ export class ZimloStore {
       },
       createdAt: String(row.created_at),
       lastUsedAt: String(row.last_used_at),
-    };
-  }
-
-  private eventFromRow(row: Record<string, unknown>): UnifiedEvent {
-    return {
-      id: String(row.id),
-      sequence: Number(row.sequence),
-      provider: row.provider as UnifiedEvent["provider"],
-      sessionId: String(row.session_id),
-      providerSessionId: String(row.provider_session_id),
-      ...(row.turn_id === null ? {} : { turnId: String(row.turn_id) }),
-      ...(row.item_id === null ? {} : { itemId: String(row.item_id) }),
-      kind: row.kind as UnifiedEvent["kind"],
-      source: row.source as UnifiedEvent["source"],
-      occurredAt: String(row.occurred_at),
-      payload: json(String(row.payload_json)),
-      provenance: row.provenance as UnifiedEvent["provenance"],
-    };
-  }
-
-  private cardFromRow(row: Record<string, unknown>): FeedCard {
-    return {
-      id: String(row.id),
-      sessionId: String(row.session_id),
-      turnId: row.turn_id === null ? null : String(row.turn_id),
-      kind: row.kind as FeedCard["kind"],
-      title: String(row.title),
-      summary: String(row.summary),
-      priority: Number(row.priority),
-      status: row.status as FeedCard["status"],
-      actionIds: json<string[]>(String(row.action_ids_json)),
-      updatedAt: String(row.updated_at),
-      provenance: row.provenance as FeedCard["provenance"],
-    };
-  }
-
-  private feedPostFromRow(row: Record<string, unknown>): FeedPost {
-    let content: StoredFeedContentV2;
-    try {
-      content = row.content_json
-        ? json<StoredFeedContentV2>(String(row.content_json))
-        : {
-            template: defaultTemplate(String(row.kind)),
-            headline: String(row.title).slice(0, 72),
-            takeaway: String(row.body).slice(0, 320),
-            highlights: [],
-          };
-    } catch {
-      content = {
-        template: defaultTemplate(String(row.kind)),
-        headline: String(row.title).slice(0, 72),
-        takeaway: String(row.body).slice(0, 320),
-        highlights: [],
-      };
-    }
-    return {
-      id: String(row.id),
-      projectId: row.project_id === null || row.project_id === undefined ? null : String(row.project_id),
-      taskId: String(row.task_id),
-      runId: String(row.run_id),
-      agentId: String(row.agent_id),
-      sessionId: row.session_id === null ? null : String(row.session_id),
-      kind: row.kind as FeedPost["kind"],
-      template: normalizeTemplate(content.template, String(row.kind)),
-      headline: content.headline,
-      takeaway: content.takeaway,
-      highlights: content.highlights,
-      ...(content.proof ? { proof: content.proof } : {}),
-      content: content.content ?? { type: "text" },
-      dedupeKey: String(row.dedupe_key),
-      source: "agent",
-      createdAt: String(row.created_at),
-    };
-  }
-
-  private taskFromRow(row: Record<string, unknown>): TaskRecord {
-    return {
-      id: String(row.id),
-      runId: String(row.run_id),
-      agentId: String(row.agent_id),
-      sessionId: row.session_id === null ? null : String(row.session_id),
-      state: row.state as TaskRecord["state"],
-      reason: String(row.reason),
-      updatedAt: String(row.updated_at),
-    };
-  }
-
-  private taskCommandFromRow(row: Record<string, unknown>): TaskCommand {
-    return {
-      id: String(row.id),
-      idempotencyKey: String(row.idempotency_key),
-      kind: row.kind as TaskCommand["kind"],
-      provider: row.provider as TaskCommand["provider"],
-      sessionId: row.session_id === null ? null : String(row.session_id),
-      workspaceId: row.workspace_id === null ? null : String(row.workspace_id),
-      cwd: String(row.cwd),
-      text: String(row.text),
-      materialIds: row.material_ids_json ? json<string[]>(String(row.material_ids_json)) : [],
-      state: row.state as TaskCommand["state"],
-      createdAt: String(row.created_at),
-      updatedAt: String(row.updated_at),
-      ...(row.error === null ? {} : { error: String(row.error) }),
-    };
-  }
-
-  private materialFromRow(row: Record<string, unknown>): Material {
-    return {
-      id: String(row.id),
-      kind: row.kind as Material["kind"],
-      name: String(row.name),
-      mimeType: String(row.mime_type),
-      sizeBytes: Number(row.size_bytes),
-      sha256: String(row.sha256),
-      ...(row.width === null || row.width === undefined ? {} : { width: Number(row.width) }),
-      ...(row.height === null || row.height === undefined ? {} : { height: Number(row.height) }),
-      ...(row.duration_ms === null || row.duration_ms === undefined ? {} : { durationMs: Number(row.duration_ms) }),
-      ...(row.preview_material_id ? { previewMaterialId: String(row.preview_material_id) } : {}),
-      origin: row.origin as Material["origin"],
-      status: row.status as Material["status"],
-      createdAt: String(row.created_at),
-      ...(row.error ? { error: String(row.error) } : {}),
-    };
-  }
-
-  private trustPolicyFromRow(row: Record<string, unknown>): ProjectTrustPolicy {
-    return {
-      projectId: String(row.project_id),
-      preset: row.preset as ProjectTrustPolicy["preset"],
-      autoAllow: json<ApprovalCategory[]>(String(row.auto_allow_json)),
-      updatedAt: String(row.updated_at),
-      updatedByDeviceId: String(row.updated_by_device_id),
-    };
-  }
-
-  private trustAuditFromRow(row: Record<string, unknown>): TrustAuditEntry {
-    return {
-      id: String(row.id),
-      projectId: String(row.project_id),
-      sessionId: String(row.session_id),
-      deviceId: String(row.device_id),
-      category: row.category as TrustAuditEntry["category"],
-      decision: row.decision as TrustAuditEntry["decision"],
-      reason: String(row.reason),
-      actionSummary: String(row.action_summary),
-      createdAt: String(row.created_at),
-    };
-  }
-
-  private notificationSettingsFromRow(row: Record<string, unknown>): NotificationSettings {
-    return {
-      enabled: Number(row.enabled) === 1,
-      approvals: Number(row.approvals) === 1,
-      failures: Number(row.failures) === 1,
-      showTaskTitle: Number(row.show_task_title) === 1,
-      updatedAt: String(row.updated_at),
-    };
-  }
-
-  private pushDeviceFromRow(row: Record<string, unknown>): PushDeviceRegistration {
-    return {
-      deviceId: String(row.device_id),
-      platform: "ios",
-      endpoint: String(row.endpoint),
-      publicKey: String(row.public_key),
-      active: Number(row.active) === 1,
-      registeredAt: String(row.registered_at),
-      updatedAt: String(row.updated_at),
-    };
-  }
-
-  private actionFromRow(row: Record<string, unknown>): PendingAction {
-    return {
-      actionId: String(row.action_id),
-      sessionId: String(row.session_id),
-      ...(row.upstream_request_id === null ? {} : { upstreamRequestId: String(row.upstream_request_id) }),
-      kind: row.kind as PendingAction["kind"],
-      title: String(row.title),
-      detail: String(row.detail),
-      availableDecisions: json(String(row.decisions_json)),
-      expiresAt: String(row.expires_at),
-      state: row.state as PendingAction["state"],
-      createdAt: String(row.created_at),
-      ...(row.resolved_at === null ? {} : { resolvedAt: String(row.resolved_at) }),
-      ...(row.approval_context_json ? { approvalContext: json(String(row.approval_context_json)) } : {}),
-    };
-  }
-
-  private deviceFromRow(row: DeviceRow): DeviceRecord {
-    return {
-      id: row.id,
-      name: row.name,
-      keyBase64: row.key_base64,
-      createdAt: row.created_at,
-      lastSeenAt: row.last_seen_at,
-      revokedAt: row.revoked_at,
-      isLocalAdmin: row.is_local_admin === 1,
-      canApprove: row.can_approve === 1,
-      canManageTrust: row.can_manage_trust === 1,
     };
   }
 }

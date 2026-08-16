@@ -10,6 +10,7 @@ import {
 import { PairingRoom } from "./pairing-room.js";
 import { releaseAssetHeaders, releaseAssetKey } from "./release-assets.js";
 import { RelayRoom } from "./relay-room.js";
+import { ZIMLO_PROTOCOL_VERSION } from "./contract.generated.js";
 
 interface Env {
   DB: D1Database;
@@ -592,7 +593,7 @@ export default {
       return Response.json({
         ok: true,
         service: "zimlo-cloud",
-        protocolVersion: 4,
+        protocolVersion: ZIMLO_PROTOCOL_VERSION,
         storesContent: false,
         storesEncryptedMaterials: Boolean(env.MATERIALS),
         encryptedRemoteSync: true,
