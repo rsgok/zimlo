@@ -152,14 +152,15 @@ struct NativeAgentAvatar: View {
                 Image(nsImage: image)
                     .resizable()
                     .scaledToFill()
-                    .clipShape(Circle())
+                    .frame(width: size * 1.14, height: size * 1.14)
             } else {
                 Text(fallbackText)
                     .font(.system(size: size * 0.42, weight: .bold, design: .rounded))
             }
         }
         .frame(width: size, height: size)
-        .overlay(Circle().stroke(Color.white.opacity(0.16), lineWidth: 1))
+        .clipShape(Circle())
+        .overlay(Circle().stroke(Color.white.opacity(0.10), lineWidth: 0.5))
         .accessibilityHidden(true)
     }
 

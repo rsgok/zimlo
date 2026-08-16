@@ -20,10 +20,8 @@
 
   <!-- iOS supplies the outer squircle mask, so the source must stay fully opaque. -->
   <rect width="1024" height="1024" fill="url(#background)"/>
-  <circle cx="512" cy="512" r="354" fill="#131B16" stroke="#314036" stroke-width="10"/>
-  <circle cx="512" cy="512" r="318" fill="none" stroke="#263229" stroke-width="3"/>
 
-  <g filter="url(#mark-shadow)">
+  <g transform="translate(512 512) scale(1.22) translate(-512 -512)" filter="url(#mark-shadow)">
     <!-- Wider muted-moss terminal: the Mac side. -->
     <path d="M438 318 H346 Q298 318 298 366 V658 Q298 706 346 706 H438"
           fill="none" stroke="url(#mac-end)" stroke-width="82"

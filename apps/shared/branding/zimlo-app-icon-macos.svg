@@ -26,10 +26,8 @@
         fill="url(#background)" filter="url(#tile-shadow)"/>
   <rect x="77" y="77" width="870" height="870" rx="201"
         fill="none" stroke="#34453A" stroke-width="10"/>
-  <circle cx="512" cy="512" r="310" fill="#131B16" stroke="#314036" stroke-width="9"/>
-  <circle cx="512" cy="512" r="282" fill="none" stroke="#263229" stroke-width="3"/>
 
-  <g filter="url(#mark-shadow)">
+  <g transform="translate(512 512) scale(1.18) translate(-512 -512)" filter="url(#mark-shadow)">
     <path d="M438 324 H350 Q304 324 304 370 V654 Q304 700 350 700 H438"
           fill="none" stroke="url(#mac-end)" stroke-width="80"
           stroke-linecap="round" stroke-linejoin="round"/>

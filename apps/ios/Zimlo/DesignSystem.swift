@@ -132,9 +132,10 @@ struct UserAvatar: View {
 
     var body: some View {
         BundleImage(name: id)
+            .frame(width: size * 1.14, height: size * 1.14)
             .frame(width: size, height: size)
             .clipShape(Circle())
-            .overlay(Circle().stroke(ZColor.ink.opacity(0.22), lineWidth: 1))
+            .overlay(Circle().stroke(ZColor.ink.opacity(0.14), lineWidth: 0.5))
     }
 }
 
