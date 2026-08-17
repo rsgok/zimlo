@@ -160,6 +160,29 @@ struct FeedContent: Codable, Hashable {
     var summary: String?
 }
 
+enum NativeFeedMaterialPresentation: Equatable {
+    case imageAlbum([String])
+    case video(materialID: String, posterID: String?)
+    case document(materialID: String, coverID: String?)
+    case none
+
+    init(content: FeedContent) {
+        switch content.type {
+        case "image_album":
+            let ids = content.materialIds ?? []
+            self = ids.isEmpty ? .none : .imageAlbum(ids)
+        case "video":
+            guard let materialID = content.materialId else { self = .none; return }
+            self = .video(materialID: materialID, posterID: content.posterMaterialId)
+        case "document":
+            guard let materialID = content.materialId else { self = .none; return }
+            self = .document(materialID: materialID, coverID: content.coverMaterialId)
+        default:
+            self = .none
+        }
+    }
+}
+
 struct FeedPost: Codable, Hashable, Identifiable {
     var id: String
     var hostId: String?

@@ -306,36 +306,144 @@ private struct NativeFeedMaterialSummary: View {
     @ObservedObject var store: NativeAppStore
     let content: FeedContent
 
-    private var materialIDs: [String] {
-        if let values = content.materialIds { return values }
-        return [content.materialId, content.posterMaterialId, content.coverMaterialId].compactMap { $0 }
+    private var presentation: NativeFeedMaterialPresentation {
+        NativeFeedMaterialPresentation(content: content)
     }
 
+    private func material(_ id: String?) -> Material? {
+        guard let id else { return nil }
+        return store.snapshot.materials.first { $0.id == id && $0.status == "ready" }
+    }
+
+    @ViewBuilder
     var body: some View {
-        HStack(spacing: 10) {
-            ForEach(materialIDs.prefix(3), id: \.self) { id in
-                if let material = store.snapshot.materials.first(where: { $0.id == id }) {
-                    Button { store.openMaterial(material) } label: {
-                        VStack(alignment: .leading, spacing: 5) {
-                            Image(systemName: symbol(for: material.kind))
-                                .font(.system(size: 17, weight: .semibold))
-                                .foregroundStyle(NativeTheme.acid)
-                            Text(material.name)
-                                .font(.system(size: 10, weight: .semibold))
-                                .lineLimit(1)
-                        }
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .padding(10)
-                        .background(NativeTheme.raised)
-                        .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+        switch presentation {
+        case .imageAlbum(let ids):
+            let images = ids.prefix(3).compactMap { material($0) }
+            if !images.isEmpty {
+                HStack(spacing: 10) {
+                    ForEach(images) { image in
+                        NativeFeedImagePreview(
+                            material: image,
+                            url: store.materialURL(image),
+                            height: images.count == 1 ? 220 : 180
+                        ) { store.openMaterial(image) }
                     }
-                    .buttonStyle(.plain)
+                }
+                if let caption = content.caption, !caption.isEmpty {
+                    Text(caption)
+                        .font(.system(size: 10, weight: .semibold))
+                        .foregroundStyle(NativeTheme.muted)
+                        .padding(.top, 7)
                 }
             }
+        case .video(let materialID, let posterID):
+            if let video = material(materialID), let poster = material(posterID) {
+                NativeFeedImagePreview(
+                    material: poster,
+                    url: store.materialURL(poster),
+                    height: 210,
+                    showsPlayButton: true
+                ) { store.openMaterial(video) }
+            } else if let video = material(materialID) {
+                attachmentButton(video)
+            }
+        case .document(let materialID, _):
+            if let document = material(materialID) { attachmentButton(document) }
+        case .none:
+            EmptyView()
         }
+    }
+
+    private func attachmentButton(_ material: Material) -> some View {
+        Button { store.openMaterial(material) } label: {
+            HStack(spacing: 10) {
+                Image(systemName: symbol(for: material.kind))
+                    .font(.system(size: 17, weight: .semibold))
+                    .foregroundStyle(NativeTheme.acid)
+                Text(material.name)
+                    .font(.system(size: 10, weight: .semibold))
+                    .lineLimit(1)
+                Spacer()
+                Image(systemName: "arrow.up.right")
+                    .font(.system(size: 9, weight: .bold))
+                    .foregroundStyle(NativeTheme.muted)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(10)
+            .background(NativeTheme.raised)
+            .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+        }
+        .buttonStyle(.plain)
     }
 
     private func symbol(for kind: String) -> String {
         ["image": "photo", "video": "play.rectangle.fill", "pdf": "doc.richtext.fill", "document": "doc.fill"][kind] ?? "paperclip"
+    }
+}
+
+private struct NativeFeedImagePreview: View {
+    let material: Material
+    let url: URL
+    let height: CGFloat
+    var showsPlayButton = false
+    let open: () -> Void
+
+    var body: some View {
+        Button(action: open) {
+            AsyncImage(url: url, transaction: Transaction(animation: .easeInOut(duration: 0.18))) { phase in
+                ZStack {
+                    NativeTheme.raised
+                    switch phase {
+                    case .empty:
+                        ProgressView().controlSize(.small).tint(NativeTheme.muted)
+                    case .success(let image):
+                        image
+                            .resizable()
+                            .interpolation(.high)
+                            .scaledToFit()
+                            .padding(8)
+                    case .failure:
+                        VStack(spacing: 7) {
+                            Image(systemName: "photo.badge.exclamationmark")
+                                .font(.system(size: 20, weight: .semibold))
+                            Text("图片暂时无法加载")
+                                .font(.system(size: 10, weight: .semibold))
+                        }
+                        .foregroundStyle(NativeTheme.muted)
+                    @unknown default:
+                        EmptyView()
+                    }
+
+                    if showsPlayButton {
+                        Image(systemName: "play.fill")
+                            .font(.system(size: 17, weight: .bold))
+                            .foregroundStyle(NativeTheme.ink)
+                            .frame(width: 44, height: 44)
+                            .background(.black.opacity(0.66))
+                            .clipShape(Circle())
+                    }
+                }
+                .frame(maxWidth: .infinity)
+                .frame(height: height)
+            }
+            .overlay(alignment: .bottomLeading) {
+                Text(material.name)
+                    .font(.system(size: 10, weight: .bold))
+                    .foregroundStyle(NativeTheme.ink)
+                    .lineLimit(1)
+                    .padding(.horizontal, 10)
+                    .frame(height: 30)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .background(.black.opacity(0.58))
+            }
+            .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+            .overlay {
+                RoundedRectangle(cornerRadius: 12, style: .continuous)
+                    .stroke(NativeTheme.border, lineWidth: 1)
+            }
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("打开图片 \(material.name)")
     }
 }

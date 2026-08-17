@@ -62,6 +62,33 @@ final class NativeModelsTests: XCTestCase {
         ))
     }
 
+    func testFeedMaterialPresentationUsesInlineImagesForAlbums() {
+        let album = FeedContent(
+            type: "image_album",
+            materialIds: ["material-image-a", "material-image-b"],
+            materialId: nil,
+            posterMaterialId: nil,
+            coverMaterialId: nil,
+            caption: "新版图标",
+            summary: nil
+        )
+        XCTAssertEqual(
+            NativeFeedMaterialPresentation(content: album),
+            .imageAlbum(["material-image-a", "material-image-b"])
+        )
+
+        let text = FeedContent(
+            type: "text",
+            materialIds: nil,
+            materialId: nil,
+            posterMaterialId: nil,
+            coverMaterialId: nil,
+            caption: nil,
+            summary: nil
+        )
+        XCTAssertEqual(NativeFeedMaterialPresentation(content: text), .none)
+    }
+
     func testTaskPresentationRemovesInternalResponseMetadata() {
         let value = """
         用户能看到的结论

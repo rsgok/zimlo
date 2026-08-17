@@ -330,6 +330,10 @@ final class NativeAppStore: ObservableObject {
         NSWorkspace.shared.open(client.materialURL(material.id))
     }
 
+    func materialURL(_ material: Material) -> URL {
+        client.materialURL(material.id)
+    }
+
     func showNotice(_ text: String, tone: NativeNoticeTone = .neutral) {
         notice = NativeNotice(text: text, tone: tone)
         let id = notice?.id
