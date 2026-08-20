@@ -94,6 +94,29 @@ final class PairingLinkRulesTests: XCTestCase {
     }
 }
 
+final class BridgeErrorPresentationRulesTests: XCTestCase {
+    func testSuccessfulReconnectClearsAStaleTransportError() {
+        XCTAssertNil(BridgeErrorPresentationRules.aggregate(
+            current: "There was a bad response from the server.",
+            connected: true,
+            channelErrors: [nil]
+        ))
+    }
+
+    func testDisconnectedStateKeepsAnActionableError() {
+        XCTAssertEqual(BridgeErrorPresentationRules.aggregate(
+            current: nil,
+            connected: false,
+            channelErrors: ["Mac 当前离线"]
+        ), "Mac 当前离线")
+        XCTAssertEqual(BridgeErrorPresentationRules.aggregate(
+            current: "无法安全保存这台 Mac 的连接信息",
+            connected: false,
+            channelErrors: []
+        ), "无法安全保存这台 Mac 的连接信息")
+    }
+}
+
 final class PhoneSetupRulesTests: XCTestCase {
     func testOnlyFirstUnpairedLaunchAutomaticallyShowsSetup() {
         XCTAssertEqual(

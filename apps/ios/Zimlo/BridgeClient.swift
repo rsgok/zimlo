@@ -680,6 +680,17 @@ struct HostConnectionStatus: Identifiable, Hashable {
     var id: String { host.id }
 }
 
+enum BridgeErrorPresentationRules {
+    static func aggregate(
+        current: String?,
+        connected: Bool,
+        channelErrors: [String?]
+    ) -> String? {
+        if connected { return nil }
+        return channelErrors.compactMap { $0 }.first ?? current
+    }
+}
+
 /// Multi-Host facade. Each Mac keeps an independent end-to-end encrypted
 /// channel and device grant; the facade only aggregates connection state and
 /// routes a command to the Host that owns its session/project/workspace.
@@ -830,6 +841,11 @@ final class BridgeClient: ObservableObject {
         pairingRequired = hosts.isEmpty
         let activeModes = Set(hosts.filter(\.connected).map(\.mode))
         connectionMode = activeModes.isEmpty ? "offline" : activeModes.count > 1 ? "multi" : activeModes.first ?? "offline"
+        error = BridgeErrorPresentationRules.aggregate(
+            current: error,
+            connected: connected,
+            channelErrors: channels.values.map(\.error)
+        )
     }
 }
 

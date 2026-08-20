@@ -1,4 +1,5 @@
 import WebSocket from "ws";
+import { HttpsProxyAgent } from "https-proxy-agent";
 import {
   createKeyPair,
   decryptFrame,
@@ -12,6 +13,7 @@ import {
   toBase64Url,
   verifyProof,
 } from "@zimlo/protocol/crypto";
+import { proxyURLFor } from "../dist/proxy-environment.js";
 
 const localURL = process.argv.find((value) => value.startsWith("http://") || value.startsWith("https://"))
   ?? "http://127.0.0.1:4747";
@@ -24,6 +26,11 @@ function webSocketURL(baseURL, pathname) {
   return url;
 }
 
+function webSocketOptions(url) {
+  const proxyURL = proxyURLFor(url);
+  return proxyURL ? { agent: new HttpsProxyAgent(proxyURL) } : {};
+}
+
 async function connectSecure({
   url,
   deviceId,
@@ -32,7 +39,7 @@ async function connectSecure({
   onMessage,
   timeoutMs = 15_000,
 }) {
-  const socket = new WebSocket(url, protocols);
+  const socket = new WebSocket(url, protocols, webSocketOptions(url));
   const clientNonce = randomBytes(24);
   const clientNonceText = toBase64Url(clientNonce);
   const aad = `zimlo-ws-v1:${deviceId}`;
@@ -149,9 +156,11 @@ async function revokeSmokeDevice(deviceId) {
 }
 
 async function assertRemoteCredentialRevoked(cloud) {
+  const url = webSocketURL(cloud.relayURL, "/v1/sync/device");
   const socket = new WebSocket(
-    webSocketURL(cloud.relayURL, "/v1/sync/device"),
+    url,
     ["zimlo-relay-v1", `zimlo-token.${cloud.accessToken}`],
+    webSocketOptions(url),
   );
   await new Promise((resolve, reject) => {
     const timeout = setTimeout(() => {
