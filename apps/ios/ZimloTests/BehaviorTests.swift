@@ -94,6 +94,37 @@ final class PairingLinkRulesTests: XCTestCase {
     }
 }
 
+final class PhoneSetupRulesTests: XCTestCase {
+    func testOnlyFirstUnpairedLaunchAutomaticallyShowsSetup() {
+        XCTAssertEqual(
+            PhoneSetupRules.root(pairingRequired: true, hasEverPaired: false, dismissed: false),
+            .firstRun
+        )
+        XCTAssertEqual(
+            PhoneSetupRules.root(pairingRequired: false, hasEverPaired: false, dismissed: false),
+            .appShell
+        )
+    }
+
+    func testSkippingOrHavingPairedKeepsLaterLaunchesInAppShell() {
+        XCTAssertEqual(
+            PhoneSetupRules.root(pairingRequired: true, hasEverPaired: false, dismissed: true),
+            .appShell
+        )
+        XCTAssertEqual(
+            PhoneSetupRules.root(pairingRequired: true, hasEverPaired: true, dismissed: false),
+            .appShell
+        )
+    }
+
+    func testMacDownloadUsesStableReleaseRedirect() {
+        XCTAssertEqual(
+            PhoneSetupRules.macDownloadURL.absoluteString,
+            "https://zimlo-cloud.zimlo.workers.dev/releases/macos/download"
+        )
+    }
+}
+
 final class TaskHeaderRulesTests: XCTestCase {
     func testNavigationTitleUsesFirstConciseClauseWhileTaskInputStaysComplete() {
         let input = "下一周我要对这个产品做宣发，包括在小红书上和 X 上，所以需要准备完整宣发材料"

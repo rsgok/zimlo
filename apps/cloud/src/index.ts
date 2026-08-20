@@ -8,7 +8,7 @@ import {
   verifyInstallationSignature,
 } from "./crypto.js";
 import { PairingRoom } from "./pairing-room.js";
-import { releaseAssetHeaders, releaseAssetKey } from "./release-assets.js";
+import { latestMacReleaseName, releaseAssetHeaders, releaseAssetKey } from "./release-assets.js";
 import { RelayRoom } from "./relay-room.js";
 import { ZIMLO_PROTOCOL_VERSION } from "./contract.generated.js";
 
@@ -82,6 +82,24 @@ async function releaseAsset(request: Request, env: Env, pathname: string): Promi
   headers.set("etag", object.httpEtag);
   headers.set("x-content-type-options", "nosniff");
   return new Response(object.body, { headers });
+}
+
+async function latestMacRelease(request: Request, env: Env): Promise<Response> {
+  if (!env.RELEASES) return jsonError(503, "release_storage_unavailable");
+  const manifest = await env.RELEASES.get("macos/latest.json");
+  if (!manifest) return jsonError(404, "release_not_found");
+  let value: unknown;
+  try {
+    value = await manifest.json();
+  } catch {
+    return jsonError(503, "release_manifest_invalid");
+  }
+  const fileName = latestMacReleaseName(value);
+  if (!fileName) return jsonError(503, "release_manifest_invalid");
+  const target = new URL(request.url);
+  target.pathname = `/releases/macos/${encodeURIComponent(fileName)}`;
+  target.search = "";
+  return Response.redirect(target.toString(), 302);
 }
 
 function validId(value: unknown, prefix: string): value is string {
@@ -601,6 +619,12 @@ export default {
           env.APNS_PRIVATE_KEY_P8 && env.APNS_KEY_ID && env.APNS_TEAM_ID && env.APNS_TOPIC,
         ),
       });
+    }
+    if (
+      (request.method === "GET" || request.method === "HEAD")
+      && url.pathname === "/releases/macos/download"
+    ) {
+      return latestMacRelease(request, env);
     }
     if (
       (request.method === "GET" || request.method === "HEAD")

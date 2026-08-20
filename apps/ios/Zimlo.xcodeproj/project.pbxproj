@@ -37,6 +37,7 @@
 		10000000000000000000001E /* MaterialSupport.swift in Sources */ = {isa = PBXBuildFile; fileRef = 200000000000000000000023 /* MaterialSupport.swift */; };
 		10000000000000000000001F /* providers in Resources */ = {isa = PBXBuildFile; fileRef = 200000000000000000000025 /* providers */; };
 		100000000000000000000020 /* ZimloContract.generated.swift in Sources */ = {isa = PBXBuildFile; fileRef = 200000000000000000000024 /* ZimloContract.generated.swift */; };
+		100000000000000000000021 /* PhoneSetupView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 200000000000000000000026 /* PhoneSetupView.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -94,6 +95,7 @@
 		200000000000000000000023 /* MaterialSupport.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MaterialSupport.swift; sourceTree = "<group>"; };
 		200000000000000000000024 /* ZimloContract.generated.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ZimloContract.generated.swift; sourceTree = "<group>"; };
 		200000000000000000000025 /* providers */ = {isa = PBXFileReference; lastKnownFileType = folder; name = providers; path = ../../shared/branding/providers; sourceTree = "<group>"; };
+		200000000000000000000026 /* PhoneSetupView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PhoneSetupView.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -131,6 +133,7 @@
 				200000000000000000000023,
 				200000000000000000000024,
 				200000000000000000000025,
+				200000000000000000000026,
 			);
 		};
 		500000000000000000000003 /* ZimloTests */ = {isa = PBXGroup; path = ZimloTests; sourceTree = "<group>"; children = (20000000000000000000000F, 20000000000000000000001F, 200000000000000000000020,); };
@@ -235,6 +238,7 @@
 				100000000000000000000016, 100000000000000000000017, 100000000000000000000018,
 				100000000000000000000019,
 				100000000000000000000020,
+				100000000000000000000021,
 				10000000000000000000001C,
 				10000000000000000000001E,
 			);

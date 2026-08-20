@@ -944,9 +944,9 @@ struct SettingsView: View {
                 profileSummary
                 runtimeSection
                 hostsSection
-                connectionSection
+                if !model.bridge.hosts.isEmpty { connectionSection }
                 if model.snapshot.features.pushNotifications { notificationsSection }
-                forgetButton
+                if !model.bridge.hosts.isEmpty { forgetButton }
             }
             .padding(.horizontal, 14)
             .padding(.top, 14)
@@ -1192,7 +1192,7 @@ struct SettingsView: View {
             if !model.bridge.hosts.isEmpty { Divider().overlay(ZColor.line) }
             Button { presentedSheet = .pairing } label: {
                 HStack(spacing: 11) {
-                    settingsLabel("连接另一台 Mac", systemImage: "plus.circle.fill")
+                    settingsLabel(model.bridge.hosts.isEmpty ? "连接 Mac" : "连接另一台 Mac", systemImage: "plus.circle.fill")
                     Spacer()
                     Image(systemName: "chevron.right")
                         .font(ZFont.caption2)

@@ -7,12 +7,16 @@ import SwiftUI
 struct RootView: View {
     @ObservedObject var model: AppModel
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+    @AppStorage(PhoneSetupRules.dismissedKey) private var phoneSetupDismissed = false
+    @AppStorage(PhoneSetupRules.hasEverPairedKey) private var hasEverPaired = false
+    @State private var setupStep: PhoneSetupStep = .introduction
+    @State private var manualSetupPresented = false
 
     var body: some View {
-        if model.bridge.pairingRequired {
-            PairingView(model: model)
-                .ignoresSafeArea()
-        } else {
+        Group {
+            if showsPhoneSetup {
+                phoneSetupFlow
+            } else {
             VStack(spacing: 0) {
                 Group {
                     if let session = model.selectedSession {
@@ -22,8 +26,15 @@ struct RootView: View {
                     } else {
                         switch model.selectedTab {
                         case .feed:
-                            NativeFeedView(model: model)
-                                .ignoresSafeArea(.container, edges: .horizontal)
+                            if model.bridge.pairingRequired {
+                                MacConnectionEmptyView(
+                                    returningUser: hasEverPaired,
+                                    onConnect: presentPhoneSetup
+                                )
+                            } else {
+                                NativeFeedView(model: model)
+                                    .ignoresSafeArea(.container, edges: .horizontal)
+                            }
                         case .tasks: TasksDirectoryView(model: model)
                         case .agents: AgentsDirectoryView(model: model)
                         case .settings: SettingsView(model: model)
@@ -34,7 +45,7 @@ struct RootView: View {
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
                 .background(ZColor.canvas)
 
-                BottomBar(model: model)
+                BottomBar(model: model, onConnectMac: presentPhoneSetup)
                     .background(ZColor.canvas)
             }
             .background(ZColor.canvas.ignoresSafeArea())
@@ -97,12 +108,69 @@ struct RootView: View {
                     model.conversationSessionId = nil
                 }
             }
+            }
         }
+        .onAppear { rememberExistingPairing() }
+        .onChange(of: model.bridge.pairingRequired) { _, pairingRequired in
+            guard !pairingRequired else { return }
+            rememberExistingPairing()
+        }
+    }
+
+    private var showsPhoneSetup: Bool {
+        guard model.bridge.pairingRequired else { return false }
+        return manualSetupPresented || PhoneSetupRules.root(
+            pairingRequired: true,
+            hasEverPaired: hasEverPaired,
+            dismissed: phoneSetupDismissed
+        ) == .firstRun
+    }
+
+    @ViewBuilder
+    private var phoneSetupFlow: some View {
+        switch setupStep {
+        case .introduction:
+            PhoneSetupIntroView(
+                returningUser: hasEverPaired,
+                showsCloseButton: manualSetupPresented,
+                onDismiss: dismissPhoneSetup,
+                onReadyToPair: { setupStep = .pairing }
+            )
+        case .pairing:
+            PairingView(
+                model: model,
+                onCancel: { setupStep = .introduction },
+                onPaired: rememberExistingPairing,
+                showsExistingError: false
+            )
+            .background(ZColor.canvas.ignoresSafeArea())
+        }
+    }
+
+    private func presentPhoneSetup() {
+        clearDetail()
+        setupStep = .introduction
+        manualSetupPresented = true
+    }
+
+    private func dismissPhoneSetup() {
+        if !manualSetupPresented { phoneSetupDismissed = true }
+        manualSetupPresented = false
+        setupStep = .introduction
+    }
+
+    private func rememberExistingPairing() {
+        guard !model.bridge.pairingRequired else { return }
+        hasEverPaired = true
+        manualSetupPresented = false
+        setupStep = .introduction
     }
 
     @ViewBuilder
     private var overlayBanner: some View {
-        if model.pendingRouteSessionId != nil {
+        if model.bridge.pairingRequired {
+            EmptyView()
+        } else if model.pendingRouteSessionId != nil {
             // 通知路由占位条：session 未同步到本机前持久显示，可重试。
             ViewThatFits(in: .horizontal) {
                 HStack(spacing: 10) {
@@ -342,6 +410,7 @@ struct RootView: View {
 
 private struct BottomBar: View {
     @ObservedObject var model: AppModel
+    let onConnectMac: () -> Void
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
 
     var body: some View {
@@ -416,6 +485,10 @@ private struct BottomBar: View {
 
     private func openComposer() {
         Haptics.selection()
+        guard !model.bridge.pairingRequired else {
+            onConnectMac()
+            return
+        }
         if let session = model.selectedSession {
             model.conversationSessionId = session.id
             model.newTaskProjectId = projectID(for: session)

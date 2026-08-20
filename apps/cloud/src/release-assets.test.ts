@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { releaseAssetHeaders, releaseAssetKey } from "./release-assets.js";
+import { latestMacReleaseName, releaseAssetHeaders, releaseAssetKey } from "./release-assets.js";
 
 describe("macOS release assets", () => {
   it("maps only flat, safe release filenames into the bucket prefix", () => {
@@ -24,5 +24,12 @@ describe("macOS release assets", () => {
       "content-type": "application/x-apple-diskimage",
       "cache-control": "public, max-age=31536000, immutable",
     });
+  });
+
+  it("accepts only a flat signed-release filename from the latest manifest", () => {
+    expect(latestMacReleaseName({ fileName: "Zimlo-0.3.0.dmg" })).toBe("Zimlo-0.3.0.dmg");
+    expect(latestMacReleaseName({ fileName: "../Zimlo-0.3.0.dmg" })).toBeNull();
+    expect(latestMacReleaseName({ fileName: "Other-0.3.0.dmg" })).toBeNull();
+    expect(latestMacReleaseName(null)).toBeNull();
   });
 });
