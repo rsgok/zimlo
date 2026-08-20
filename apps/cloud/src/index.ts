@@ -7,6 +7,7 @@ import {
   signedRequestMessage,
   verifyInstallationSignature,
 } from "./crypto.js";
+import { validPairingId } from "./identifiers.js";
 import { PairingRoom } from "./pairing-room.js";
 import { latestMacReleaseName, releaseAssetHeaders, releaseAssetKey } from "./release-assets.js";
 import { RelayRoom } from "./relay-room.js";
@@ -507,7 +508,7 @@ async function registerPairing(request: Request, env: Env): Promise<Response> {
     return jsonError(400, "invalid_json");
   }
   if (
-    !validId(body.pairingId, "019")
+    !validPairingId(body.pairingId)
     || typeof body.tokenHash !== "string"
     || body.tokenHash.length < 32
     || typeof body.expiresAt !== "string"
@@ -574,7 +575,7 @@ async function beginDevicePairing(request: Request, env: Env): Promise<Response>
   const body = await request.json<Record<string, unknown>>().catch(() => null);
   const pairingId = body?.pairingId;
   if (
-    !validId(pairingId, "019")
+    !validPairingId(pairingId)
     || typeof body?.pairingToken !== "string"
     || typeof body?.clientPublicKey !== "string"
     || typeof body?.proof !== "string"
@@ -591,7 +592,7 @@ async function beginDevicePairing(request: Request, env: Env): Promise<Response>
 async function devicePairingResult(request: Request, env: Env): Promise<Response> {
   const url = new URL(request.url);
   const pairingId = url.searchParams.get("pairingId") ?? "";
-  if (!validId(pairingId, "019")) return jsonError(400, "invalid_pairing");
+  if (!validPairingId(pairingId)) return jsonError(400, "invalid_pairing");
   const internal = new URL("https://pairing.internal/device/result");
   for (const key of ["pairingToken", "requestId"]) {
     const value = url.searchParams.get(key);
