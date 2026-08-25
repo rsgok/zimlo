@@ -396,6 +396,10 @@ enum FeedCohortRules {
         return order
     }
 
+    static func beginningTarget(currentOrder: [String]) -> String {
+        currentOrder.first ?? caughtUpID
+    }
+
     // 用户已经翻到「已清空」时，新到达的卡就是下一条注意力，不应继续藏在
     // 空状态上方。阅读任意真实卡片时则返回 nil，保持原有锚点不跳动。
     static func arrivalTarget(
@@ -410,6 +414,69 @@ enum FeedCohortRules {
         guard !added.isEmpty else { return nil }
         let byID = Dictionary(uniqueKeysWithValues: entries.map { ($0.id, $0) })
         return added.first(where: { byID[$0]?.needsAction == true }) ?? added.first
+    }
+}
+
+// MARK: - 本地配对网络
+
+enum PairingNetworkRules {
+    static func usesLocalNetwork(_ url: URL?) -> Bool {
+        guard let rawHost = url?.host?.lowercased() else { return false }
+        let host = rawHost.trimmingCharacters(in: CharacterSet(charactersIn: "[]"))
+        if host == "localhost" || host.hasSuffix(".local") || host == "::1" { return true }
+        if host.contains(":"),
+           host.hasPrefix("fe80:") || host.hasPrefix("fc") || host.hasPrefix("fd") { return true }
+        guard let octets = ipv4Octets(host) else { return false }
+        return octets[0] == 10
+            || octets[0] == 127
+            || (octets[0] == 169 && octets[1] == 254)
+            || (octets[0] == 172 && (16...31).contains(octets[1]))
+            || (octets[0] == 192 && octets[1] == 168)
+    }
+
+    static func protocolProbeTimeout(for url: URL) -> TimeInterval {
+        usesLocalNetwork(url) ? 20 : 5
+    }
+
+    static func shouldOfferSettings(error: String, pairingURL: URL?) -> Bool {
+        usesLocalNetwork(pairingURL) && isTransportFailure(error)
+    }
+
+    static func userFacingError(_ error: String, pairingURL: URL?) -> String {
+        let normalized = error.lowercased()
+        if normalized.contains("-34018") {
+            return "无法安全保存配对信息，请安装已签名的 App 后重试。"
+        }
+        if shouldOfferSettings(error: error, pairingURL: pairingURL) {
+            return "无法访问 Mac 所在的局域网。请确认系统弹窗中已允许 Zimlo 访问本地网络；如果之前点了“不允许”，请打开系统设置，开启“本地网络”后重试。"
+        }
+        if normalized.contains("could not connect")
+            || normalized.contains("couldn’t connect")
+            || normalized.contains("connection refused") {
+            return "无法连接 Mac。请打开 Mac 上的 Zimlo 并刷新连接码；本地连接还需确认两台设备在同一 Wi-Fi。"
+        }
+        if normalized.contains("timed out") || normalized.contains("timeout") {
+            return "连接 Mac 超时。请在 Mac 刷新连接码后重试。"
+        }
+        return error
+    }
+
+    private static func isTransportFailure(_ error: String) -> Bool {
+        let normalized = error.lowercased()
+        return normalized.contains("timed out")
+            || normalized.contains("timeout")
+            || normalized.contains("could not connect")
+            || normalized.contains("couldn’t connect")
+            || normalized.contains("connection refused")
+            || normalized.contains("network connection was lost")
+    }
+
+    private static func ipv4Octets(_ host: String) -> [Int]? {
+        let values = host.split(separator: ".", omittingEmptySubsequences: false)
+        guard values.count == 4 else { return nil }
+        let octets = values.compactMap { Int($0) }
+        guard octets.count == 4, octets.allSatisfy({ (0...255).contains($0) }) else { return nil }
+        return octets
     }
 }
 

@@ -655,7 +655,10 @@ final class HostBridgeClient: ObservableObject {
         components?.path = "/healthz"
         guard let url = components?.url else { throw PairingError.invalidLink }
         var request = URLRequest(url: url)
-        request.timeoutInterval = 2.5
+        // The first local request may be paused while iOS presents the Local
+        // Network privacy prompt. Leave enough time for the person to read and
+        // allow it instead of reporting a false timeout after 2.5 seconds.
+        request.timeoutInterval = PairingNetworkRules.protocolProbeTimeout(for: bridgeURL)
         let (data, response) = try await URLSession.shared.data(for: request)
         guard let http = response as? HTTPURLResponse, http.statusCode == 200,
               let value = try JSONSerialization.jsonObject(with: data) as? [String: Any],

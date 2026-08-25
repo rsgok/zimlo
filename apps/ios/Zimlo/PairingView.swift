@@ -61,6 +61,12 @@ struct PairingView: View {
                     .disabled(connecting)
                     .accessibilityHint("打开相机，扫描 Mac 上显示的二维码")
 
+                    Label("首次连接若出现“本地网络”系统弹窗，请点“允许”", systemImage: "wifi")
+                        .font(ZFont.footnote.weight(.semibold))
+                        .foregroundStyle(ZColor.muted)
+                        .multilineTextAlignment(.center)
+                        .fixedSize(horizontal: false, vertical: true)
+
                     if dynamicTypeSize.isAccessibilitySize {
                         Text("或使用连接码")
                             .font(ZFont.footnote.weight(.semibold))
@@ -129,12 +135,24 @@ struct PairingView: View {
                     if !connecting,
                        (showsExistingError || attemptedPairing),
                        let error = model.bridge.error {
-                        Text(userFacingPairingError(error))
-                            .font(ZFont.footnote.weight(.semibold))
-                            .foregroundStyle(ZColor.coralText)
-                            .multilineTextAlignment(.center)
-                            .fixedSize(horizontal: false, vertical: true)
-                            .accessibilityLabel("连接失败：\(userFacingPairingError(error))")
+                        VStack(spacing: 10) {
+                            let pairingURL = PairingLinkRules.validatedURL(link)
+                            let message = PairingNetworkRules.userFacingError(error, pairingURL: pairingURL)
+                            Text(message)
+                                .font(ZFont.footnote.weight(.semibold))
+                                .foregroundStyle(ZColor.coralText)
+                                .multilineTextAlignment(.center)
+                                .fixedSize(horizontal: false, vertical: true)
+                                .accessibilityLabel("连接失败：\(message)")
+                            if PairingNetworkRules.shouldOfferSettings(error: error, pairingURL: pairingURL) {
+                                Button {
+                                    openAppSettings()
+                                } label: {
+                                    Label("打开 Zimlo 系统设置", systemImage: "gear")
+                                }
+                                .buttonStyle(PairingButtonStyle())
+                            }
+                        }
                     }
 
                     Spacer(minLength: dynamicTypeSize.isAccessibilitySize ? 8 : 32)
@@ -207,20 +225,9 @@ struct PairingView: View {
         }
     }
 
-    private func userFacingPairingError(_ error: String) -> String {
-        let normalized = error.lowercased()
-        if normalized.contains("-34018") {
-            return "无法安全保存配对信息，请安装已签名的 App 后重试。"
-        }
-        if normalized.contains("could not connect")
-            || normalized.contains("couldn’t connect")
-            || normalized.contains("connection refused") {
-            return "无法连接 Mac。请打开 Mac 上的 Zimlo 并刷新连接码；本地连接还需确认两台设备在同一 Wi-Fi。"
-        }
-        if normalized.contains("timed out") || normalized.contains("timeout") {
-            return "连接 Mac 超时。请在 Mac 刷新连接码后重试；本地连接需保持同一 Wi-Fi。"
-        }
-        return error
+    private func openAppSettings() {
+        guard let url = URL(string: UIApplication.openSettingsURLString) else { return }
+        UIApplication.shared.open(url)
     }
 }
 
@@ -282,7 +289,7 @@ private final class ScannerController: UIViewController {
         view.backgroundColor = .black
 
         let label = UILabel()
-        label.text = "扫描 Mac 上的 Zimlo 配对二维码"
+        label.text = "扫描 Mac 上的 Zimlo 配对二维码\n出现“本地网络”弹窗时请点“允许”"
         label.textColor = UIColor(ZColor.ink)
         label.font = .boldSystemFont(ofSize: 16)
         label.textAlignment = .center

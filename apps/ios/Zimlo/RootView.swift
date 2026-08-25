@@ -11,6 +11,7 @@ struct RootView: View {
     @AppStorage(PhoneSetupRules.hasEverPairedKey) private var hasEverPaired = false
     @State private var setupStep: PhoneSetupStep = .introduction
     @State private var manualSetupPresented = false
+    @State private var feedResetRequest = 0
 
     var body: some View {
         Group {
@@ -32,7 +33,7 @@ struct RootView: View {
                                     onConnect: presentPhoneSetup
                                 )
                             } else {
-                                NativeFeedView(model: model)
+                                NativeFeedView(model: model, resetRequest: feedResetRequest)
                                     .ignoresSafeArea(.container, edges: .horizontal)
                             }
                         case .tasks: TasksDirectoryView(model: model)
@@ -45,7 +46,11 @@ struct RootView: View {
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
                 .background(ZColor.canvas)
 
-                BottomBar(model: model, onConnectMac: presentPhoneSetup)
+                BottomBar(
+                    model: model,
+                    onConnectMac: presentPhoneSetup,
+                    onFeedSelected: { feedResetRequest &+= 1 }
+                )
                     .background(ZColor.canvas)
             }
             .background(ZColor.canvas.ignoresSafeArea())
@@ -411,6 +416,7 @@ struct RootView: View {
 private struct BottomBar: View {
     @ObservedObject var model: AppModel
     let onConnectMac: () -> Void
+    let onFeedSelected: () -> Void
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
 
     var body: some View {
@@ -449,6 +455,7 @@ private struct BottomBar: View {
         Button {
             clearDetail()
             model.selectedTab = tab
+            if tab == .feed { onFeedSelected() }
         } label: {
             if dynamicTypeSize.isAccessibilitySize {
                 Image(systemName: icon)

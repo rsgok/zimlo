@@ -92,6 +92,27 @@ final class PairingLinkRulesTests: XCTestCase {
         XCTAssertNil(PairingLinkRules.validatedURL("https://relay.example/#pairingId=&secret=s1&bridgeKey=k1"))
         XCTAssertNil(PairingLinkRules.validatedURL("https://relay.example/"))
     }
+
+    func testLocalPairingFailuresExplainPermissionAndOfferSettings() {
+        let local = PairingLinkRules.validatedURL(
+            "http://192.168.1.20:4747/#pairingId=p1&secret=s1&bridgeKey=k1"
+        )
+        let error = "The request timed out."
+        XCTAssertTrue(PairingNetworkRules.usesLocalNetwork(local))
+        XCTAssertEqual(PairingNetworkRules.protocolProbeTimeout(for: local!), 20)
+        XCTAssertTrue(PairingNetworkRules.shouldOfferSettings(error: error, pairingURL: local))
+        XCTAssertTrue(PairingNetworkRules.userFacingError(error, pairingURL: local).contains("本地网络"))
+    }
+
+    func testCloudPairingTimeoutDoesNotSuggestLocalNetworkSettings() {
+        let cloud = PairingLinkRules.validatedURL(
+            "https://relay.example/#pairingId=p1&secret=s1&bridgeKey=k1"
+        )
+        let error = "The request timed out."
+        XCTAssertFalse(PairingNetworkRules.usesLocalNetwork(cloud))
+        XCTAssertEqual(PairingNetworkRules.protocolProbeTimeout(for: cloud!), 5)
+        XCTAssertFalse(PairingNetworkRules.shouldOfferSettings(error: error, pairingURL: cloud))
+    }
 }
 
 final class BridgeErrorPresentationRulesTests: XCTestCase {
@@ -570,6 +591,11 @@ final class FeedCohortRulesTests: XCTestCase {
         let order = FeedCohortRules.reconcile(previous: [], entries: initial)
         let settled = [entry(id: "a", unread: false, needsAction: false, settled: true), initial[1]]
         XCTAssertEqual(FeedCohortRules.reconcile(previous: order, entries: settled), ["post:a", "post:b"])
+    }
+
+    func testBeginningTargetUsesFirstAttentionCardOrCaughtUpPage() {
+        XCTAssertEqual(FeedCohortRules.beginningTarget(currentOrder: ["post:a", "post:b"]), "post:a")
+        XCTAssertEqual(FeedCohortRules.beginningTarget(currentOrder: []), FeedCohortRules.caughtUpID)
     }
 
     func testHistoricalCardResurfacesWhenItBecomesActionable() {
