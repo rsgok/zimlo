@@ -2,6 +2,7 @@ import SwiftUI
 
 struct NativeFeedView: View {
     @ObservedObject var model: AppModel
+    let resetRequest: Int
     @State private var visibleID: String?
     @State private var currentOrder: [String] = []
     @State private var showNewContent = false
@@ -34,12 +35,18 @@ struct NativeFeedView: View {
                 .scrollTargetLayout()
             }
             .scrollIndicators(.hidden)
-            .scrollTargetBehavior(.paging)
+            // Keep the TikTok-style one-card stop. View-aligned snapping feels
+            // more direct than container paging while alwaysByOne guarantees that
+            // one interaction can advance by at most one card.
+            .feedScrollTargetBehavior()
             .scrollPosition(id: $visibleID)
-            .simultaneousGesture(DragGesture(minimumDistance: 4).onChanged { _ in showNewContent = false })
             .background(ZColor.canvas)
             .onAppear { updateCohort() }
             .onChange(of: FeedCohortRules.signature(entries)) { _, _ in updateCohort() }
+            .onChange(of: resetRequest) { _, _ in resetToBeginning() }
+            .onChange(of: visibleID) { _, _ in
+                if showNewContent { showNewContent = false }
+            }
             .task(id: visibleID) {
                 // scrollPosition 在布局和 sheet 转场期间可能短暂回传 nil；这不是
                 // 用户离开当前卡片，不能因此丢掉“回复当前会话”的上下文。
@@ -101,9 +108,12 @@ struct NativeFeedView: View {
         )
         let initial = visibleID == nil ? next.first : nil
         let target = arrival ?? initial
-        withAnimation(.easeOut(duration: 0.22)) {
-            currentOrder = next
-            if let target { visibleID = target }
+        // A read receipt changes the Feed signature one second after settling on a
+        // card. Updating an unchanged cohort inside an animation transaction made
+        // the next drag compete with a redundant layout animation.
+        if next != previous { currentOrder = next }
+        if let target {
+            withAnimation(.snappy(duration: 0.28)) { visibleID = target }
         }
         if let target, let entry = entries.first(where: { $0.id == target }) {
             model.activeFeedSessionId = entry.sessionId
@@ -112,6 +122,13 @@ struct NativeFeedView: View {
             model.activeFeedSessionId = nil
             model.activeFeedProjectId = nil
         }
+    }
+
+    private func resetToBeginning() {
+        showNewContent = false
+        let target = FeedCohortRules.beginningTarget(currentOrder: currentOrder)
+        guard visibleID != target else { return }
+        withAnimation(.snappy(duration: 0.3)) { visibleID = target }
     }
 
     private func projectID(for entry: FeedEntry) -> String? {
@@ -130,8 +147,22 @@ struct NativeFeedView: View {
     }
 }
 
+private extension View {
+    @ViewBuilder
+    func feedScrollTargetBehavior() -> some View {
+        if #available(iOS 18.0, *) {
+            scrollTargetBehavior(.viewAligned(limitBehavior: .alwaysByOne))
+        } else {
+            scrollTargetBehavior(.paging)
+        }
+    }
+}
+
 private struct FeedPage: View {
-    @ObservedObject var model: AppModel
+    // NativeFeedView is the single observation boundary. Nested full-screen cards
+    // receive the reference only for actions, avoiding duplicate invalidations of
+    // every visible page for one AppModel publication.
+    let model: AppModel
     let entry: FeedEntry
     var historical = false
     @State private var offset: CGFloat = 0
@@ -162,13 +193,16 @@ private struct FeedPage: View {
             .padding(.horizontal, 10).padding(.vertical, 6)
             .offset(x: offset)
             .simultaneousGesture(
-                DragGesture(minimumDistance: 16)
+                // Give the ScrollView's vertical pan recognizer a clear head start.
+                // Horizontal card actions remain available, but a normal vertical
+                // flick no longer has to negotiate with a full-card drag at touch-down.
+                DragGesture(minimumDistance: 28)
                     .onChanged { value in
-                        guard abs(value.translation.width) > abs(value.translation.height) * 1.12 else { return }
+                        guard abs(value.translation.width) > abs(value.translation.height) * 1.35 else { return }
                         offset = min(120, max(-120, value.translation.width))
                     }
                     .onEnded { value in
-                        let horizontal = abs(value.translation.width) > abs(value.translation.height) * 1.2
+                        let horizontal = abs(value.translation.width) > abs(value.translation.height) * 1.35
                         if horizontal, value.translation.width < -82, let sessionId = entry.sessionId {
                             model.openTask(sessionId: sessionId)
                         } else if horizontal, value.translation.width > 82 {
@@ -188,7 +222,7 @@ private struct FeedPage: View {
 }
 
 private struct PostCard: View {
-    @ObservedObject var model: AppModel
+    let model: AppModel
     let post: FeedPost
     let historical: Bool
 
@@ -285,7 +319,7 @@ private struct PostCard: View {
 }
 
 private struct ActionCard: View {
-    @ObservedObject var model: AppModel
+    let model: AppModel
     let action: PendingAction
     let historical: Bool
 
@@ -309,7 +343,7 @@ private struct ActionCard: View {
 }
 
 private struct CommandCard: View {
-    @ObservedObject var model: AppModel
+    let model: AppModel
     let command: TaskCommand
     let historical: Bool
 
