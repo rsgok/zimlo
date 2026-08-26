@@ -11,6 +11,8 @@ enum QuickApprove {
     struct Payload: Decodable, Sendable {
         let version: Int?
         let sessionId: String
+        let taskTitle: String?
+        let summary: String?
         let actionId: String?
         let decision: String?
         let denyDecision: String?
@@ -45,6 +47,8 @@ enum QuickApprove {
         return route(from: Payload(
             version: payload["version"] as? Int,
             sessionId: sessionId,
+            taskTitle: payload["taskTitle"] as? String,
+            summary: payload["summary"] as? String,
             actionId: payload["actionId"] as? String,
             decision: payload["decision"] as? String,
             denyDecision: payload["denyDecision"] as? String,

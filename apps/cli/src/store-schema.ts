@@ -236,7 +236,11 @@ export function initializeStoreSchema(database: DatabaseSync): void {
         device_id TEXT PRIMARY KEY REFERENCES devices(id) ON DELETE CASCADE,
         enabled INTEGER NOT NULL DEFAULT 0,
         approvals INTEGER NOT NULL DEFAULT 1,
+        results INTEGER NOT NULL DEFAULT 1,
         failures INTEGER NOT NULL DEFAULT 1,
+        critical_only INTEGER NOT NULL DEFAULT 0,
+        quiet_hours_enabled INTEGER NOT NULL DEFAULT 0,
+        timezone_offset_minutes INTEGER NOT NULL DEFAULT 0,
         show_task_title INTEGER NOT NULL DEFAULT 0,
         updated_at TEXT NOT NULL
       );
@@ -247,8 +251,16 @@ export function initializeStoreSchema(database: DatabaseSync): void {
         endpoint TEXT NOT NULL,
         public_key TEXT NOT NULL,
         active INTEGER NOT NULL DEFAULT 1,
+        environment TEXT NOT NULL DEFAULT 'production',
         registered_at TEXT NOT NULL,
         updated_at TEXT NOT NULL
+      );
+
+      CREATE TABLE IF NOT EXISTS push_delivery_status (
+        device_id TEXT PRIMARY KEY REFERENCES devices(id) ON DELETE CASCADE,
+        kind TEXT NOT NULL,
+        status INTEGER NOT NULL,
+        attempted_at TEXT NOT NULL
       );
 
       CREATE TABLE IF NOT EXISTS user_profile (
@@ -305,5 +317,22 @@ export function initializeStoreSchema(database: DatabaseSync): void {
   const actionColumns = database.prepare("PRAGMA table_info(actions)").all() as Array<{ name: string }>;
   if (!actionColumns.some((column) => column.name === "approval_context_json")) {
     database.exec("ALTER TABLE actions ADD COLUMN approval_context_json TEXT");
+  }
+}
+
+export function migrateNotificationDeliveryPolicy(database: DatabaseSync): void {
+  const notificationColumns = database.prepare("PRAGMA table_info(notification_settings)").all() as Array<{ name: string }>;
+  if (!notificationColumns.some((column) => column.name === "critical_only")) {
+    database.exec("ALTER TABLE notification_settings ADD COLUMN critical_only INTEGER NOT NULL DEFAULT 0");
+  }
+  if (!notificationColumns.some((column) => column.name === "quiet_hours_enabled")) {
+    database.exec("ALTER TABLE notification_settings ADD COLUMN quiet_hours_enabled INTEGER NOT NULL DEFAULT 0");
+  }
+  if (!notificationColumns.some((column) => column.name === "timezone_offset_minutes")) {
+    database.exec("ALTER TABLE notification_settings ADD COLUMN timezone_offset_minutes INTEGER NOT NULL DEFAULT 0");
+  }
+  const pushColumns = database.prepare("PRAGMA table_info(push_devices)").all() as Array<{ name: string }>;
+  if (!pushColumns.some((column) => column.name === "environment")) {
+    database.exec("ALTER TABLE push_devices ADD COLUMN environment TEXT NOT NULL DEFAULT 'production'");
   }
 }

@@ -110,12 +110,17 @@ export function normalizeSnapshot(value: Snapshot): Snapshot {
     actions: Array.isArray(snapshot.actions) ? snapshot.actions.filter((action) => !isInternalZimloAction(action)) : [],
     trustPolicies: Array.isArray(snapshot.trustPolicies) ? snapshot.trustPolicies : [],
     trustAudit: Array.isArray(snapshot.trustAudit) ? snapshot.trustAudit : [],
-    notificationSettings: snapshot.notificationSettings ?? {
+    notificationSettings: {
       enabled: false,
       approvals: true,
       failures: true,
+      criticalOnly: false,
+      quietHoursEnabled: false,
+      timeZoneOffsetMinutes: 0,
       showTaskTitle: false,
       updatedAt: "",
+      ...(snapshot.notificationSettings ?? {}),
+      results: snapshot.notificationSettings?.results ?? true,
     },
     pushDevices: Array.isArray(snapshot.pushDevices) ? snapshot.pushDevices : [],
     features: { ...EMPTY_FEATURE_CAPABILITIES, ...(snapshot.features ?? {}) },

@@ -945,7 +945,7 @@ struct SettingsView: View {
                 runtimeSection
                 hostsSection
                 if !model.bridge.hosts.isEmpty { connectionSection }
-                if model.snapshot.features.pushNotifications { notificationsSection }
+                NotificationSettingsSection(model: model)
                 if !model.bridge.hosts.isEmpty { forgetButton }
             }
             .padding(.horizontal, 14)
@@ -1055,36 +1055,6 @@ struct SettingsView: View {
         }
         .buttonStyle(.plain)
         .accessibilityLabel("更换头像")
-    }
-
-    private var notificationsSection: some View {
-        settingsSection("通知") {
-            Toggle(isOn: notificationsEnabled) {
-                settingsLabel("通知", systemImage: "bell.fill")
-            }
-            .tint(ZColor.acid)
-            .padding(.vertical, 3)
-
-            if model.notificationPermission == "系统已拒绝" {
-                Divider().overlay(ZColor.line)
-                Button {
-                    guard let url = URL(string: UIApplication.openSettingsURLString) else { return }
-                    UIApplication.shared.open(url)
-                } label: {
-                    settingsValueRow("系统权限", value: "打开设置", systemImage: "gearshape.fill", emphasized: true)
-                }
-                .buttonStyle(.plain)
-            }
-
-            if model.snapshot.notificationSettings.enabled {
-                Divider().overlay(ZColor.line)
-                notificationToggle("审批与回复", keyPath: \.approvals)
-                Divider().overlay(ZColor.line)
-                notificationToggle("任务失败", keyPath: \.failures)
-                Divider().overlay(ZColor.line)
-                notificationToggle("锁屏任务标题", keyPath: \.showTaskTitle)
-            }
-        }
     }
 
     private var connectionSection: some View {
@@ -1251,20 +1221,6 @@ struct SettingsView: View {
         }
     }
 
-    private var notificationsEnabled: Binding<Bool> {
-        Binding(
-            get: { model.snapshot.notificationSettings.enabled },
-            set: { enabled in
-                if enabled { model.requestNotifications() }
-                else {
-                    var settings = model.snapshot.notificationSettings
-                    settings.enabled = false
-                    model.updateNotificationSettings(settings)
-                }
-            }
-        )
-    }
-
     private var availableProviders: [Provider] {
         let reported = model.snapshot.workspaces.flatMap(\.providers)
             + model.snapshot.projects.flatMap(\.providers)
@@ -1318,19 +1274,6 @@ struct SettingsView: View {
         .contentShape(Rectangle())
     }
 
-    private func notificationToggle(_ title: String, keyPath: WritableKeyPath<NotificationSettings, Bool>) -> some View {
-        Toggle(title, isOn: Binding(
-            get: { model.snapshot.notificationSettings[keyPath: keyPath] },
-            set: { value in
-                var settings = model.snapshot.notificationSettings
-                settings[keyPath: keyPath] = value
-                model.updateNotificationSettings(settings)
-            }
-        ))
-        .font(ZFont.subheadline.weight(.semibold))
-        .tint(ZColor.acid)
-        .frame(minHeight: 44)
-    }
 }
 
 private struct AvatarPickerSheet: View {

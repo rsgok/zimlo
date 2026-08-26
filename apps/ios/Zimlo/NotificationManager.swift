@@ -3,12 +3,51 @@ import Foundation
 import UIKit
 import UserNotifications
 
+enum NotificationPermissionPromptRules {
+    static func shouldRequest(pushNotificationsAvailable: Bool, status: UNAuthorizationStatus) -> Bool {
+        pushNotificationsAvailable && status == .notDetermined
+    }
+}
+
+enum APNsRegistrationEnvironment {
+    static func normalized(_ configured: String?) -> String {
+        configured?.lowercased() == "development" ? "development" : "production"
+    }
+
+    static var current: String {
+        normalized(Bundle.main.object(forInfoDictionaryKey: "ZimloAPNsEnvironment") as? String)
+    }
+}
+
+enum ForegroundNotificationRules {
+    static func shouldPresent(notificationSessionID: String, visibleSessionID: String?) -> Bool {
+        notificationSessionID != visibleSessionID
+    }
+
+    static func message(kind: String?, taskTitle: String? = nil, summary: String? = nil) -> String {
+        let details = [taskTitle, summary]
+            .compactMap { $0?.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+            .joined(separator: " · ")
+        if !details.isEmpty {
+            return details.count <= 160 ? details : String(details.prefix(159)) + "…"
+        }
+        switch kind {
+        case "approval": return "另一项任务正在等你处理"
+        case "approval_reminder": return "另一项任务仍在等你处理"
+        case "failure": return "另一项任务需要你查看"
+        default: return "另一项任务有了新结果"
+        }
+    }
+}
+
 @MainActor
 final class NotificationManager: NSObject, UNUserNotificationCenterDelegate {
     static let shared = NotificationManager()
 
     var onRegistration: ((String, String) -> Void)?
     var onRoute: ((String) -> Void)?
+    var onForegroundRoute: ((String, String?, String?, String?) -> Void)?
     var onError: ((String) -> Void)?
     // 锁屏快捷审批：actionId, sessionId, decisionId, idempotencyKey（服务端仍重校验）。
     var onQuickDecide: ((String, String, String, String) -> Void)?
@@ -62,6 +101,10 @@ final class NotificationManager: NSObject, UNUserNotificationCenterDelegate {
         await UNUserNotificationCenter.current().notificationSettings().authorizationStatus
     }
 
+    func clearBadge() {
+        Task { try? await UNUserNotificationCenter.current().setBadgeCount(0) }
+    }
+
     @discardableResult
     func refreshRegistration() async -> UNAuthorizationStatus {
         let status = await authorizationStatus()
@@ -79,6 +122,21 @@ final class NotificationManager: NSObject, UNUserNotificationCenterDelegate {
 
     func didFailRegistration(_ error: Error) {
         onError?("APNs 注册失败：\(error.localizedDescription)")
+    }
+
+    nonisolated func userNotificationCenter(
+        _ center: UNUserNotificationCenter,
+        willPresent notification: UNNotification
+    ) async -> UNNotificationPresentationOptions {
+        let info = notification.request.content.userInfo
+        guard let route = info["route"] as? [String: String],
+              let payload = try? await MainActor.run(body: { try self.decryptRoutePayload(route) }) else { return [] }
+        let kind = info["kind"] as? String
+        await MainActor.run {
+            self.onForegroundRoute?(payload.sessionId, kind, payload.taskTitle, payload.summary)
+        }
+        // 前台由 App 内轻提示承接；不再叠加系统横幅和声音。
+        return []
     }
 
     nonisolated func userNotificationCenter(

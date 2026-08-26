@@ -242,7 +242,11 @@ export function notificationSettingsFromRow(row: Record<string, unknown>): Notif
   return {
     enabled: Number(row.enabled) === 1,
     approvals: Number(row.approvals) === 1,
+    results: row.results === undefined || Number(row.results) === 1,
     failures: Number(row.failures) === 1,
+    criticalOnly: Number(row.critical_only) === 1,
+    quietHoursEnabled: Number(row.quiet_hours_enabled) === 1,
+    timeZoneOffsetMinutes: Number(row.timezone_offset_minutes ?? 0),
     showTaskTitle: Number(row.show_task_title) === 1,
     updatedAt: String(row.updated_at),
   };
@@ -255,8 +259,18 @@ export function pushDeviceFromRow(row: Record<string, unknown>): PushDeviceRegis
     endpoint: String(row.endpoint),
     publicKey: String(row.public_key),
     active: Number(row.active) === 1,
+    environment: row.environment === "development" ? "development" : "production",
     registeredAt: String(row.registered_at),
     updatedAt: String(row.updated_at),
+    ...(row.last_delivery_kind === null || row.last_delivery_kind === undefined
+      ? {}
+      : { lastDeliveryKind: row.last_delivery_kind as PushDeviceRegistration["lastDeliveryKind"] }),
+    ...(row.last_delivery_status === null || row.last_delivery_status === undefined
+      ? {}
+      : { lastDeliveryStatus: Number(row.last_delivery_status) }),
+    ...(row.last_delivery_at === null || row.last_delivery_at === undefined
+      ? {}
+      : { lastDeliveryAt: String(row.last_delivery_at) }),
   };
 }
 

@@ -9,7 +9,7 @@ function snapshot(host: Host, suffix: string): Snapshot {
     sessions: [{ id: `session-${suffix}`, hostId: host.id, projectId: null, provider: "codex", surface: "gui", providerSessionId: suffix, title: suffix, projectName: null, cwd: null, transcriptPath: null, status: "running", lastActivityAt: host.lastSeenAt, createdAt: host.lastSeenAt, activePid: null, processStartedAt: null, tty: null, correlationUncertain: false, capabilities: { discovered: true, liveObserved: true, replyable: true, approvableOnce: false, approvableSession: false, approvablePersistent: false, resumable: true, diffAvailable: false } }],
     posts: [{ id: `post-${suffix}`, hostId: host.id, projectId: null, taskId: suffix, runId: suffix, agentId: suffix, sessionId: `session-${suffix}`, kind: "result", template: "paper", headline: suffix, takeaway: suffix, highlights: [], content: { type: "text" }, dedupeKey: suffix, source: "agent", createdAt: host.lastSeenAt }],
     seenPostIds: [], dismissedFeedItemIds: [], taskTimelineCursors: {}, taskPreferences: [],
-    notificationSettings: { enabled: false, approvals: true, failures: true, showTaskTitle: false, updatedAt: host.lastSeenAt },
+    notificationSettings: { enabled: false, approvals: true, results: true, failures: true, criticalOnly: false, quietHoursEnabled: false, timeZoneOffsetMinutes: 0, showTaskTitle: false, updatedAt: host.lastSeenAt },
     features: { projectTrustPolicy: true, pushNotifications: false, remoteSync: true, multiHost: true }, sequence: 1, lanApprovalsEnabled: false,
     trustManagementEnabled: false,
   };

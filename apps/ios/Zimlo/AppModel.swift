@@ -108,6 +108,7 @@ final class AppModel: ObservableObject {
     private var snapshotSaveTask: Task<Void, Never>?
     private var snapshotClearTask: Task<Void, Never>?
     private var forgetDeviceTask: Task<Void, Never>?
+    private var notificationRequestInFlight = false
     private let snapshotWriter = SnapshotWriter()
     private let outboxKey = "zimlo.native.command-outbox.v1"
 
@@ -124,21 +125,30 @@ final class AppModel: ObservableObject {
         bridge.onMessage = { [weak self] hostId, message in self?.apply(message, hostId: hostId) }
         NotificationManager.shared.onRegistration = { [weak self] token, publicKey in
             guard let self else { return }
-            #if DEBUG
-            let environment = "development"
-            #else
-            let environment = "production"
-            #endif
             _ = self.sendDurableToAll(ClientCommand(type: "notification.device.register", [
                 "token": .string(token),
                 "publicKey": .string(publicKey),
-                "environment": .string(environment),
+                "environment": .string(APNsRegistrationEnvironment.current),
                 "idempotencyKey": .string(UUID().uuidString),
             ]))
         }
         NotificationManager.shared.onRoute = { [weak self] sessionId in
             guard let self else { return }
             self.routeToTask(sessionId: sessionId)
+        }
+        NotificationManager.shared.onForegroundRoute = { [weak self] sessionId, kind, taskTitle, summary in
+            guard let self,
+                  ForegroundNotificationRules.shouldPresent(
+                    notificationSessionID: sessionId,
+                    visibleSessionID: self.selectedSession?.id
+                  ) else { return }
+            self.showNotice(ForegroundNotificationRules.message(
+                kind: kind,
+                taskTitle: taskTitle,
+                summary: summary
+            ), action: NoticeAction(label: "查看任务") {
+                self.routeToTask(sessionId: sessionId)
+            })
         }
         NotificationManager.shared.onError = { [weak self] message in self?.showNotice(message) }
         NotificationManager.shared.onQuickDecide = { [weak self] actionId, sessionId, decisionId, key in
@@ -429,11 +439,17 @@ final class AppModel: ObservableObject {
     }
 
     func updateNotificationSettings(_ settings: NotificationSettings) {
+        var settings = settings
+        settings.timeZoneOffsetMinutes = TimeZone.current.secondsFromGMT() / 60
         _ = sendDurableToAll(ClientCommand(type: "notification.settings.update", [
             "settings": .object([
                 "enabled": .bool(settings.enabled),
                 "approvals": .bool(settings.approvals),
+                "results": .bool(settings.results),
                 "failures": .bool(settings.failures),
+                "criticalOnly": .bool(settings.criticalOnly),
+                "quietHoursEnabled": .bool(settings.quietHoursEnabled),
+                "timeZoneOffsetMinutes": .number(Double(settings.timeZoneOffsetMinutes)),
                 "showTaskTitle": .bool(settings.showTaskTitle),
             ]),
             "idempotencyKey": .string(UUID().uuidString),
@@ -441,21 +457,45 @@ final class AppModel: ObservableObject {
     }
 
     func requestNotifications() {
+        guard !notificationRequestInFlight else { return }
+        notificationRequestInFlight = true
         Task {
-            _ = await NotificationManager.shared.requestAuthorization()
-            // requestAuthorization(false) 同时覆盖“明确拒绝”和请求异常；以系统
-            // 最终状态为准，确保用户首次点拒绝后立刻看到可操作的设置入口。
+            await requestAndPersistNotificationAuthorization()
+            notificationRequestInFlight = false
+        }
+    }
+
+    private func requestNotificationsAfterPairingIfNeeded(pushNotificationsAvailable: Bool) {
+        guard !notificationRequestInFlight else { return }
+        notificationRequestInFlight = true
+        Task {
             let status = await NotificationManager.shared.authorizationStatus()
-            let allowed = Self.notificationsAllowed(status)
-            notificationPermission = Self.notificationPermissionLabel(status)
-            var settings = snapshot.notificationSettings
-            settings.enabled = allowed
-            updateNotificationSettings(settings)
-            if status == .denied {
-                showNotice("通知已被系统拒绝，可在设置页直接打开系统设置。")
-            } else if !allowed {
-                showNotice("通知未开启，请稍后重试。")
+            if NotificationPermissionPromptRules.shouldRequest(
+                pushNotificationsAvailable: pushNotificationsAvailable,
+                status: status
+            ) {
+                await requestAndPersistNotificationAuthorization()
+            } else {
+                notificationPermission = Self.notificationPermissionLabel(status)
             }
+            notificationRequestInFlight = false
+        }
+    }
+
+    private func requestAndPersistNotificationAuthorization() async {
+        _ = await NotificationManager.shared.requestAuthorization()
+        // requestAuthorization(false) 同时覆盖“明确拒绝”和请求异常；以系统
+        // 最终状态为准，确保用户首次点拒绝后立刻看到可操作的设置入口。
+        let status = await NotificationManager.shared.authorizationStatus()
+        let allowed = Self.notificationsAllowed(status)
+        notificationPermission = Self.notificationPermissionLabel(status)
+        var settings = snapshot.notificationSettings
+        settings.enabled = allowed
+        updateNotificationSettings(settings)
+        if status == .denied {
+            showNotice("通知已被系统拒绝，可在设置页直接打开系统设置。")
+        } else if !allowed {
+            showNotice("通知未开启，请稍后重试。")
         }
     }
 
@@ -951,6 +991,7 @@ final class AppModel: ObservableObject {
                     self.snapshot = snapshot
                     snapshotChanged = true
                 }
+                requestNotificationsAfterPairingIfNeeded(pushNotificationsAvailable: snapshot.features.pushNotifications)
                 if let sessionId = pendingRouteSessionId,
                    snapshot.sessions.contains(where: { $0.id == sessionId }) {
                     openTask(sessionId: sessionId)

@@ -7,13 +7,20 @@ import {
   signedRequestMessage,
   verifyInstallationSignature,
 } from "./crypto.js";
+import {
+  apnsConfigurationStatus,
+  apnsCredentialsFor,
+  type APNsCredentials,
+  type APNsEnvironment,
+  type APNsSecretBindings,
+} from "./apns-config.js";
 import { validPairingId } from "./identifiers.js";
 import { PairingRoom } from "./pairing-room.js";
 import { latestMacReleaseName, releaseAssetHeaders, releaseAssetKey } from "./release-assets.js";
 import { RelayRoom } from "./relay-room.js";
 import { ZIMLO_PROTOCOL_VERSION } from "./contract.generated.js";
 
-interface Env {
+interface Env extends APNsSecretBindings {
   DB: D1Database;
   RELAY_ROOMS: DurableObjectNamespace;
   PAIRING_ROOMS: DurableObjectNamespace;
@@ -21,10 +28,6 @@ interface Env {
   MATERIALS?: R2Bucket;
   REGISTRATION_RATE_LIMITER: RateLimit;
   AUTH_RATE_LIMITER: RateLimit;
-  APNS_PRIVATE_KEY_P8?: string;
-  APNS_KEY_ID?: string;
-  APNS_TEAM_ID?: string;
-  APNS_TOPIC?: string;
 }
 
 interface InstallationRow {
@@ -43,8 +46,9 @@ interface DeviceRow {
 
 interface PushBody {
   deviceId?: string;
-  kind?: "approval" | "failure" | "review";
+  kind?: "approval" | "approval_reminder" | "result" | "failure";
   collapseId?: string;
+  badge?: number;
   alert?: { title?: string; body?: string };
   route?: { ephemeralPublicKey?: string; nonce?: string; ciphertext?: string };
   // Plaintext UNNotificationCategory identifier (generic, no task content);
@@ -308,10 +312,7 @@ async function upsertDevice(request: Request, env: Env): Promise<Response> {
   ) {
     return jsonError(400, "invalid_device");
   }
-  if (
-    apnsToken !== undefined
-    && (!env.APNS_PRIVATE_KEY_P8 || !env.APNS_KEY_ID || !env.APNS_TEAM_ID || !env.APNS_TOPIC)
-  ) {
+  if (apnsToken !== undefined && !apnsCredentialsFor(env, apnsEnvironment)) {
     return jsonError(503, "apns_not_configured");
   }
   const now = new Date().toISOString();
@@ -364,19 +365,21 @@ async function unregisterPushDevice(request: Request, env: Env, deviceId: string
   return Response.json({ ok: true });
 }
 
-let cachedAPNsJWT: { value: string; expiresAt: number } | null = null;
+const cachedAPNsJWT = new Map<APNsEnvironment, { keyId: string; value: string; expiresAt: number }>();
 
-async function apnsJWT(env: Env): Promise<string> {
-  if (cachedAPNsJWT && cachedAPNsJWT.expiresAt > Date.now()) return cachedAPNsJWT.value;
-  if (!env.APNS_PRIVATE_KEY_P8 || !env.APNS_KEY_ID || !env.APNS_TEAM_ID) {
-    throw new Error("APNs is not configured");
-  }
+async function apnsJWT(credentials: APNsCredentials, environment: APNsEnvironment): Promise<string> {
+  const cached = cachedAPNsJWT.get(environment);
+  if (cached && cached.keyId === credentials.keyId && cached.expiresAt > Date.now()) return cached.value;
   const value = await createAPNsJWT({
-    privateKeyPEM: env.APNS_PRIVATE_KEY_P8,
-    keyId: env.APNS_KEY_ID,
-    teamId: env.APNS_TEAM_ID,
+    privateKeyPEM: credentials.privateKeyPEM,
+    keyId: credentials.keyId,
+    teamId: credentials.teamId,
   });
-  cachedAPNsJWT = { value, expiresAt: Date.now() + 50 * 60 * 1_000 };
+  cachedAPNsJWT.set(environment, {
+    keyId: credentials.keyId,
+    value,
+    expiresAt: Date.now() + 50 * 60 * 1_000,
+  });
   return value;
 }
 
@@ -393,28 +396,31 @@ async function sendPush(request: Request, env: Env): Promise<Response> {
   if (
     !validId(body.deviceId, "device_")
     || !body.kind
+    || !["approval", "approval_reminder", "result", "failure"].includes(body.kind)
     || !body.collapseId
     || !body.route?.ciphertext
+    || !Number.isInteger(body.badge)
+    || Number(body.badge) < 0
+    || Number(body.badge) > 99
   ) {
     return jsonError(400, "invalid_push");
-  }
-  if (!env.APNS_PRIVATE_KEY_P8 || !env.APNS_KEY_ID || !env.APNS_TEAM_ID || !env.APNS_TOPIC) {
-    return jsonError(503, "apns_not_configured");
   }
   const device = await env.DB.prepare(`
     SELECT installation_id, device_id, apns_token, apns_environment, route_public_key
     FROM devices WHERE installation_id = ? AND device_id = ? AND active = 1
   `).bind(installation.id, body.deviceId).first<DeviceRow>();
   if (!device?.apns_token) return jsonError(410, "device_inactive");
+  const credentials = apnsCredentialsFor(env, device.apns_environment);
+  if (!credentials) return jsonError(503, "apns_not_configured");
   const origin = device.apns_environment === "production"
     ? "https://api.push.apple.com"
     : "https://api.sandbox.push.apple.com";
   const response = await fetch(`${origin}/3/device/${device.apns_token}`, {
     method: "POST",
     headers: {
-      authorization: `bearer ${await apnsJWT(env)}`,
+      authorization: `bearer ${await apnsJWT(credentials, device.apns_environment)}`,
       "content-type": "application/json",
-      "apns-topic": env.APNS_TOPIC,
+      "apns-topic": credentials.topic,
       "apns-push-type": "alert",
       "apns-priority": "10",
       "apns-collapse-id": body.collapseId.slice(0, 64),
@@ -426,6 +432,7 @@ async function sendPush(request: Request, env: Env): Promise<Response> {
           body: body.alert?.body?.slice(0, 180) || "有一项需要你处理",
         },
         sound: "default",
+        badge: body.badge,
         "mutable-content": 1,
         "thread-id": body.collapseId.split(":")[0] || "zimlo",
         ...(body.category ? { category: body.category.slice(0, 64) } : {}),
@@ -452,8 +459,13 @@ async function sendPush(request: Request, env: Env): Promise<Response> {
     response.status,
     new Date().toISOString(),
   ).run();
-  if (!response.ok) return jsonError(response.status === 410 ? 410 : 502, "apns_rejected");
-  return Response.json({ ok: true });
+  if (!response.ok) {
+    return Response.json(
+      { error: "apns_rejected", apnsStatus: response.status },
+      { status: response.status === 410 ? 410 : 502 },
+    );
+  }
+  return Response.json({ ok: true, apnsStatus: response.status });
 }
 
 async function relayWebSocket(request: Request, env: Env, role: "mac" | "device"): Promise<Response> {
@@ -609,6 +621,7 @@ export default {
       return new Response(null, { status: 204, headers: browserCORSHeaders() });
     }
     if (request.method === "GET" && url.pathname === "/healthz") {
+      const push = apnsConfigurationStatus(env);
       return Response.json({
         ok: true,
         service: "zimlo-cloud",
@@ -616,9 +629,11 @@ export default {
         storesContent: false,
         storesEncryptedMaterials: Boolean(env.MATERIALS),
         encryptedRemoteSync: true,
-        pushConfigured: Boolean(
-          env.APNS_PRIVATE_KEY_P8 && env.APNS_KEY_ID && env.APNS_TEAM_ID && env.APNS_TOPIC,
-        ),
+        pushConfigured: push.configured,
+        pushEnvironments: {
+          sandbox: push.development,
+          production: push.production,
+        },
       });
     }
     if (

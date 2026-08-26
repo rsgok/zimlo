@@ -6,14 +6,42 @@ import { projectNameForCwd } from "./project-context.js";
 import { sanitizeEventPayload } from "./sanitization.js";
 import { ZimloStore } from "./store.js";
 import { titleSessionFromInput } from "./task-title.js";
-import { PushService } from "./push-service.js";
+import { notificationSummaryForPost, PushService } from "./push-service.js";
 import type { CloudService } from "./cloud-service.js";
+
+export const FAILURE_PUSH_FALLBACK_DELAY_MS = 5_000;
+export const STATUS_PUSH_COALESCE_DELAY_MS = 2_000;
+export const APPROVAL_REMINDER_LEAD_MS = 5 * 60_000;
+export const APPROVAL_REMINDER_MIN_DELAY_MS = 60_000;
+export const APPROVAL_REMINDER_MIN_REMAINING_MS = 90_000;
+
+export function approvalReminderDelayMs(action: PendingAction, now = Date.now()): number | null {
+  if (action.state !== "pending") return null;
+  const expiresAt = Date.parse(action.expiresAt);
+  if (!Number.isFinite(expiresAt)) return null;
+  const remaining = expiresAt - now;
+  if (remaining < APPROVAL_REMINDER_MIN_REMAINING_MS) return null;
+  const remindAt = Math.max(now + APPROVAL_REMINDER_MIN_DELAY_MS, expiresAt - APPROVAL_REMINDER_LEAD_MS);
+  const delay = remindAt - now;
+  return remindAt < expiresAt && delay <= 2_147_483_647 ? delay : null;
+}
 
 export class RuntimeHub extends EventEmitter {
   readonly store: ZimloStore;
   readonly host: Host;
   private readonly push: PushService;
   private readonly cloud: CloudService | undefined;
+  private readonly failureFallbackTimers = new Map<string, ReturnType<typeof setTimeout>>();
+  private readonly failureFeedTaskIds = new Set<string>();
+  private readonly failureFallbackNotifiedTaskIds = new Set<string>();
+  private readonly statusPushes = new Map<string, {
+    kind: "result" | "failure";
+    taskTitle?: string;
+    summary?: string;
+    timer: ReturnType<typeof setTimeout>;
+  }>();
+  private readonly approvalReminderTimers = new Map<string, ReturnType<typeof setTimeout>>();
+  private readonly approvalReminderNotifiedActionIds = new Set<string>();
   lanApprovalsEnabled: boolean;
 
   constructor(store: ZimloStore, cloud?: CloudService) {
@@ -102,14 +130,39 @@ export class RuntimeHub extends EventEmitter {
         if (project) this.send({ type: "project.updated", project });
       }
     }
+    if (result.inserted && result.post.sessionId && (result.post.kind === "result" || result.post.kind === "failure")) {
+      const fallbackAlreadyNotified = result.post.kind === "failure"
+        && this.failureFallbackNotifiedTaskIds.delete(result.post.taskId);
+      if (result.post.kind === "failure") {
+        this.cancelFailureFallback(result.post.taskId);
+        this.failureFeedTaskIds.add(result.post.taskId);
+      }
+      if (!fallbackAlreadyNotified) {
+        this.scheduleStatusPush(
+          result.post.kind,
+          result.post.sessionId,
+          this.store.getSession(result.post.sessionId)?.title,
+          notificationSummaryForPost(result.post),
+        );
+      }
+    }
     return result;
   }
 
   updateTask(task: TaskRecord): TaskRecord {
+    const previous = this.store.getTask(task.id);
     const stored = this.store.upsertTask(task);
     this.send({ type: "task.updated", task: stored });
-    if (stored.sessionId && stored.state === "failed") {
-      this.push.notify("failure", stored.sessionId, this.store.getSession(stored.sessionId)?.title);
+    const becameNotifiableFailure = stored.state === "failed" && (
+      previous?.state !== "failed" || (!previous.sessionId && Boolean(stored.sessionId))
+    );
+    if (becameNotifiableFailure) {
+      this.failureFallbackNotifiedTaskIds.delete(stored.id);
+      if (!this.failureFeedTaskIds.delete(stored.id)) this.scheduleFailureFallback(stored);
+    } else if (stored.state !== "failed") {
+      this.cancelFailureFallback(stored.id);
+      this.failureFeedTaskIds.delete(stored.id);
+      this.failureFallbackNotifiedTaskIds.delete(stored.id);
     }
     return stored;
   }
@@ -121,16 +174,24 @@ export class RuntimeHub extends EventEmitter {
   }
 
   upsertAction(action: PendingAction): PendingAction {
+    const previous = this.store.getAction(action.actionId);
     const stored = this.store.upsertAction(action);
     this.send({ type: "action.upsert", action: stored });
-    if (stored.state === "pending" || stored.state === "submitted") {
+    if (
+      (stored.state === "pending" || stored.state === "submitted")
+      && previous?.state !== "pending"
+      && previous?.state !== "submitted"
+    ) {
       this.push.notify("approval", stored.sessionId, this.store.getSession(stored.sessionId)?.title, stored);
     }
+    if (stored.state === "pending") this.scheduleApprovalReminder(stored);
+    else this.cancelApprovalReminder(stored.actionId);
     return stored;
   }
 
   resolveAction(action: PendingAction): void {
     const stored = this.store.upsertAction(action);
+    this.cancelApprovalReminder(stored.actionId);
     this.send({ type: "action.upsert", action: stored });
   }
 
@@ -194,6 +255,89 @@ export class RuntimeHub extends EventEmitter {
     return Object.entries(value).some(([key, child]) => {
       return /^(?:diff|patch|changes)$/iu.test(key) || this.payloadContainsDiff(child);
     });
+  }
+
+  private scheduleFailureFallback(task: TaskRecord): void {
+    if (!task.sessionId) return;
+    this.cancelFailureFallback(task.id);
+    const timer = setTimeout(() => {
+      this.failureFallbackTimers.delete(task.id);
+      const current = this.store.getTask(task.id);
+      if (!current?.sessionId || current.state !== "failed" || this.failureFeedTaskIds.has(task.id)) return;
+      this.failureFallbackNotifiedTaskIds.add(task.id);
+      this.scheduleStatusPush(
+        "failure",
+        current.sessionId,
+        this.store.getSession(current.sessionId)?.title,
+      );
+    }, FAILURE_PUSH_FALLBACK_DELAY_MS);
+    timer.unref();
+    this.failureFallbackTimers.set(task.id, timer);
+  }
+
+  private cancelFailureFallback(taskId: string): void {
+    const timer = this.failureFallbackTimers.get(taskId);
+    if (timer) clearTimeout(timer);
+    this.failureFallbackTimers.delete(taskId);
+  }
+
+  private scheduleStatusPush(
+    kind: "result" | "failure",
+    sessionId: string,
+    taskTitle?: string,
+    summary?: string,
+  ): void {
+    const existing = this.statusPushes.get(sessionId);
+    if (existing) {
+      if (kind === "failure") {
+        existing.kind = "failure";
+        if (summary) existing.summary = summary;
+      } else if (existing.kind !== "failure" && summary) {
+        existing.summary = summary;
+      }
+      if (taskTitle) existing.taskTitle = taskTitle;
+      return;
+    }
+    const timer = setTimeout(() => {
+      const pending = this.statusPushes.get(sessionId);
+      if (!pending) return;
+      this.statusPushes.delete(sessionId);
+      this.push.notify(pending.kind, sessionId, pending.taskTitle, undefined, pending.summary);
+    }, STATUS_PUSH_COALESCE_DELAY_MS);
+    timer.unref();
+    this.statusPushes.set(sessionId, {
+      kind,
+      ...(taskTitle ? { taskTitle } : {}),
+      ...(summary ? { summary } : {}),
+      timer,
+    });
+  }
+
+  private scheduleApprovalReminder(action: PendingAction): void {
+    if (this.approvalReminderNotifiedActionIds.has(action.actionId)) return;
+    if (this.approvalReminderTimers.has(action.actionId)) return;
+    const delay = approvalReminderDelayMs(action);
+    if (delay === null) return;
+    const timer = setTimeout(() => {
+      this.approvalReminderTimers.delete(action.actionId);
+      const current = this.store.getAction(action.actionId);
+      if (!current || current.state !== "pending" || Date.parse(current.expiresAt) <= Date.now()) return;
+      this.approvalReminderNotifiedActionIds.add(action.actionId);
+      this.push.notify(
+        "approval_reminder",
+        current.sessionId,
+        this.store.getSession(current.sessionId)?.title,
+        current,
+      );
+    }, delay);
+    timer.unref();
+    this.approvalReminderTimers.set(action.actionId, timer);
+  }
+
+  private cancelApprovalReminder(actionId: string): void {
+    const timer = this.approvalReminderTimers.get(actionId);
+    if (timer) clearTimeout(timer);
+    this.approvalReminderTimers.delete(actionId);
   }
 
 }

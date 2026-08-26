@@ -330,9 +330,47 @@ struct ProjectTrustPolicy: Codable, Hashable, Identifiable {
 struct NotificationSettings: Codable, Hashable {
     var enabled: Bool
     var approvals: Bool
+    var results: Bool
     var failures: Bool
+    var criticalOnly: Bool
+    var quietHoursEnabled: Bool
+    var timeZoneOffsetMinutes: Int
     var showTaskTitle: Bool
     var updatedAt: String
+
+    private enum CodingKeys: String, CodingKey {
+        case enabled, approvals, results, failures, criticalOnly, quietHoursEnabled
+        case timeZoneOffsetMinutes, showTaskTitle, updatedAt
+    }
+
+    init(
+        enabled: Bool, approvals: Bool, results: Bool = true, failures: Bool,
+        criticalOnly: Bool = false, quietHoursEnabled: Bool = false,
+        timeZoneOffsetMinutes: Int = 0, showTaskTitle: Bool, updatedAt: String
+    ) {
+        self.enabled = enabled
+        self.approvals = approvals
+        self.results = results
+        self.failures = failures
+        self.criticalOnly = criticalOnly
+        self.quietHoursEnabled = quietHoursEnabled
+        self.timeZoneOffsetMinutes = timeZoneOffsetMinutes
+        self.showTaskTitle = showTaskTitle
+        self.updatedAt = updatedAt
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        enabled = try container.decode(Bool.self, forKey: .enabled)
+        approvals = try container.decode(Bool.self, forKey: .approvals)
+        results = try container.decodeIfPresent(Bool.self, forKey: .results) ?? true
+        failures = try container.decode(Bool.self, forKey: .failures)
+        criticalOnly = try container.decodeIfPresent(Bool.self, forKey: .criticalOnly) ?? false
+        quietHoursEnabled = try container.decodeIfPresent(Bool.self, forKey: .quietHoursEnabled) ?? false
+        timeZoneOffsetMinutes = try container.decodeIfPresent(Int.self, forKey: .timeZoneOffsetMinutes) ?? 0
+        showTaskTitle = try container.decode(Bool.self, forKey: .showTaskTitle)
+        updatedAt = try container.decode(String.self, forKey: .updatedAt)
+    }
 }
 
 struct FeatureCapabilities: Codable, Hashable {

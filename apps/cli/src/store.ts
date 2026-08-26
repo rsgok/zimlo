@@ -48,7 +48,7 @@ import {
   type DeviceRow,
   type StoredFeedContentV2,
 } from "./store-codecs.js";
-import { initializeStoreSchema } from "./store-schema.js";
+import { initializeStoreSchema, migrateNotificationDeliveryPolicy } from "./store-schema.js";
 
 export type { DeviceRecord } from "./store-codecs.js";
 export type FeedDecisionKind = "post" | "skip" | "implicit_skip";
@@ -126,6 +126,8 @@ export class ZimloStore {
     this.backfillAgentAvatars();
     this.migrateFeedV2();
     this.migrateInteractionV3();
+    this.migrateNotificationResults();
+    migrateNotificationDeliveryPolicy(this.database);
     this.database.prepare("UPDATE task_commands SET state = 'queued', updated_at = ?, error = NULL WHERE state IN ('dispatching', 'running')")
       .run(new Date().toISOString());
     this.database.prepare("UPDATE actions SET state = 'expired' WHERE state IN ('pending', 'submitted')").run();
@@ -341,6 +343,13 @@ export class ZimloStore {
     } catch (error) {
       this.database.exec("ROLLBACK");
       throw error;
+    }
+  }
+
+  private migrateNotificationResults(): void {
+    const columns = this.database.prepare("PRAGMA table_info(notification_settings)").all() as Array<{ name: string }>;
+    if (!columns.some((column) => column.name === "results")) {
+      this.database.exec("ALTER TABLE notification_settings ADD COLUMN results INTEGER NOT NULL DEFAULT 1");
     }
   }
 
@@ -784,6 +793,11 @@ export class ZimloStore {
     return task;
   }
 
+  getTask(id: string): TaskRecord | null {
+    const row = this.database.prepare("SELECT * FROM tasks WHERE id = ?").get(id) as Record<string, unknown> | undefined;
+    return row ? taskFromRow(row) : null;
+  }
+
   listTasks(): TaskRecord[] {
     return (this.database.prepare("SELECT * FROM tasks ORDER BY updated_at DESC").all() as Record<string, unknown>[])
       .map((row) => taskFromRow(row));
@@ -1015,7 +1029,11 @@ export class ZimloStore {
     return row ? notificationSettingsFromRow(row) : {
       enabled: false,
       approvals: true,
+      results: true,
       failures: true,
+      criticalOnly: false,
+      quietHoursEnabled: false,
+      timeZoneOffsetMinutes: 0,
       showTaskTitle: false,
       updatedAt: new Date(0).toISOString(),
     };
@@ -1024,43 +1042,67 @@ export class ZimloStore {
   updateNotificationSettings(deviceId: string, settings: Omit<NotificationSettings, "updatedAt">): NotificationSettings {
     const updatedAt = new Date().toISOString();
     this.database.prepare(`
-      INSERT INTO notification_settings(device_id, enabled, approvals, failures, show_task_title, updated_at)
-      VALUES (?, ?, ?, ?, ?, ?)
+      INSERT INTO notification_settings(
+        device_id, enabled, approvals, results, failures, critical_only,
+        quiet_hours_enabled, timezone_offset_minutes, show_task_title, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       ON CONFLICT(device_id) DO UPDATE SET
         enabled = excluded.enabled,
         approvals = excluded.approvals,
+        results = excluded.results,
         failures = excluded.failures,
+        critical_only = excluded.critical_only,
+        quiet_hours_enabled = excluded.quiet_hours_enabled,
+        timezone_offset_minutes = excluded.timezone_offset_minutes,
         show_task_title = excluded.show_task_title,
         updated_at = excluded.updated_at
     `).run(
       deviceId,
       settings.enabled ? 1 : 0,
       settings.approvals ? 1 : 0,
+      settings.results ? 1 : 0,
       settings.failures ? 1 : 0,
+      settings.criticalOnly ? 1 : 0,
+      settings.quietHoursEnabled ? 1 : 0,
+      settings.timeZoneOffsetMinutes,
       settings.showTaskTitle ? 1 : 0,
       updatedAt,
     );
     return { ...settings, updatedAt };
   }
 
-  upsertPushDevice(deviceId: string, endpoint: string, publicKey: string): PushDeviceRegistration {
+  upsertPushDevice(
+    deviceId: string,
+    endpoint: string,
+    publicKey: string,
+    environment: "development" | "production" = "production",
+  ): PushDeviceRegistration {
     const now = new Date().toISOString();
     const existing = this.database.prepare("SELECT registered_at FROM push_devices WHERE device_id = ?")
       .get(deviceId) as { registered_at: string } | undefined;
     this.database.prepare(`
-      INSERT INTO push_devices(device_id, platform, endpoint, public_key, active, registered_at, updated_at)
-      VALUES (?, 'ios', ?, ?, 1, ?, ?)
+      INSERT INTO push_devices(device_id, platform, endpoint, public_key, active, environment, registered_at, updated_at)
+      VALUES (?, 'ios', ?, ?, 1, ?, ?, ?)
       ON CONFLICT(device_id) DO UPDATE SET
         endpoint = excluded.endpoint,
         public_key = excluded.public_key,
         active = 1,
+        environment = excluded.environment,
         updated_at = excluded.updated_at
-    `).run(deviceId, endpoint, publicKey, existing?.registered_at ?? now, now);
+    `).run(deviceId, endpoint, publicKey, environment, existing?.registered_at ?? now, now);
     return this.getPushDevice(deviceId)!;
   }
 
   getPushDevice(deviceId: string): PushDeviceRegistration | null {
-    const row = this.database.prepare("SELECT * FROM push_devices WHERE device_id = ?").get(deviceId) as Record<string, unknown> | undefined;
+    const row = this.database.prepare(`
+      SELECT push_devices.*,
+        push_delivery_status.kind AS last_delivery_kind,
+        push_delivery_status.status AS last_delivery_status,
+        push_delivery_status.attempted_at AS last_delivery_at
+      FROM push_devices
+      LEFT JOIN push_delivery_status USING (device_id)
+      WHERE push_devices.device_id = ?
+    `).get(deviceId) as Record<string, unknown> | undefined;
     return row ? pushDeviceFromRow(row) : null;
   }
 
@@ -1080,6 +1122,45 @@ export class ZimloStore {
       registration: pushDeviceFromRow(row),
       settings: this.getNotificationSettings(String(row.device_id)),
     }));
+  }
+
+  notificationUnreadCount(deviceId: string, settings = this.getNotificationSettings(deviceId)): number {
+    const actionCount = settings.approvals
+      ? Number((this.database.prepare(`
+          SELECT COUNT(*) AS count FROM actions
+          WHERE state = 'pending' AND expires_at > ?
+        `).get(new Date().toISOString()) as { count: number }).count)
+      : 0;
+    const postKinds = [
+      ...(settings.results && !settings.criticalOnly ? ["result"] : []),
+      ...(settings.failures ? ["failure"] : []),
+    ];
+    if (postKinds.length === 0) return Math.min(actionCount, 99);
+    const placeholders = postKinds.map(() => "?").join(", ");
+    const postCount = Number((this.database.prepare(`
+      SELECT COUNT(*) AS count
+      FROM feed_posts
+      LEFT JOIN feed_seen
+        ON feed_seen.post_id = feed_posts.id AND feed_seen.device_id = ?
+      WHERE feed_seen.post_id IS NULL AND feed_posts.kind IN (${placeholders})
+    `).get(deviceId, ...postKinds) as { count: number }).count);
+    return Math.min(actionCount + postCount, 99);
+  }
+
+  recordPushDelivery(
+    deviceId: string,
+    kind: "approval" | "approval_reminder" | "result" | "failure",
+    status: number,
+    attemptedAt = new Date().toISOString(),
+  ): void {
+    this.database.prepare(`
+      INSERT INTO push_delivery_status(device_id, kind, status, attempted_at)
+      VALUES (?, ?, ?, ?)
+      ON CONFLICT(device_id) DO UPDATE SET
+        kind = excluded.kind,
+        status = excluded.status,
+        attempted_at = excluded.attempted_at
+    `).run(deviceId, kind, status, attemptedAt);
   }
 
   unregisterPushDevice(deviceId: string): void {

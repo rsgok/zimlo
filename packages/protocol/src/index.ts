@@ -460,7 +460,11 @@ export type TrustAuditEntry = z.infer<typeof TrustAuditEntrySchema>;
 export const NotificationSettingsSchema = z.object({
   enabled: z.boolean(),
   approvals: z.boolean(),
+  results: z.boolean().default(true),
   failures: z.boolean(),
+  criticalOnly: z.boolean().default(false),
+  quietHoursEnabled: z.boolean().default(false),
+  timeZoneOffsetMinutes: z.number().int().min(-840).max(840).default(0),
   showTaskTitle: z.boolean(),
   updatedAt: z.string(),
 });
@@ -472,8 +476,12 @@ export const PushDeviceRegistrationSchema = z.object({
   endpoint: z.string(),
   publicKey: z.string(),
   active: z.boolean(),
+  environment: z.enum(["development", "production"]).default("production"),
   registeredAt: z.string(),
   updatedAt: z.string(),
+  lastDeliveryKind: z.enum(["approval", "approval_reminder", "result", "failure"]).optional(),
+  lastDeliveryStatus: z.number().int().optional(),
+  lastDeliveryAt: z.string().optional(),
 });
 export type PushDeviceRegistration = z.infer<typeof PushDeviceRegistrationSchema>;
 
@@ -487,6 +495,7 @@ export const PushRouteV1Schema = z.object({
   version: z.literal(1),
   sessionId: z.string(),
   taskTitle: z.string().optional(),
+  summary: z.string().max(120).optional(),
   actionId: z.string().optional(),
   decision: z.string().optional(),
   denyDecision: z.string().optional(),

@@ -12,7 +12,7 @@
 - Task Detail 的紧凑 Header、分层 Timeline、待处理事项和可靠 follow-up 队列。
 - Feed、Tasks、Agents、Settings 与详情页共用 44pt `AppTopBar`；系统安全区由 `safeAreaInset` 管理，无障碍字号时内容行最多 52pt。
 - 任意可关联任务的卡片都能从统一输入面板继续对话；面板默认既不录音也不弹键盘，文字、语音和附件由用户自由选择。
-- 配对后由用户主动请求 APNs 权限，只接收真实审批与失败通知；加密任务路由只在设备端解密。
+- 首次完成配对且推送服务可用后请求 APNs 权限，只接收真实审批、重要结果与失败通知；加密任务路由只在设备端解密。
 - 局域网连接失败时自动切到 Cloudflare 加密中继；最近快照保存在受文件保护的数据目录，离线操作进入持久 outbox。
 - 新任务草稿、最近 Runtime / Project、断网 outbox、重连重放与幂等 key。
 - 用户与 Project Agent 共用 24 个预置头像；Agent 初次创建时随机分配并可编辑，另有固定 Zimlo 头像和原生语音输入。
@@ -23,6 +23,8 @@
 - 重连使用共享退避序列 [1,2,4,8,16,30]s ±20% 抖动，系统离线时暂停，认证成功或回前台重置；离线/重连胶囊与顶栏状态都可点按立即重试。
 - 离线快照带 savedAt，离线胶囊显示「数据更新于 X 分钟前」。
 - 通知权限被拒时设置页给出持久引导与「打开系统设置」；冷启动点通知但 session 未同步时，Feed 顶部保留可重试的路由占位条。
+- 通知角标使用真实未读数；同任务结果/失败在短窗口内合并，未处理审批临近过期只再提醒一次。前台查看别的任务时改用 App 内轻提示，同一任务不打断。
+- 设置页提供「仅关键通知」、22:00–08:00 安静时段，并区分系统权限、APNs 注册环境和最近一次投递状态；审批与失败在安静时段仍按关键通知送达。
 - 低风险审批（无确认短语的批准一次/拒绝）支持锁屏快捷操作（UNNotificationCategory `ZIMLO_LOW_RISK_APPROVAL`）：category 是明文通用标识，决策 id 只在设备端解密的 PushRouteV1 加密路由内；高风险与需输入的审批仍进 App 完成。旧客户端收到未知 category 按普通打开处理，快捷路由解析失败同样回退普通打开。
 
 ## 规范对齐与测试
@@ -83,7 +85,7 @@ Bridge 在局域网使用用户提供的 HTTP / WebSocket 地址，但所有配�
 3. 保留 **Push Notifications** capability；首次只调试局域网功能时可以暂不配置 APNs。
 4. 用数据线或已启用无线调试的方式连接 iPhone，在 Xcode 顶部选择该设备后运行。
 5. 打开 Mac 版 Zimlo（源码调试时执行 `node apps/cli/dist/index.js start`），生成配对二维码并使用 App 扫码。
-6. 配对成功后，再到 App 的“设置 → 主动通知”开启通知。Zimlo 不会在首次启动时直接弹系统权限框。
+6. 配对成功且 Mac 报告推送服务可用后，App 会请求一次系统通知权限；拒绝后可随时从 Zimlo 设置页进入系统设置重新开启。
 
 真机 APNs 需要 Apple Developer 签名、Push Notifications entitlement，以及已经部署的 Cloudflare Worker。App 本身不再包含 Relay URL 或全局注册密钥：Worker 地址和每台手机独有的随机访问令牌都由 Mac 在可信配对响应中下发。
 

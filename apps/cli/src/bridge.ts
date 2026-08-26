@@ -691,7 +691,12 @@ export class BridgeServer {
             "Cloudflare 通知服务尚未连接，设备 token 已保留在手机上，请在服务恢复后重试。",
           ));
         }
-        const registration = this.runtime.store.upsertPushDevice(deviceId, endpoint, command.publicKey);
+        const registration = this.runtime.store.upsertPushDevice(
+          deviceId,
+          endpoint,
+          command.publicKey,
+          command.environment ?? "production",
+        );
         this.runtime.store.saveIdempotentResult(`${deviceId}:${command.idempotencyKey}`, deviceId, { ok: true });
         connection.send({ type: "notification.device.updated", registration });
         return;

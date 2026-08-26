@@ -67,6 +67,7 @@ describe("push route v1", () => {
       version: 1,
       sessionId: "s-1",
       taskTitle: "修复登录回归",
+      summary: "登录竞态已修复，测试通过。",
       actionId: "a-1",
       decision: "allow-once",
       expiresAt: "2026-07-20T12:00:00.000Z",
@@ -77,6 +78,7 @@ describe("push route v1", () => {
   it("rejects other versions and unknown categories", () => {
     expect(PushRouteV1Schema.safeParse({ version: 2, sessionId: "s-1" }).success).toBe(false);
     expect(PushRouteV1Schema.safeParse({ version: 1, sessionId: "s-1", category: "everything" }).success).toBe(false);
+    expect(PushRouteV1Schema.safeParse({ version: 1, sessionId: "s-1", summary: "x".repeat(121) }).success).toBe(false);
     expect(PushRouteV1Schema.safeParse({ sessionId: "s-1" }).success).toBe(false);
   });
 });

@@ -61,7 +61,28 @@ struct MainAppView: View {
         .frame(minWidth: 920, minHeight: 640)
         .preferredColorScheme(.dark)
         .task { await store.run() }
-        .onChange(of: section) { _, _ in path.removeAll() }
+        .onChange(of: section) { _, current in
+            let isNotificationTaskRoute = current == .tasks && path.contains { route in
+                if case .task = route { return true }
+                return false
+            }
+            if !isNotificationTaskRoute {
+                path.removeAll()
+                MacNotificationManager.shared.setVisibleSessionID(nil)
+            }
+        }
+        .onChange(of: path) { _, current in
+            MacNotificationManager.shared.setVisibleSessionID(current.compactMap { route in
+                if case .task(let sessionID) = route { return sessionID }
+                return nil
+            }.last)
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .zimloOpenTask)) { notification in
+            guard let sessionID = notification.object as? String else { return }
+            section = .tasks
+            path = [.task(sessionID)]
+        }
+        .onDisappear { MacNotificationManager.shared.setVisibleSessionID(nil) }
         .onChange(of: service.state) { _, current in
             guard current == .ready else { return }
             Task { await store.refresh() }
