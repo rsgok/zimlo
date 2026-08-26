@@ -406,6 +406,7 @@ private struct CompleteStep: View {
                     model.onboarding.finish()
                     WindowCoordinator.shared.closeOnboarding()
                     WindowCoordinator.shared.showMainApp()
+                    _ = await MacNotificationManager.shared.requestAuthorizationIfNeeded()
                     finishing = false
                 }
             }

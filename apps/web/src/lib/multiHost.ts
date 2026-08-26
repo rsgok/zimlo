@@ -29,7 +29,7 @@ export function mergeHostSnapshots(sources: HostSnapshot[]): Snapshot {
       userProfile: { avatarId: "user-01", updatedAt: "" }, projects: [], sessions: [], cards: [], posts: [],
       materials: [], tasks: [], commands: [], workspaces: [], seenPostIds: [], dismissedFeedItemIds: [],
       taskTimelineCursors: {}, taskPreferences: [], actions: [], trustPolicies: [], trustAudit: [],
-      notificationSettings: { enabled: false, approvals: true, failures: true, showTaskTitle: false, updatedAt: "" },
+      notificationSettings: { enabled: false, approvals: true, results: true, failures: true, criticalOnly: false, quietHoursEnabled: false, timeZoneOffsetMinutes: 0, showTaskTitle: false, updatedAt: "" },
       pushDevices: [], features: EMPTY_FEATURE_CAPABILITIES, sequence: 0, lanApprovalsEnabled: false,
       trustManagementEnabled: false,
     });

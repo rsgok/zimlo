@@ -1,5 +1,12 @@
 import { describe, expect, it } from "vitest";
-import { ClientCommandSchema, FeedPostInputSchema, MaterialSchema, SnapshotSchema } from "../src/index.js";
+import {
+  ClientCommandSchema,
+  FeedPostInputSchema,
+  MaterialSchema,
+  NotificationSettingsSchema,
+  PushDeviceRegistrationSchema,
+  SnapshotSchema,
+} from "../src/index.js";
 
 const image = {
   id: "material_0123456789abcdef",
@@ -53,5 +60,17 @@ describe("material protocol", () => {
 
   it("decodes older snapshots without a materials array", () => {
     expect(SnapshotSchema.shape.materials.parse(undefined)).toEqual([]);
+  });
+
+  it("defaults new notification policy and diagnostics fields for older clients", () => {
+    expect(NotificationSettingsSchema.parse({
+      enabled: true, approvals: true, failures: true, showTaskTitle: false, updatedAt: "",
+    })).toEqual(expect.objectContaining({
+      results: true, criticalOnly: false, quietHoursEnabled: false, timeZoneOffsetMinutes: 0,
+    }));
+    expect(PushDeviceRegistrationSchema.parse({
+      deviceId: "device_phone", platform: "ios", endpoint: "device_phone", publicKey: "key",
+      active: true, registeredAt: "", updatedAt: "",
+    })).toEqual(expect.objectContaining({ environment: "production" }));
   });
 });

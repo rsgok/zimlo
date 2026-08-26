@@ -27,6 +27,181 @@ final class NativeModelsTests: XCTestCase {
         XCTAssertEqual(snapshot.sequence, 7)
         XCTAssertTrue(snapshot.materials.isEmpty)
         XCTAssertTrue(snapshot.features.projectTrustPolicy)
+        XCTAssertTrue(snapshot.notificationSettings.results)
+        XCTAssertFalse(snapshot.notificationSettings.criticalOnly)
+        XCTAssertFalse(snapshot.notificationSettings.quietHoursEnabled)
+        XCTAssertEqual(snapshot.notificationSettings.timeZoneOffsetMinutes, 0)
+    }
+
+    func testNotificationPolicyKeepsOneHighSignalAlertPerTask() {
+        var previous = NativeSnapshot.empty
+        previous.sessions = [session(projectID: nil, cwd: "/tmp/project")]
+        previous.sequence = 1
+        var next = previous
+        next.sequence = 2
+        next.posts = [
+            feedPost(id: "progress-a", kind: "progress", createdAt: "2026-08-26T00:00:01Z"),
+            feedPost(id: "result-a", kind: "result", createdAt: "2026-08-26T00:00:02Z"),
+        ]
+        next.actions = [PendingAction(
+            actionId: "action-a", hostId: nil, sessionId: "session-a", upstreamRequestId: nil,
+            kind: "approval", title: "允许执行？", detail: "git push", availableDecisions: [],
+            expiresAt: "2099-01-01T00:00:00Z", state: "pending",
+            createdAt: "2026-08-26T00:00:03Z", resolvedAt: nil, approvalContext: nil
+        )]
+
+        let candidates = MacNotificationPolicy.candidates(
+            previous: previous,
+            next: next,
+            preferences: .defaults
+        )
+        XCTAssertEqual(candidates, [MacNotificationCandidate(
+            id: "action:action-a",
+            sessionID: "session-a",
+            taskTitle: "修复一下",
+            kind: .approval,
+            occurredAt: "2026-08-26T00:00:03Z",
+            summary: "需要批准一项操作"
+        )])
+        XCTAssertEqual(candidates.first?.notificationIdentifier, "zimlo.session.session-a.action")
+        XCTAssertEqual(MacNotificationPolicy.unreadCount(snapshot: next, preferences: .defaults), 2)
+    }
+
+    func testNotificationIdentifiersKeepActionsSeparateFromTaskStatus() {
+        let result = MacNotificationCandidate(
+            id: "post:result-a", sessionID: "session-a", taskTitle: nil,
+            kind: .result, occurredAt: "2026-08-26T00:00:01Z"
+        )
+        let failure = MacNotificationCandidate(
+            id: "post:failure-a", sessionID: "session-a", taskTitle: nil,
+            kind: .failure, occurredAt: "2026-08-26T00:00:02Z"
+        )
+        XCTAssertEqual(result.notificationIdentifier, "zimlo.session.session-a.status")
+        XCTAssertEqual(failure.notificationIdentifier, result.notificationIdentifier)
+    }
+
+    func testNotificationSummariesUseEditorialAndStructuredContent() {
+        XCTAssertEqual(
+            MacNotificationPolicy.notificationSummary(
+                headline: "通知系统完成",
+                takeaway: "P1/P2 已完成，全部测试通过。"
+            ),
+            "通知系统完成：P1/P2 已完成，全部测试通过。"
+        )
+        let action = PendingAction(
+            actionId: "action-a", hostId: nil, sessionId: "session-a", upstreamRequestId: nil,
+            kind: "approval", title: "允许执行？", detail: "git push secret-value",
+            availableDecisions: [], expiresAt: "2099-01-01T00:00:00Z", state: "pending",
+            createdAt: "2026-08-26T00:00:03Z", resolvedAt: nil,
+            approvalContext: ApprovalContext(
+                category: "git_publish", projectId: nil, cwd: "/tmp/project",
+                command: "git push secret-value", segments: ["git push secret-value"],
+                withinProject: true, reason: "识别为 git_publish"
+            )
+        )
+        XCTAssertEqual(MacNotificationPolicy.notificationSummary(action: action), "需要批准：发布 Git 变更")
+        XCTAssertFalse(MacNotificationPolicy.notificationSummary(action: action).contains("secret-value"))
+    }
+
+    func testResolvedActionSessionsRemoveOnlyTheActionChannel() {
+        var previous = NativeSnapshot.empty
+        previous.actions = [PendingAction(
+            actionId: "action-a", hostId: nil, sessionId: "session-a", upstreamRequestId: nil,
+            kind: "approval", title: "允许执行？", detail: "git push", availableDecisions: [],
+            expiresAt: "2099-01-01T00:00:00Z", state: "pending",
+            createdAt: "2026-08-26T00:00:03Z", resolvedAt: nil, approvalContext: nil
+        )]
+        var next = previous
+        next.actions[0].state = "resolved"
+
+        XCTAssertEqual(
+            MacNotificationPolicy.resolvedActionSessionIDs(previous: previous, next: next),
+            Set(["session-a"])
+        )
+    }
+
+    func testFailedTaskBecomesFallbackOnlyWhenNoFailurePostArrived() {
+        var previous = NativeSnapshot.empty
+        previous.sessions = [session(projectID: nil, cwd: "/tmp/project")]
+        previous.tasks = [TaskRecord(
+            id: "task-a", hostId: nil, runId: "run-a", agentId: "codex",
+            sessionId: "session-a", state: "running", reason: "", updatedAt: "2026-08-26T00:00:01Z"
+        )]
+        var next = previous
+        next.tasks[0].state = "failed"
+        next.tasks[0].reason = "process exited"
+        next.tasks[0].updatedAt = "2026-08-26T00:00:02Z"
+
+        let candidates = MacNotificationPolicy.failureFallbackCandidates(
+            previous: previous, next: next, preferences: .defaults
+        )
+        XCTAssertEqual(candidates.map(\.id), ["task:task-a"])
+        XCTAssertEqual(candidates.first?.notificationIdentifier, "zimlo.session.session-a.status")
+
+        next.posts = [feedPost(id: "failure-a", kind: "failure", createdAt: "2026-08-26T00:00:02Z")]
+        XCTAssertTrue(MacNotificationPolicy.failureFallbackCandidates(
+            previous: previous, next: next, preferences: .defaults
+        ).isEmpty)
+    }
+
+    func testNotificationPolicyRespectsSeenResultsAndCategorySettings() {
+        var previous = NativeSnapshot.empty
+        previous.sessions = [session(projectID: nil, cwd: "/tmp/project")]
+        var next = previous
+        next.posts = [feedPost(id: "result-a", kind: "result", createdAt: "2026-08-26T00:00:02Z")]
+        next.seenPostIds = ["result-a"]
+
+        XCTAssertTrue(MacNotificationPolicy.candidates(
+            previous: previous,
+            next: next,
+            preferences: .defaults
+        ).isEmpty)
+        XCTAssertEqual(MacNotificationPolicy.unreadCount(snapshot: next, preferences: .defaults), 0)
+
+        next.seenPostIds = []
+        var disabledResults = MacNotificationPreferences.defaults
+        disabledResults.results = false
+        XCTAssertTrue(MacNotificationPolicy.candidates(
+            previous: previous,
+            next: next,
+            preferences: disabledResults
+        ).isEmpty)
+    }
+
+    func testQuietHoursAndCriticalOnlyKeepOnlyCriticalNotifications() throws {
+        var preferences = MacNotificationPreferences.defaults
+        preferences.quietHoursEnabled = true
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = try XCTUnwrap(TimeZone(secondsFromGMT: 0))
+        let date = try XCTUnwrap(ISO8601DateFormatter().date(from: "2026-08-26T23:00:00Z"))
+        XCTAssertFalse(MacNotificationPolicy.shouldDeliver(
+            .result, preferences: preferences, date: date, calendar: calendar
+        ))
+        XCTAssertTrue(MacNotificationPolicy.shouldDeliver(
+            .approval, preferences: preferences, date: date, calendar: calendar
+        ))
+        XCTAssertTrue(MacNotificationPolicy.shouldDeliver(
+            .failure, preferences: preferences, date: date, calendar: calendar
+        ))
+
+        preferences.quietHoursEnabled = false
+        preferences.criticalOnly = true
+        XCTAssertFalse(MacNotificationPolicy.shouldDeliver(.result, preferences: preferences))
+        XCTAssertTrue(MacNotificationPolicy.shouldDeliver(.approvalReminder, preferences: preferences))
+    }
+
+    func testApprovalReminderIsScheduledOnceNearExpiry() throws {
+        let action = PendingAction(
+            actionId: "action-a", hostId: nil, sessionId: "session-a", upstreamRequestId: nil,
+            kind: "approval", title: "允许执行？", detail: "git push", availableDecisions: [],
+            expiresAt: "2026-08-26T00:10:00.000Z", state: "pending",
+            createdAt: "2026-08-26T00:00:00.000Z", resolvedAt: nil, approvalContext: nil
+        )
+        let now = try XCTUnwrap(ISO8601DateFormatter().date(from: "2026-08-26T00:00:00Z"))
+        XCTAssertEqual(MacNotificationPolicy.approvalReminderDelay(action: action, now: now), 5 * 60)
+        var resolved = action
+        resolved.state = "resolved"
+        XCTAssertNil(MacNotificationPolicy.approvalReminderDelay(action: resolved, now: now))
     }
 
     func testTaskPresentationKeepsConcreteStatusLabels() {
@@ -156,6 +331,15 @@ final class NativeModelsTests: XCTestCase {
             ),
             createdAt: "",
             lastUsedAt: ""
+        )
+    }
+
+    private func feedPost(id: String, kind: String, createdAt: String) -> FeedPost {
+        FeedPost(
+            id: id, hostId: nil, projectId: nil, taskId: "task-a", runId: "run-a",
+            agentId: "codex", sessionId: "session-a", kind: kind, template: "paper",
+            headline: "结果", takeaway: "结果已经可以查看。", highlights: [], proof: nil,
+            content: nil, dedupeKey: id, source: "agent", createdAt: createdAt
         )
     }
 

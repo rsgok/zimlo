@@ -241,9 +241,47 @@ struct TrustAuditEntry: Codable, Hashable, Identifiable {
 struct NotificationSettings: Codable, Hashable {
     var enabled: Bool
     var approvals: Bool
+    var results: Bool
     var failures: Bool
+    var criticalOnly: Bool
+    var quietHoursEnabled: Bool
+    var timeZoneOffsetMinutes: Int
     var showTaskTitle: Bool
     var updatedAt: String
+
+    private enum CodingKeys: String, CodingKey {
+        case enabled, approvals, results, failures, criticalOnly, quietHoursEnabled
+        case timeZoneOffsetMinutes, showTaskTitle, updatedAt
+    }
+
+    init(
+        enabled: Bool, approvals: Bool, results: Bool = true, failures: Bool,
+        criticalOnly: Bool = false, quietHoursEnabled: Bool = false,
+        timeZoneOffsetMinutes: Int = 0, showTaskTitle: Bool, updatedAt: String
+    ) {
+        self.enabled = enabled
+        self.approvals = approvals
+        self.results = results
+        self.failures = failures
+        self.criticalOnly = criticalOnly
+        self.quietHoursEnabled = quietHoursEnabled
+        self.timeZoneOffsetMinutes = timeZoneOffsetMinutes
+        self.showTaskTitle = showTaskTitle
+        self.updatedAt = updatedAt
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        enabled = try container.decode(Bool.self, forKey: .enabled)
+        approvals = try container.decode(Bool.self, forKey: .approvals)
+        results = try container.decodeIfPresent(Bool.self, forKey: .results) ?? true
+        failures = try container.decode(Bool.self, forKey: .failures)
+        criticalOnly = try container.decodeIfPresent(Bool.self, forKey: .criticalOnly) ?? false
+        quietHoursEnabled = try container.decodeIfPresent(Bool.self, forKey: .quietHoursEnabled) ?? false
+        timeZoneOffsetMinutes = try container.decodeIfPresent(Int.self, forKey: .timeZoneOffsetMinutes) ?? 0
+        showTaskTitle = try container.decode(Bool.self, forKey: .showTaskTitle)
+        updatedAt = try container.decode(String.self, forKey: .updatedAt)
+    }
 }
 
 struct PushDeviceRegistration: Codable, Hashable, Identifiable {
@@ -252,9 +290,51 @@ struct PushDeviceRegistration: Codable, Hashable, Identifiable {
     var endpoint: String
     var publicKey: String
     var active: Bool
+    var environment: String
     var registeredAt: String
     var updatedAt: String
+    var lastDeliveryKind: String?
+    var lastDeliveryStatus: Int?
+    var lastDeliveryAt: String?
     var id: String { deviceId }
+
+    private enum CodingKeys: String, CodingKey {
+        case deviceId, platform, endpoint, publicKey, active, environment
+        case registeredAt, updatedAt, lastDeliveryKind, lastDeliveryStatus, lastDeliveryAt
+    }
+
+    init(
+        deviceId: String, platform: String, endpoint: String, publicKey: String, active: Bool,
+        environment: String = "production", registeredAt: String, updatedAt: String,
+        lastDeliveryKind: String? = nil, lastDeliveryStatus: Int? = nil, lastDeliveryAt: String? = nil
+    ) {
+        self.deviceId = deviceId
+        self.platform = platform
+        self.endpoint = endpoint
+        self.publicKey = publicKey
+        self.active = active
+        self.environment = environment
+        self.registeredAt = registeredAt
+        self.updatedAt = updatedAt
+        self.lastDeliveryKind = lastDeliveryKind
+        self.lastDeliveryStatus = lastDeliveryStatus
+        self.lastDeliveryAt = lastDeliveryAt
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        deviceId = try container.decode(String.self, forKey: .deviceId)
+        platform = try container.decode(String.self, forKey: .platform)
+        endpoint = try container.decode(String.self, forKey: .endpoint)
+        publicKey = try container.decode(String.self, forKey: .publicKey)
+        active = try container.decode(Bool.self, forKey: .active)
+        environment = try container.decodeIfPresent(String.self, forKey: .environment) ?? "production"
+        registeredAt = try container.decode(String.self, forKey: .registeredAt)
+        updatedAt = try container.decode(String.self, forKey: .updatedAt)
+        lastDeliveryKind = try container.decodeIfPresent(String.self, forKey: .lastDeliveryKind)
+        lastDeliveryStatus = try container.decodeIfPresent(Int.self, forKey: .lastDeliveryStatus)
+        lastDeliveryAt = try container.decodeIfPresent(String.self, forKey: .lastDeliveryAt)
+    }
 }
 
 struct FeatureCapabilities: Codable, Hashable {

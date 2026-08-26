@@ -59,11 +59,13 @@ Copy the returned `database_id` into `wrangler.jsonc`, then:
 
 ```bash
 pnpm exec wrangler d1 migrations apply zimlo-cloud --remote
-pnpm exec wrangler secret put APNS_PRIVATE_KEY_P8
-pnpm exec wrangler secret put APNS_KEY_ID
+pnpm exec wrangler secret put APNS_SANDBOX_PRIVATE_KEY_P8
+pnpm exec wrangler secret put APNS_SANDBOX_KEY_ID
+pnpm exec wrangler secret put APNS_PRODUCTION_PRIVATE_KEY_P8
+pnpm exec wrangler secret put APNS_PRODUCTION_KEY_ID
 pnpm exec wrangler secret put APNS_TEAM_ID
 pnpm exec wrangler secret put APNS_TOPIC
-pnpm deploy
+pnpm run deploy
 ```
 
 Debug builds register their token for the APNs sandbox and TestFlight/App Store
@@ -135,10 +137,14 @@ does not reveal task data or grant Bridge permissions.
 
 ## Secrets and operational data
 
-- `APNS_PRIVATE_KEY_P8`: Apple APNs provider signing key.
-- `APNS_KEY_ID`: the key ID from Apple Developer.
+- `APNS_SANDBOX_PRIVATE_KEY_P8` / `APNS_SANDBOX_KEY_ID`: the environment-scoped key used by Xcode development builds.
+- `APNS_PRODUCTION_PRIVATE_KEY_P8` / `APNS_PRODUCTION_KEY_ID`: the environment-scoped key used by TestFlight and App Store builds.
 - `APNS_TEAM_ID`: Apple Developer Team ID.
 - `APNS_TOPIC`: the production App bundle identifier, currently `com.zimlo.ios`.
+
+Legacy `APNS_PRIVATE_KEY_P8` / `APNS_KEY_ID` secrets remain supported for older
+Apple keys that are valid in both environments. If either scoped value is set
+for an environment, both scoped values are required so rotations fail closed.
 
 Never put these values in the iOS app, CLI package, Git, or D1. APNs token
 rotation is handled by upserting the device record; APNs `410` marks it inactive.

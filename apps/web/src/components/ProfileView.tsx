@@ -47,7 +47,7 @@ function devicePermissionSummary(device: DeviceInfo) {
   return "权限已关闭";
 }
 
-export function ProfileView({ localAdmin, devices, pairing, lanApprovalsEnabled, trustManagementEnabled, codexPlugin, integrations, sessions, userProfile, notificationSettings = { enabled: false, approvals: true, failures: true, showTaskTitle: false, updatedAt: "" }, pushRegistered = false, notificationEnabled = true, connected = false, connectionMode = "offline", hosts = [], send, forgetDevice, pairAdditionalHost = async () => {}, forgetHost = async () => {} }: ProfileViewProps) {
+export function ProfileView({ localAdmin, devices, pairing, lanApprovalsEnabled, trustManagementEnabled, codexPlugin, integrations, sessions, userProfile, notificationSettings = { enabled: false, approvals: true, results: true, failures: true, criticalOnly: false, quietHoursEnabled: false, timeZoneOffsetMinutes: 0, showTaskTitle: false, updatedAt: "" }, pushRegistered = false, notificationEnabled = true, connected = false, connectionMode = "offline", hosts = [], send, forgetDevice, pairAdditionalHost = async () => {}, forgetHost = async () => {} }: ProfileViewProps) {
   const [selectedAvatarId, setSelectedAvatarId] = useState(userProfile.avatarId);
   const [avatarPickerOpen, setAvatarPickerOpen] = useState(false);
   const [pairingOpen, setPairingOpen] = useState(false);
@@ -157,15 +157,17 @@ export function ProfileView({ localAdmin, devices, pairing, lanApprovalsEnabled,
             <strong>{pushRegistered ? "这台设备可接收通知" : "配对后可接收通知"}</strong>
             <span className={notificationSettings.enabled ? "attention-badge is-ready" : "attention-badge"}>{notificationSettings.enabled ? "已开启" : "已关闭"}</span>
           </div>
-          {[
+          {([
             ["enabled", "允许 Zimlo 通知"],
             ["approvals", "审批与回复"],
+            ["results", "任务完成与重要结果"],
             ["failures", "任务失败"],
-            ["showTaskTitle", "锁屏任务标题"],
-          ].map(([key, label]) => {
-            const field = key as keyof Omit<NotificationSettings, "updatedAt">;
+            ["criticalOnly", "仅关键通知"],
+            ["quietHoursEnabled", "安静时段（22:00–08:00）"],
+            ["showTaskTitle", "锁屏任务信息（标题与摘要）"],
+          ] satisfies Array<[Exclude<keyof NotificationSettings, "updatedAt" | "timeZoneOffsetMinutes">, string]>).map(([field, label]) => {
             return (
-              <label className="settings-switch-row" key={key}>
+              <label className="settings-switch-row" key={field}>
                 <span>{label}</span>
                 <button
                   type="button"
@@ -178,7 +180,11 @@ export function ProfileView({ localAdmin, devices, pairing, lanApprovalsEnabled,
                     settings: {
                       enabled: field === "enabled" ? !notificationSettings.enabled : notificationSettings.enabled,
                       approvals: field === "approvals" ? !notificationSettings.approvals : notificationSettings.approvals,
+                      results: field === "results" ? !notificationSettings.results : notificationSettings.results,
                       failures: field === "failures" ? !notificationSettings.failures : notificationSettings.failures,
+                      criticalOnly: field === "criticalOnly" ? !notificationSettings.criticalOnly : notificationSettings.criticalOnly,
+                      quietHoursEnabled: field === "quietHoursEnabled" ? !notificationSettings.quietHoursEnabled : notificationSettings.quietHoursEnabled,
+                      timeZoneOffsetMinutes: notificationSettings.timeZoneOffsetMinutes,
                       showTaskTitle: field === "showTaskTitle" ? !notificationSettings.showTaskTitle : notificationSettings.showTaskTitle,
                     },
                     idempotencyKey: crypto.randomUUID(),

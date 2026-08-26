@@ -157,10 +157,12 @@ final class NativeAppStore: ObservableObject {
     @Published var notice: NativeNotice?
 
     private let client: NativeBridgeClient
+    private let notifications: MacNotificationManager
     private var refreshInFlight = false
 
-    init(client: NativeBridgeClient) {
+    init(client: NativeBridgeClient, notifications: MacNotificationManager = .shared) {
         self.client = client
+        self.notifications = notifications
     }
 
     func run() async {
@@ -178,7 +180,16 @@ final class NativeAppStore: ObservableObject {
         defer { refreshInFlight = false }
         do {
             let next = try await client.fetchSnapshot()
-            if next.sequence >= snapshot.sequence { snapshot = next }
+            if next.sequence >= snapshot.sequence {
+                let previous = snapshot
+                let shouldNotify = loadState == .loaded && next.sequence > previous.sequence
+                snapshot = next
+                if shouldNotify {
+                    await notifications.process(previous: previous, next: next)
+                } else {
+                    notifications.updateBadge(next)
+                }
+            }
             loadState = .loaded
         } catch is CancellationError {
             return
@@ -192,6 +203,7 @@ final class NativeAppStore: ObservableObject {
         do {
             let response = try await client.send(command)
             snapshot = response.snapshot
+            notifications.updateBadge(response.snapshot)
             if let nextDevices = response.messages.first(where: { $0.type == "devices.list" })?.devices {
                 devices = nextDevices.filter(\.isActivePhone).sorted { $0.lastSeenAt > $1.lastSeenAt }
             }

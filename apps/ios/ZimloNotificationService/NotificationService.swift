@@ -17,9 +17,13 @@ final class NotificationService: UNNotificationServiceExtension {
         }
         bestAttemptContent = content
         if let route = request.content.userInfo["route"] as? [String: String],
-           let title = try? decryptTaskTitle(route),
-           !title.isEmpty {
-            content.body = title
+           let display = try? decryptDisplay(route) {
+            if let title = display.taskTitle, !title.isEmpty {
+                content.title = title
+            }
+            if let summary = display.summary, !summary.isEmpty {
+                content.body = summary
+            }
         }
         contentHandler(content)
     }
@@ -28,7 +32,7 @@ final class NotificationService: UNNotificationServiceExtension {
         if let contentHandler, let bestAttemptContent { contentHandler(bestAttemptContent) }
     }
 
-    private func decryptTaskTitle(_ route: [String: String]) throws -> String {
+    private func decryptDisplay(_ route: [String: String]) throws -> (taskTitle: String?, summary: String?) {
         guard let privateKeyData = loadPrivateKey(),
               let publicKeyData = decode(route["ephemeralPublicKey"]),
               let nonceData = decode(route["nonce"]),
@@ -54,7 +58,7 @@ final class NotificationService: UNNotificationServiceExtension {
         )
         let plaintext = try ChaChaPoly.open(box, using: key, authenticating: info)
         let object = try JSONSerialization.jsonObject(with: plaintext) as? [String: Any]
-        return object?["taskTitle"] as? String ?? ""
+        return (object?["taskTitle"] as? String, object?["summary"] as? String)
     }
 
     private func loadPrivateKey() -> Data? {

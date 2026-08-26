@@ -24,8 +24,9 @@ interface DeviceCloudCredentials {
 
 interface PushInput {
   deviceId: string;
-  kind: "approval" | "failure";
+  kind: "approval" | "approval_reminder" | "result" | "failure";
   collapseId: string;
+  badge: number;
   alert: { title: string; body: string };
   route: PushRouteEnvelope;
   // Plaintext UNNotificationCategory identifier (no task content). The APNs
@@ -189,7 +190,8 @@ export class CloudService {
   async sendPush(input: PushInput): Promise<number> {
     if (!await this.ensureReady()) return 503;
     const response = await this.signedFetch("/v1/push", "POST", input);
-    return response.status;
+    const result = await response.json().catch(() => null) as { apnsStatus?: number } | null;
+    return result?.apnsStatus ?? response.status;
   }
 
   async unregisterPushDevice(deviceId: string): Promise<void> {

@@ -30,6 +30,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // A regular activation policy keeps the app discoverable in the Dock,
         // app switcher, and macOS application menu while that window is open.
         NSApp.setActivationPolicy(.regular)
+        MacNotificationManager.shared.configure(requestPermission: AppModel.shared.onboarding.completed)
         Task { await AppModel.shared.service.start() }
         if !AppModel.shared.onboarding.completed {
             WindowCoordinator.shared.showOnboarding()
@@ -78,6 +79,16 @@ final class WindowCoordinator: NSObject, NSWindowDelegate {
     private var onboardingWindow: NSWindow?
     private var mainAppWindow: NSWindow?
     private var mainAppRoute: LocalBridgeRoute?
+
+    var mainWindowIsKey: Bool { mainAppWindow?.isKeyWindow == true }
+
+    func openTask(sessionID: String) {
+        showMainApp()
+        Task { @MainActor in
+            await Task.yield()
+            NotificationCenter.default.post(name: .zimloOpenTask, object: sessionID)
+        }
+    }
 
     /// MenuBarExtra dismisses its AppKit panel with a transform animation. On
     /// macOS 26, ordering another window during that same animation can crash
@@ -209,6 +220,10 @@ final class WindowCoordinator: NSObject, NSWindowDelegate {
         window.titlebarSeparatorStyle = .none
         window.miniwindowImage = WindowBrandAssets.icon
     }
+}
+
+extension Notification.Name {
+    static let zimloOpenTask = Notification.Name("app.zimlo.open-task")
 }
 
 @MainActor

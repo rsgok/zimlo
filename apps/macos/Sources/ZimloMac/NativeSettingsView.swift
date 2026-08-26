@@ -3,12 +3,14 @@ import SwiftUI
 struct NativeSettingsView: View {
     @ObservedObject var store: NativeAppStore
     @ObservedObject var service: ServiceController
+    @ObservedObject private var notifications = MacNotificationManager.shared
     @State private var showingDevices = false
 
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 16) {
                 serviceCard
+                notificationsCard
                 HStack(alignment: .top, spacing: 14) {
                     integrationsCard
                     devicesCard
@@ -86,6 +88,102 @@ struct NativeSettingsView: View {
         .nativeCard(cornerRadius: 16)
     }
 
+    private var notificationsCard: some View {
+        VStack(alignment: .leading, spacing: 13) {
+            HStack {
+                VStack(alignment: .leading, spacing: 3) {
+                    Text("系统通知").font(.system(size: 14, weight: .bold, design: .rounded))
+                    Text("只提醒需要处理、任务结果和失败；普通执行过程保持安静。")
+                        .font(.system(size: 10, weight: .medium))
+                        .foregroundStyle(NativeTheme.muted)
+                }
+                Spacer()
+                Text(notifications.authorizationLabel)
+                    .font(.system(size: 10, weight: .bold))
+                    .foregroundStyle(notifications.authorizationDenied ? NativeTheme.coral : NativeTheme.sage)
+            }
+
+            Divider().opacity(0.4)
+            NativeNotificationToggleRow(
+                title: "允许 Zimlo 通知",
+                detail: "App 在后台或你正在查看其他任务时显示系统横幅。",
+                isOn: Binding(
+                    get: { notifications.preferences.enabled },
+                    set: { enabled in
+                        Task { @MainActor in
+                            let allowed = await notifications.setEnabled(enabled)
+                            if !allowed && enabled {
+                                store.showNotice("系统通知权限未开启，可从系统设置中允许 Zimlo 通知。", tone: .failure)
+                            }
+                        }
+                    }
+                )
+            )
+            NativeNotificationToggleRow(
+                title: "审批与回复",
+                detail: "Agent 需要你的决定或输入时立即提醒。",
+                isOn: Binding(
+                    get: { notifications.preferences.approvals },
+                    set: { notifications.setApprovals($0) }
+                ),
+                disabled: !notifications.preferences.enabled
+            )
+            NativeNotificationToggleRow(
+                title: "任务完成与重要结果",
+                detail: "有可阅读的新结论或交付结果时提醒一次。",
+                isOn: Binding(
+                    get: { notifications.preferences.results },
+                    set: { notifications.setResults($0) }
+                ),
+                disabled: !notifications.preferences.enabled
+            )
+            NativeNotificationToggleRow(
+                title: "任务失败",
+                detail: "任务进入失败状态并发布失败说明时提醒。",
+                isOn: Binding(
+                    get: { notifications.preferences.failures },
+                    set: { notifications.setFailures($0) }
+                ),
+                disabled: !notifications.preferences.enabled
+            )
+            NativeNotificationToggleRow(
+                title: "仅关键通知",
+                detail: "只保留审批、单次审批提醒和失败通知。",
+                isOn: Binding(
+                    get: { notifications.preferences.criticalOnly },
+                    set: { notifications.setCriticalOnly($0) }
+                ),
+                disabled: !notifications.preferences.enabled
+            )
+            NativeNotificationToggleRow(
+                title: "安静时段（22:00–08:00）",
+                detail: "夜间隐藏结果通知；审批和失败仍会及时提醒。",
+                isOn: Binding(
+                    get: { notifications.preferences.quietHoursEnabled },
+                    set: { notifications.setQuietHoursEnabled($0) }
+                ),
+                disabled: !notifications.preferences.enabled
+            )
+            NativeNotificationToggleRow(
+                title: "显示任务信息",
+                detail: "开启后显示任务标题和一句安全摘要；关闭时只显示通用文案。",
+                isOn: Binding(
+                    get: { notifications.preferences.showTaskTitle },
+                    set: { notifications.setShowTaskTitle($0) }
+                ),
+                disabled: !notifications.preferences.enabled
+            )
+
+            if notifications.authorizationDenied {
+                Button("打开系统通知设置") { notifications.openSystemSettings() }
+                    .buttonStyle(.bordered)
+            }
+        }
+        .padding(18)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .nativeCard(cornerRadius: 16)
+    }
+
     private var devicesCard: some View {
         VStack(alignment: .leading, spacing: 12) {
             HStack {
@@ -110,6 +208,11 @@ struct NativeSettingsView: View {
             }
             if let issue = service.pairingIssue {
                 Text(issue.message).font(.system(size: 10, weight: .medium)).foregroundStyle(NativeTheme.coral)
+            }
+            if service.status?.pushNotifications == false {
+                Label("iPhone 推送服务尚未配置", systemImage: "bell.slash.fill")
+                    .font(.system(size: 9.5, weight: .semibold))
+                    .foregroundStyle(NativeTheme.coral)
             }
             HStack(spacing: 8) {
                 Button("管理设备") { showingDevices = true }
@@ -187,6 +290,27 @@ struct NativeSettingsView: View {
         case .degraded, .starting, .stopping: NativeTheme.amber
         case .manualStopped, .unavailable: NativeTheme.coral
         }
+    }
+}
+
+private struct NativeNotificationToggleRow: View {
+    let title: String
+    let detail: String
+    @Binding var isOn: Bool
+    var disabled = false
+
+    var body: some View {
+        HStack(spacing: 16) {
+            VStack(alignment: .leading, spacing: 2) {
+                Text(title).font(.system(size: 11.5, weight: .bold))
+                Text(detail).font(.system(size: 9.5, weight: .medium)).foregroundStyle(NativeTheme.muted)
+            }
+            Spacer(minLength: 0)
+            Toggle(title, isOn: $isOn)
+                .labelsHidden()
+                .toggleStyle(.switch)
+        }
+        .disabled(disabled)
     }
 }
 

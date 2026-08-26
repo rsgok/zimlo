@@ -37,6 +37,8 @@
 	<string>把你的语音转换成任务输入。</string>
 	<key>ZimloKeychainAccessGroup</key>
 	<string>$(AppIdentifierPrefix)com.zimlo.shared</string>
+	<key>ZimloAPNsEnvironment</key>
+	<string>$(APS_ENVIRONMENT)</string>
 	<key>UILaunchScreen</key>
 	<dict/>
 	<key>UISupportedInterfaceOrientations</key>

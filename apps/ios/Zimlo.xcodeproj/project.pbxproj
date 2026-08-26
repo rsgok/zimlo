@@ -38,6 +38,7 @@
 		10000000000000000000001F /* providers in Resources */ = {isa = PBXBuildFile; fileRef = 200000000000000000000025 /* providers */; };
 		100000000000000000000020 /* ZimloContract.generated.swift in Sources */ = {isa = PBXBuildFile; fileRef = 200000000000000000000024 /* ZimloContract.generated.swift */; };
 		100000000000000000000021 /* PhoneSetupView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 200000000000000000000026 /* PhoneSetupView.swift */; };
+		100000000000000000000022 /* NotificationSettingsSection.swift in Sources */ = {isa = PBXBuildFile; fileRef = 200000000000000000000027 /* NotificationSettingsSection.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -96,6 +97,7 @@
 		200000000000000000000024 /* ZimloContract.generated.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ZimloContract.generated.swift; sourceTree = "<group>"; };
 		200000000000000000000025 /* providers */ = {isa = PBXFileReference; lastKnownFileType = folder; name = providers; path = ../../shared/branding/providers; sourceTree = "<group>"; };
 		200000000000000000000026 /* PhoneSetupView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PhoneSetupView.swift; sourceTree = "<group>"; };
+		200000000000000000000027 /* NotificationSettingsSection.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NotificationSettingsSection.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -134,6 +136,7 @@
 				200000000000000000000024,
 				200000000000000000000025,
 				200000000000000000000026,
+				200000000000000000000027,
 			);
 		};
 		500000000000000000000003 /* ZimloTests */ = {isa = PBXGroup; path = ZimloTests; sourceTree = "<group>"; children = (20000000000000000000000F, 20000000000000000000001F, 200000000000000000000020,); };
@@ -239,6 +242,7 @@
 				100000000000000000000019,
 				100000000000000000000020,
 				100000000000000000000021,
+				100000000000000000000022,
 				10000000000000000000001C,
 				10000000000000000000001E,
 			);
@@ -256,12 +260,12 @@
 /* Begin XCBuildConfiguration section */
 		A00000000000000000000001 = {isa = XCBuildConfiguration; buildSettings = {CLANG_ENABLE_MODULES = YES; IPHONEOS_DEPLOYMENT_TARGET = 17.0; SDKROOT = iphoneos; SWIFT_VERSION = 5.0;}; name = Debug;};
 		A00000000000000000000002 = {isa = XCBuildConfiguration; buildSettings = {CLANG_ENABLE_MODULES = YES; IPHONEOS_DEPLOYMENT_TARGET = 17.0; SDKROOT = iphoneos; SWIFT_COMPILATION_MODE = wholemodule; SWIFT_VERSION = 5.0;}; name = Release;};
-		A00000000000000000000003 = {isa = XCBuildConfiguration; buildSettings = {APS_ENVIRONMENT = development; ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon; CODE_SIGN_ENTITLEMENTS = Zimlo/Zimlo.entitlements; CODE_SIGN_STYLE = Automatic; CURRENT_PROJECT_VERSION = 4; ENABLE_TESTABILITY = YES; GENERATE_INFOPLIST_FILE = NO; INFOPLIST_FILE = Zimlo/Info.plist; MARKETING_VERSION = 0.1; PRODUCT_BUNDLE_IDENTIFIER = com.zimlo.ios; PRODUCT_NAME = "$(TARGET_NAME)"; SUPPORTED_PLATFORMS = "iphoneos iphonesimulator"; SWIFT_EMIT_LOC_STRINGS = YES; SWIFT_OPTIMIZATION_LEVEL = "-Onone"; TARGETED_DEVICE_FAMILY = 1;}; name = Debug;};
-		A00000000000000000000004 = {isa = XCBuildConfiguration; buildSettings = {APS_ENVIRONMENT = production; ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon; CODE_SIGN_ENTITLEMENTS = Zimlo/Zimlo.entitlements; CODE_SIGN_STYLE = Automatic; CURRENT_PROJECT_VERSION = 4; GENERATE_INFOPLIST_FILE = NO; INFOPLIST_FILE = Zimlo/Info.plist; MARKETING_VERSION = 0.1; PRODUCT_BUNDLE_IDENTIFIER = com.zimlo.ios; PRODUCT_NAME = "$(TARGET_NAME)"; SUPPORTED_PLATFORMS = "iphoneos iphonesimulator"; SWIFT_EMIT_LOC_STRINGS = YES; TARGETED_DEVICE_FAMILY = 1;}; name = Release;};
+		A00000000000000000000003 = {isa = XCBuildConfiguration; buildSettings = {APS_ENVIRONMENT = development; ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon; CODE_SIGN_ENTITLEMENTS = Zimlo/Zimlo.entitlements; CODE_SIGN_STYLE = Automatic; CURRENT_PROJECT_VERSION = 5; DEVELOPMENT_TEAM = S4M929W224; ENABLE_TESTABILITY = YES; GENERATE_INFOPLIST_FILE = NO; INFOPLIST_FILE = Zimlo/Info.plist; MARKETING_VERSION = 0.2.1; PRODUCT_BUNDLE_IDENTIFIER = com.zimlo.ios; PRODUCT_NAME = "$(TARGET_NAME)"; SUPPORTED_PLATFORMS = "iphoneos iphonesimulator"; SWIFT_EMIT_LOC_STRINGS = YES; SWIFT_OPTIMIZATION_LEVEL = "-Onone"; TARGETED_DEVICE_FAMILY = 1;}; name = Debug;};
+		A00000000000000000000004 = {isa = XCBuildConfiguration; buildSettings = {APS_ENVIRONMENT = production; ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon; CODE_SIGN_ENTITLEMENTS = Zimlo/Zimlo.entitlements; CODE_SIGN_STYLE = Automatic; CURRENT_PROJECT_VERSION = 5; DEVELOPMENT_TEAM = S4M929W224; GENERATE_INFOPLIST_FILE = NO; INFOPLIST_FILE = Zimlo/Info.plist; MARKETING_VERSION = 0.2.1; PRODUCT_BUNDLE_IDENTIFIER = com.zimlo.ios; PRODUCT_NAME = "$(TARGET_NAME)"; SUPPORTED_PLATFORMS = "iphoneos iphonesimulator"; SWIFT_EMIT_LOC_STRINGS = YES; TARGETED_DEVICE_FAMILY = 1;}; name = Release;};
 		A00000000000000000000005 = {isa = XCBuildConfiguration; buildSettings = {BUNDLE_LOADER = "$(TEST_HOST)"; CODE_SIGN_STYLE = Automatic; GENERATE_INFOPLIST_FILE = YES; IPHONEOS_DEPLOYMENT_TARGET = 17.0; PRODUCT_BUNDLE_IDENTIFIER = com.zimlo.ios.tests; PRODUCT_NAME = "$(TARGET_NAME)"; SUPPORTED_PLATFORMS = "iphoneos iphonesimulator"; SWIFT_VERSION = 5.0; TARGETED_DEVICE_FAMILY = 1; TEST_HOST = "$(BUILT_PRODUCTS_DIR)/Zimlo.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/Zimlo";}; name = Debug;};
 		A00000000000000000000006 = {isa = XCBuildConfiguration; buildSettings = {BUNDLE_LOADER = "$(TEST_HOST)"; CODE_SIGN_STYLE = Automatic; GENERATE_INFOPLIST_FILE = YES; IPHONEOS_DEPLOYMENT_TARGET = 17.0; PRODUCT_BUNDLE_IDENTIFIER = com.zimlo.ios.tests; PRODUCT_NAME = "$(TARGET_NAME)"; SUPPORTED_PLATFORMS = "iphoneos iphonesimulator"; SWIFT_VERSION = 5.0; TARGETED_DEVICE_FAMILY = 1; TEST_HOST = "$(BUILT_PRODUCTS_DIR)/Zimlo.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/Zimlo";}; name = Release;};
-		A00000000000000000000007 = {isa = XCBuildConfiguration; buildSettings = {APPLICATION_EXTENSION_API_ONLY = YES; CODE_SIGN_ENTITLEMENTS = ZimloNotificationService/ZimloNotificationService.entitlements; CODE_SIGN_STYLE = Automatic; CURRENT_PROJECT_VERSION = 4; GENERATE_INFOPLIST_FILE = NO; INFOPLIST_FILE = ZimloNotificationService/Info.plist; IPHONEOS_DEPLOYMENT_TARGET = 17.0; MARKETING_VERSION = 0.1; PRODUCT_BUNDLE_IDENTIFIER = com.zimlo.ios.NotificationService; PRODUCT_NAME = "$(TARGET_NAME)"; SKIP_INSTALL = YES; SUPPORTED_PLATFORMS = "iphoneos iphonesimulator"; SWIFT_VERSION = 5.0; TARGETED_DEVICE_FAMILY = 1;}; name = Debug;};
-		A00000000000000000000008 = {isa = XCBuildConfiguration; buildSettings = {APPLICATION_EXTENSION_API_ONLY = YES; CODE_SIGN_ENTITLEMENTS = ZimloNotificationService/ZimloNotificationService.entitlements; CODE_SIGN_STYLE = Automatic; CURRENT_PROJECT_VERSION = 4; GENERATE_INFOPLIST_FILE = NO; INFOPLIST_FILE = ZimloNotificationService/Info.plist; IPHONEOS_DEPLOYMENT_TARGET = 17.0; MARKETING_VERSION = 0.1; PRODUCT_BUNDLE_IDENTIFIER = com.zimlo.ios.NotificationService; PRODUCT_NAME = "$(TARGET_NAME)"; SKIP_INSTALL = YES; SUPPORTED_PLATFORMS = "iphoneos iphonesimulator"; SWIFT_VERSION = 5.0; TARGETED_DEVICE_FAMILY = 1;}; name = Release;};
+		A00000000000000000000007 = {isa = XCBuildConfiguration; buildSettings = {APPLICATION_EXTENSION_API_ONLY = YES; CODE_SIGN_ENTITLEMENTS = ZimloNotificationService/ZimloNotificationService.entitlements; CODE_SIGN_STYLE = Automatic; CURRENT_PROJECT_VERSION = 5; DEVELOPMENT_TEAM = S4M929W224; GENERATE_INFOPLIST_FILE = NO; INFOPLIST_FILE = ZimloNotificationService/Info.plist; IPHONEOS_DEPLOYMENT_TARGET = 17.0; MARKETING_VERSION = 0.2.1; PRODUCT_BUNDLE_IDENTIFIER = com.zimlo.ios.NotificationService; PRODUCT_NAME = "$(TARGET_NAME)"; SKIP_INSTALL = YES; SUPPORTED_PLATFORMS = "iphoneos iphonesimulator"; SWIFT_VERSION = 5.0; TARGETED_DEVICE_FAMILY = 1;}; name = Debug;};
+		A00000000000000000000008 = {isa = XCBuildConfiguration; buildSettings = {APPLICATION_EXTENSION_API_ONLY = YES; CODE_SIGN_ENTITLEMENTS = ZimloNotificationService/ZimloNotificationService.entitlements; CODE_SIGN_STYLE = Automatic; CURRENT_PROJECT_VERSION = 5; DEVELOPMENT_TEAM = S4M929W224; GENERATE_INFOPLIST_FILE = NO; INFOPLIST_FILE = ZimloNotificationService/Info.plist; IPHONEOS_DEPLOYMENT_TARGET = 17.0; MARKETING_VERSION = 0.2.1; PRODUCT_BUNDLE_IDENTIFIER = com.zimlo.ios.NotificationService; PRODUCT_NAME = "$(TARGET_NAME)"; SKIP_INSTALL = YES; SUPPORTED_PLATFORMS = "iphoneos iphonesimulator"; SWIFT_VERSION = 5.0; TARGETED_DEVICE_FAMILY = 1;}; name = Release;};
 /* End XCBuildConfiguration section */
 
 /* Begin XCConfigurationList section */

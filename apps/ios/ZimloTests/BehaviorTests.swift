@@ -1,5 +1,67 @@
 import XCTest
+import UserNotifications
 @testable import Zimlo
+
+final class NotificationSettingsCompatibilityTests: XCTestCase {
+    func testOlderSnapshotsDefaultResultNotificationsOn() throws {
+        let data = Data(#"{"enabled":true,"approvals":true,"failures":true,"showTaskTitle":false,"updatedAt":""}"#.utf8)
+        let settings = try JSONDecoder().decode(NotificationSettings.self, from: data)
+        XCTAssertTrue(settings.results)
+        XCTAssertFalse(settings.criticalOnly)
+        XCTAssertFalse(settings.quietHoursEnabled)
+        XCTAssertEqual(settings.timeZoneOffsetMinutes, 0)
+    }
+}
+
+final class ForegroundNotificationRulesTests: XCTestCase {
+    func testOnlyAnotherVisibleTaskGetsAnInAppPrompt() {
+        XCTAssertFalse(ForegroundNotificationRules.shouldPresent(
+            notificationSessionID: "session-a", visibleSessionID: "session-a"
+        ))
+        XCTAssertTrue(ForegroundNotificationRules.shouldPresent(
+            notificationSessionID: "session-b", visibleSessionID: "session-a"
+        ))
+        XCTAssertTrue(ForegroundNotificationRules.shouldPresent(
+            notificationSessionID: "session-b", visibleSessionID: nil
+        ))
+        XCTAssertEqual(ForegroundNotificationRules.message(kind: "failure"), "另一项任务需要你查看")
+        XCTAssertEqual(
+            ForegroundNotificationRules.message(
+                kind: "result",
+                taskTitle: "完成通知系统",
+                summary: "P1/P2 已完成，全部测试通过。"
+            ),
+            "完成通知系统 · P1/P2 已完成，全部测试通过。"
+        )
+    }
+}
+
+final class NotificationPermissionPromptRulesTests: XCTestCase {
+    func testRequestsOnlyOncePushIsAvailableAndPermissionIsUndecided() {
+        XCTAssertTrue(NotificationPermissionPromptRules.shouldRequest(
+            pushNotificationsAvailable: true,
+            status: .notDetermined
+        ))
+        XCTAssertFalse(NotificationPermissionPromptRules.shouldRequest(
+            pushNotificationsAvailable: false,
+            status: .notDetermined
+        ))
+        XCTAssertFalse(NotificationPermissionPromptRules.shouldRequest(
+            pushNotificationsAvailable: true,
+            status: .authorized
+        ))
+        XCTAssertFalse(NotificationPermissionPromptRules.shouldRequest(
+            pushNotificationsAvailable: true,
+            status: .denied
+        ))
+    }
+
+    func testAPNsEnvironmentComesFromTheSignedBuildConfiguration() {
+        XCTAssertEqual(APNsRegistrationEnvironment.normalized("development"), "development")
+        XCTAssertEqual(APNsRegistrationEnvironment.normalized("production"), "production")
+        XCTAssertEqual(APNsRegistrationEnvironment.normalized(nil), "production")
+    }
+}
 
 final class ApprovalStateTests: XCTestCase {
     func testDoubleConfirmRequiresTwoDistinctInteractions() {

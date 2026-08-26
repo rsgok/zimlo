@@ -55,7 +55,7 @@ const EMPTY_SNAPSHOT: Snapshot = {
   actions: [],
   trustPolicies: [],
   trustAudit: [],
-  notificationSettings: { enabled: false, approvals: true, failures: true, showTaskTitle: false, updatedAt: "" },
+  notificationSettings: { enabled: false, approvals: true, results: true, failures: true, criticalOnly: false, quietHoursEnabled: false, timeZoneOffsetMinutes: 0, showTaskTitle: false, updatedAt: "" },
   pushDevices: [],
   features: EMPTY_FEATURE_CAPABILITIES,
   sequence: 0,
