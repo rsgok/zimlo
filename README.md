@@ -62,15 +62,57 @@ open apps/macos/.build/Zimlo.app
 - macOS 14+
 - Node.js 24+
 - pnpm 10
+- Rust 1.98.0（由根目录 `rust-toolchain.toml` 锁定）
 - 已安装并登录 Codex 与/或 Claude Code
 
 首次构建和检查：
 
 ```bash
 pnpm install
-pnpm build
+pnpm check
 node apps/cli/dist/index.js doctor
 ```
+
+Rust Runtime 仍处于迁移阶段，默认不会接管写入。它已经包含协议/加密兼容层、SQLite
+单连接 actor、`/healthz`、兼容现有 Node 数据库的完整 Snapshot、session events、加密
+WebSocket 通道与项目级信任策略：
+
+```bash
+pnpm runtime:check
+cargo run --manifest-path runtime/Cargo.toml -p zimlo-cli -- start --port 4757
+cargo run --manifest-path runtime/Cargo.toml -p zimlo-cli -- start --port 4757 \
+  --database "$ZIMLO_HOME/zimlo.db"
+```
+
+传入 `--database` 时 Rust 只读打开数据库，不执行 Runtime 状态迁移或写入；本机可查询
+`/api/local/snapshot`、`/api/local/sessions/:sessionId/events`，已配对设备也可通过 `/ws`
+完成现有 `auth`/`auth.ok` 握手、收发 XChaCha20-Poly1305 帧，并在数据库变化后收到设备
+作用域的 Snapshot。Node Runtime 仍是产品默认实现。
+
+仅在隔离数据库或已完全停止 Node Bridge 后，才可显式让 Rust 取得单写者所有权：
+
+```bash
+cargo run --manifest-path runtime/Cargo.toml -p zimlo-cli -- start --port 4757 \
+  --database "$ZIMLO_HOME/zimlo.db" --write
+cargo run --manifest-path runtime/Cargo.toml -p zimlo-cli -- start --port 4757 --lan \
+  --database "$ZIMLO_HOME/zimlo.db" --write
+```
+
+`--write` 会取得 SQLite 独占锁、恢复中断的 command/action 状态，并启用本地配对、设备管理、
+Feed/Timeline 已读与忽略、Task 置顶/归档、通知设置、用户/Agent 资料、LAN 审批总开关，以及本地
+Material 导入、设备加密直传和 Range 读取。Rust 已提供持久 Task Command 队列、幂等入队、CAS 执行租约、
+取消/重试状态机、物料门禁与可注入执行器；WebSocket 已开放 queued 指令撤回，以及 Codex / Claude
+任务创建、追问、消息和失败重试。Claude 执行器直接管理本地 CLI 进程并解析 `stream-json`；Codex
+执行器直接管理 `codex app-server --listen stdio://`，实现 initialize、thread 创建/恢复、turn 执行、
+事件持久化、命令/文件/权限审批和结构化输入。PendingAction、确认短语、设备审批权限和幂等结果均由
+Rust 持久化；Runtime 重启后没有活跃上游 resolver 的旧请求会 fail closed，不能误投决策。退出或重启
+会清理进程状态；崩溃时只有尚未启动进程的 `dispatching` 指令自动重排，已经 `running` 的外部执行会
+标记为结果不确定，避免静默重复提交。Rust 已支持设备授权的 `trust.policy.update`，并仅对项目路径
+边界内可确认的读取、搜索、测试和构建自动放行；复合命令必须每段安全，写入、联网、安装、发布、
+删除、未知动作和路径逃逸仍逐次确认，所有自动放行与询问均写入审计。Agent Profile 更新会返回完整
+Project 并按设备 outbox key 幂等；LAN 总开关只允许本机管理员修改，并同步所有未撤销手机的审批权限。
+Cloud Material 中转及尚未迁移的集成安装/云路径继续返回 `runtime_not_migrated`。严禁 Node 与 Rust
+同时以写模式打开同一个数据库。
 
 启动开发 Bridge：
 
@@ -106,7 +148,7 @@ zimlo open                          # 打开本机管理页
 
 Codex GUI 插件调用 Zimlo MCP 时也可以按需拉起本机 Bridge，不要求用户先运行命令。
 
-启动后的健康检查使用 protocol v4，并通过 capability 增量声明新能力：
+启动后的健康检查使用 protocol v5，并通过 capability 增量声明新能力：
 
 ```bash
 curl http://127.0.0.1:4747/healthz

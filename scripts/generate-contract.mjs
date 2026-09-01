@@ -99,6 +99,10 @@ const outputs = new Map([
     `${generatedHeader}export const ZIMLO_PROTOCOL_VERSION = ${configuration.protocolVersion};\n`,
   ],
   [
+    "runtime/crates/zimlo-protocol/src/contract_generated.rs",
+    `${generatedHeader}pub const ZIMLO_VERSION: &str = ${JSON.stringify(configuration.productVersion)};\npub const ZIMLO_PROTOCOL_VERSION: u32 = ${configuration.protocolVersion};\n`,
+  ],
+  [
     "apps/ios/Zimlo/ZimloContract.generated.swift",
     generatedCardSystemSwift,
   ],
