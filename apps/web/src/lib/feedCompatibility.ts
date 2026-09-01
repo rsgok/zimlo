@@ -1,17 +1,7 @@
-import { EMPTY_FEATURE_CAPABILITIES, USER_AVATAR_IDS } from "@zimlo/protocol";
-import type { FeedContent, FeedPost, FeedPostKind, FeedTemplate, Project, Snapshot, UserAvatarId } from "@zimlo/protocol";
+import { CardBlockSchema, EMPTY_FEATURE_CAPABILITIES, ResolvedCardPresentationSchema, resolveCardPresentation, USER_AVATAR_IDS } from "@zimlo/protocol";
+import type { FeedContent, FeedPost, FeedPostKind, Project, Snapshot, UserAvatarId } from "@zimlo/protocol";
 
 const KINDS = new Set<FeedPostKind>(["progress", "decision", "attention", "result", "failure"]);
-const TEMPLATES = new Set<FeedTemplate>(["paper", "grid", "sticky", "marker", "poster"]);
-
-const DEFAULT_TEMPLATE: Record<FeedPostKind, FeedTemplate> = {
-  progress: "grid",
-  decision: "sticky",
-  attention: "marker",
-  result: "paper",
-  failure: "marker",
-};
-
 function text(value: unknown, fallback = ""): string {
   return typeof value === "string" && value.length > 0 ? value : fallback;
 }
@@ -44,12 +34,21 @@ export function normalizeFeedPost(value: unknown): FeedPost | null {
   const id = text(post.id);
   if (!id) return null;
   const kind = KINDS.has(post.kind as FeedPostKind) ? post.kind as FeedPostKind : "progress";
-  const template = TEMPLATES.has(post.template as FeedTemplate) ? post.template as FeedTemplate : DEFAULT_TEMPLATE[kind];
   const headline = text(post.headline, text(post.title, "历史帖子"));
   const takeaway = text(post.takeaway, text(post.body, "历史内容暂不可用。"));
   const highlights = Array.isArray(post.highlights)
     ? post.highlights.filter((item): item is string => typeof item === "string").slice(0, 3)
     : [];
+  const parsedBlocks = CardBlockSchema.array().max(8).safeParse(post.blocks);
+  const blocks = parsedBlocks.success ? parsedBlocks.data : [];
+  const content = feedContent(post.content);
+  const parsedPresentation = ResolvedCardPresentationSchema.safeParse(post.presentation);
+  const presentation = parsedPresentation.success ? parsedPresentation.data : resolveCardPresentation({
+    kind,
+    presentation: { system: "auto", theme: "auto", layout: "auto", typography: "auto", density: "auto", mediaPlacement: "auto" },
+    blocks,
+    content,
+  });
   return {
     id,
     ...(typeof post.hostId === "string" ? { hostId: post.hostId } : {}),
@@ -59,12 +58,13 @@ export function normalizeFeedPost(value: unknown): FeedPost | null {
     agentId: text(post.agentId, "agent"),
     sessionId: typeof post.sessionId === "string" ? post.sessionId : null,
     kind,
-    template,
+    presentation,
     headline,
     takeaway,
     highlights,
+    blocks,
     ...(typeof post.proof === "string" && post.proof ? { proof: post.proof } : {}),
-    content: feedContent(post.content),
+    content,
     dedupeKey: text(post.dedupeKey, id),
     source: "agent",
     createdAt: text(post.createdAt),

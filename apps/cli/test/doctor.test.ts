@@ -62,7 +62,7 @@ describe("runDoctor bridge checks", () => {
         pid: 4242,
         port: 4747,
         version: "0.2.0",
-        protocolVersion: 4,
+        protocolVersion: 5,
         startedAt: "2026-07-29T00:00:00.000Z",
         socketPath: "/tmp/bridge.sock",
         logPath: null,
@@ -70,7 +70,7 @@ describe("runDoctor bridge checks", () => {
       pidAlive: true,
       ownership: "verified",
       portReachable: true,
-      health: { ok: true, version: "0.2.0", protocolVersion: 4 },
+      health: { ok: true, version: "0.2.0", protocolVersion: 5 },
       diagnostics: { at: "2026-07-29T00:00:00.000Z", ok: true, pid: 4242 },
     }));
     const bridge = checks.find((check) => check.name === "Bridge 服务");
@@ -118,7 +118,7 @@ describe("runDoctor bridge checks", () => {
         pid: 4242,
         port: 4747,
         version: "0.2.0",
-        protocolVersion: 4,
+        protocolVersion: 5,
         startedAt: "2026-07-29T00:00:00.000Z",
         socketPath: "/tmp/bridge.sock",
         logPath: null,

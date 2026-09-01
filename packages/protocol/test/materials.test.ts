@@ -30,7 +30,9 @@ describe("material protocol", () => {
 
   it("models image, video and document feed cards independently from editorial copy", () => {
     const base = {
-      task_id: "task-1", kind: "result", template: "paper", headline: "完成",
+      task_id: "task-1", kind: "result",
+      presentation: { system: "auto", theme: "auto", layout: "auto", typography: "auto", density: "auto", mediaPlacement: "auto" },
+      headline: "完成",
       takeaway: "结果已可查看", dedupe_key: "task-1:result", highlights: [],
     };
     expect(FeedPostInputSchema.safeParse({ ...base, content: { type: "image_album", materialIds: [image.id] } }).success).toBe(true);

@@ -23,6 +23,73 @@ struct MacNotificationPreferences: Equatable {
     )
 }
 
+enum MacNotificationAuthorization: Equatable {
+    case checking
+    case notDetermined
+    case authorized
+    case denied
+    case unknown
+
+    var isAllowed: Bool {
+        self == .authorized
+    }
+
+    var label: String {
+        switch self {
+        case .checking: "正在检查"
+        case .notDetermined: "尚未请求"
+        case .authorized: "系统已允许"
+        case .denied: "系统已拒绝"
+        case .unknown: "状态未知"
+        }
+    }
+}
+
+@MainActor
+protocol MacNotificationCenterProviding: AnyObject {
+    var delegate: UNUserNotificationCenterDelegate? { get set }
+
+    func currentStatus() async -> MacNotificationAuthorization
+    func requestAuthorization() async -> Bool
+    func removeDeliveredNotifications(withIdentifiers identifiers: [String])
+    func add(_ request: UNNotificationRequest) async throws
+}
+
+@MainActor
+private final class SystemMacNotificationCenter: MacNotificationCenterProviding {
+    private let center: UNUserNotificationCenter
+
+    init(center: UNUserNotificationCenter) {
+        self.center = center
+    }
+
+    var delegate: UNUserNotificationCenterDelegate? {
+        get { center.delegate }
+        set { center.delegate = newValue }
+    }
+
+    func currentStatus() async -> MacNotificationAuthorization {
+        switch await center.notificationSettings().authorizationStatus {
+        case .notDetermined: .notDetermined
+        case .authorized, .provisional, .ephemeral: .authorized
+        case .denied: .denied
+        @unknown default: .unknown
+        }
+    }
+
+    func requestAuthorization() async -> Bool {
+        (try? await center.requestAuthorization(options: [.alert, .badge, .sound])) == true
+    }
+
+    func removeDeliveredNotifications(withIdentifiers identifiers: [String]) {
+        center.removeDeliveredNotifications(withIdentifiers: identifiers)
+    }
+
+    func add(_ request: UNNotificationRequest) async throws {
+        try await center.add(request)
+    }
+}
+
 enum MacNotificationKind: String, Equatable {
     case approval
     case approvalReminder = "approval_reminder"
@@ -273,8 +340,11 @@ final class MacNotificationManager: NSObject, ObservableObject, UNUserNotificati
     static let shared = MacNotificationManager()
 
     @Published private(set) var preferences: MacNotificationPreferences
-    @Published private(set) var authorizationLabel = "正在检查"
-    @Published private(set) var authorizationDenied = false
+    @Published private(set) var authorization: MacNotificationAuthorization = .checking
+
+    var authorizationLabel: String { authorization.label }
+    var authorizationDenied: Bool { authorization == .denied }
+    var effectiveEnabled: Bool { preferences.enabled && authorization.isAllowed }
 
     private enum Key {
         static let enabled = "zimlo.notifications.enabled.v1"
@@ -287,7 +357,7 @@ final class MacNotificationManager: NSObject, ObservableObject, UNUserNotificati
         static let remindedActions = "zimlo.notifications.reminded-actions.v1"
     }
 
-    private let center: UNUserNotificationCenter
+    private let center: MacNotificationCenterProviding
     private let defaults: UserDefaults
     private var visibleSessionID: String?
     private var failureFallbackTasks: [String: Task<Void, Never>] = [:]
@@ -299,8 +369,11 @@ final class MacNotificationManager: NSObject, ObservableObject, UNUserNotificati
     private var approvalReminderTasks: [String: Task<Void, Never>] = [:]
     private var remindedActionIDs: Set<String>
 
-    init(center: UNUserNotificationCenter = .current(), defaults: UserDefaults = .standard) {
-        self.center = center
+    init(
+        center: MacNotificationCenterProviding? = nil,
+        defaults: UserDefaults = .standard
+    ) {
+        self.center = center ?? SystemMacNotificationCenter(center: .current())
         self.defaults = defaults
         preferences = Self.loadPreferences(defaults)
         remindedActionIDs = Set(defaults.stringArray(forKey: Key.remindedActions) ?? [])
@@ -320,13 +393,13 @@ final class MacNotificationManager: NSObject, ObservableObject, UNUserNotificati
 
     @discardableResult
     func setEnabled(_ enabled: Bool) async -> Bool {
+        update(\.enabled, enabled)
         if !enabled {
-            update(\.enabled, false)
-            NSApp.dockTile.badgeLabel = nil
+            updateBadge(latestSnapshot)
             return true
         }
         let allowed = await requestAuthorizationIfNeeded()
-        update(\.enabled, allowed)
+        updateBadge(latestSnapshot)
         return allowed
     }
 
@@ -343,6 +416,7 @@ final class MacNotificationManager: NSObject, ObservableObject, UNUserNotificati
 
     func process(previous: NativeSnapshot, next: NativeSnapshot) async {
         updateBadge(next)
+        let deliveryPreferences = effectivePreferences
         let resolvedActionIdentifiers = MacNotificationPolicy.resolvedActionSessionIDs(previous: previous, next: next)
             .map { "zimlo.session.\($0).action" }
         center.removeDeliveredNotifications(withIdentifiers: resolvedActionIdentifiers)
@@ -367,16 +441,16 @@ final class MacNotificationManager: NSObject, ObservableObject, UNUserNotificati
         for candidate in MacNotificationPolicy.failureFallbackCandidates(
             previous: previous,
             next: next,
-            preferences: preferences
+            preferences: deliveryPreferences
         ) {
             scheduleFailureFallback(candidate, snapshot: next)
         }
         let candidates = MacNotificationPolicy.candidates(
             previous: previous,
             next: next,
-            preferences: preferences
+            preferences: deliveryPreferences
         ).filter { !suppressedFailurePostIDs.contains($0.id) }
-        let badgeCount = MacNotificationPolicy.unreadCount(snapshot: next, preferences: preferences)
+        let badgeCount = MacNotificationPolicy.unreadCount(snapshot: next, preferences: deliveryPreferences)
         await deliver(candidates.filter { $0.kind == .approval }, badgeCount: badgeCount)
         for candidate in candidates where candidate.kind != .approval {
             scheduleStatusDelivery(candidate, badgeCount: badgeCount)
@@ -391,7 +465,10 @@ final class MacNotificationManager: NSObject, ObservableObject, UNUserNotificati
             guard let self, self.latestTaskStates[taskID] == "failed" else { return }
             self.failureFallbackTasks.removeValue(forKey: taskID)
             self.failureFallbackNotifiedTaskIDs.insert(taskID)
-            let badgeCount = max(1, MacNotificationPolicy.unreadCount(snapshot: snapshot, preferences: self.preferences))
+            let badgeCount = max(1, MacNotificationPolicy.unreadCount(
+                snapshot: snapshot,
+                preferences: self.effectivePreferences
+            ))
             self.scheduleStatusDelivery(candidate, badgeCount: badgeCount)
         }
     }
@@ -416,9 +493,9 @@ final class MacNotificationManager: NSObject, ObservableObject, UNUserNotificati
     }
 
     private func deliver(_ candidates: [MacNotificationCandidate], badgeCount: Int) async {
-        guard preferences.enabled else { return }
+        guard effectiveEnabled else { return }
         let eligibleCandidates = candidates.filter {
-            MacNotificationPolicy.shouldDeliver($0.kind, preferences: preferences)
+            MacNotificationPolicy.shouldDeliver($0.kind, preferences: effectivePreferences)
         }
         guard !eligibleCandidates.isEmpty, await requestAuthorizationIfNeeded() else { return }
         for candidate in eligibleCandidates {
@@ -444,12 +521,12 @@ final class MacNotificationManager: NSObject, ObservableObject, UNUserNotificati
     func updateBadge(_ snapshot: NativeSnapshot) {
         latestSnapshot = snapshot
         syncApprovalReminders(snapshot)
-        let count = MacNotificationPolicy.unreadCount(snapshot: snapshot, preferences: preferences)
-        NSApp.dockTile.badgeLabel = count == 0 ? nil : String(count)
+        let count = MacNotificationPolicy.unreadCount(snapshot: snapshot, preferences: effectivePreferences)
+        NSApp?.dockTile.badgeLabel = count == 0 ? nil : String(count)
     }
 
     private func syncApprovalReminders(_ snapshot: NativeSnapshot) {
-        guard MacNotificationPolicy.shouldDeliver(.approvalReminder, preferences: preferences) else {
+        guard MacNotificationPolicy.shouldDeliver(.approvalReminder, preferences: effectivePreferences) else {
             for task in approvalReminderTasks.values { task.cancel() }
             approvalReminderTasks.removeAll()
             return
@@ -485,7 +562,7 @@ final class MacNotificationManager: NSObject, ObservableObject, UNUserNotificati
                 )
                 let badge = max(1, MacNotificationPolicy.unreadCount(
                     snapshot: self.latestSnapshot,
-                    preferences: self.preferences
+                    preferences: self.effectivePreferences
                 ))
                 await self.deliver([candidate], badgeCount: badge)
             }
@@ -494,20 +571,17 @@ final class MacNotificationManager: NSObject, ObservableObject, UNUserNotificati
 
     @discardableResult
     func requestAuthorizationIfNeeded() async -> Bool {
-        let status = await center.notificationSettings().authorizationStatus
+        let status = await center.currentStatus()
         let allowed: Bool
         switch status {
         case .notDetermined:
-            allowed = (try? await center.requestAuthorization(options: [.alert, .badge, .sound])) == true
-        case .authorized, .provisional, .ephemeral:
+            allowed = await center.requestAuthorization()
+        case .authorized:
             allowed = true
-        case .denied:
-            allowed = false
-        @unknown default:
+        case .checking, .denied, .unknown:
             allowed = false
         }
         await refreshAuthorization()
-        if !allowed { update(\.enabled, false) }
         return allowed
     }
 
@@ -535,22 +609,15 @@ final class MacNotificationManager: NSObject, ObservableObject, UNUserNotificati
         await MainActor.run { WindowCoordinator.shared.openTask(sessionID: sessionID) }
     }
 
-    private func refreshAuthorization() async {
-        let status = await center.notificationSettings().authorizationStatus
-        switch status {
-        case .authorized, .provisional, .ephemeral:
-            authorizationLabel = "系统已允许"
-            authorizationDenied = false
-        case .denied:
-            authorizationLabel = "系统已拒绝"
-            authorizationDenied = true
-        case .notDetermined:
-            authorizationLabel = "尚未请求"
-            authorizationDenied = false
-        @unknown default:
-            authorizationLabel = "状态未知"
-            authorizationDenied = false
-        }
+    func refreshAuthorization() async {
+        authorization = await center.currentStatus()
+        updateBadge(latestSnapshot)
+    }
+
+    private var effectivePreferences: MacNotificationPreferences {
+        var value = preferences
+        value.enabled = effectiveEnabled
+        return value
     }
 
     private func update(_ keyPath: WritableKeyPath<MacNotificationPreferences, Bool>, _ value: Bool) {

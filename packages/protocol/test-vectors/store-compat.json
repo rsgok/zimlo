@@ -1,0 +1,45 @@
+{
+  "version": 1,
+  "session": {
+    "id": "session-store-compat",
+    "projectId": null,
+    "provider": "codex",
+    "surface": "cli",
+    "providerSessionId": "provider-store-compat",
+    "title": "Node and Rust store compatibility",
+    "cwd": "/tmp/zimlo-store-compat",
+    "transcriptPath": null,
+    "status": "running",
+    "lastActivityAt": "2026-09-01T12:01:00.000Z",
+    "createdAt": "2026-09-01T12:00:00.000Z",
+    "activePid": 42,
+    "processStartedAt": "2026-09-01T12:00:00.000Z",
+    "tty": "ttys001",
+    "correlationUncertain": false,
+    "capabilities": {
+      "discovered": true,
+      "liveObserved": true,
+      "replyable": true,
+      "approvableOnce": false,
+      "approvableSession": false,
+      "approvablePersistent": false,
+      "resumable": true,
+      "diffAvailable": false
+    }
+  },
+  "event": {
+    "id": "event-store-compat",
+    "sequence": 1,
+    "provider": "codex",
+    "sessionId": "session-store-compat",
+    "providerSessionId": "provider-store-compat",
+    "turnId": "turn-store-compat",
+    "kind": "user_instruction",
+    "source": "app_server",
+    "occurredAt": "2026-09-01T12:01:00.000Z",
+    "payload": {
+      "prompt": "Node 写入，Rust 读取"
+    },
+    "provenance": "verified"
+  }
+}

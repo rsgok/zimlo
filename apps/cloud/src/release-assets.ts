@@ -15,7 +15,7 @@ export function releaseAssetKey(pathname: string): string | null {
 }
 
 export function releaseAssetHeaders(name: string): Record<string, string> {
-  if (name === "latest.json") {
+  if (name === "latest.json" || name === "runtime-latest.json") {
     return {
       "content-type": "application/json; charset=utf-8",
       "cache-control": "public, max-age=300, must-revalidate",
@@ -31,6 +31,13 @@ export function releaseAssetHeaders(name: string): Record<string, string> {
   if (name.endsWith(".dmg")) {
     return {
       "content-type": "application/x-apple-diskimage",
+      "cache-control": "public, max-age=31536000, immutable",
+      "content-disposition": `attachment; filename="${name}"`,
+    };
+  }
+  if (name.endsWith(".zip")) {
+    return {
+      "content-type": "application/zip",
       "cache-control": "public, max-age=31536000, immutable",
       "content-disposition": `attachment; filename="${name}"`,
     };

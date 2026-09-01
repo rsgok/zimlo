@@ -4,11 +4,14 @@ import { chmodSync, copyFileSync, mkdirSync, readFileSync, realpathSync, statSyn
 import { basename, extname, isAbsolute, join, relative, resolve } from "node:path";
 import { redactText, stableSessionId, uuidV7 } from "@zimlo/adapters";
 import {
+  CARD_CATALOG,
   EMPTY_CAPABILITIES,
   FeedPostInputSchema,
   FeedSkipInputSchema,
   MaterialPublishInputSchema,
   SignalTransitionInputSchema,
+  resolveCardPresentation,
+  type CardBlock,
   type FeedPost,
   type Material,
   type Provider,
@@ -38,6 +41,66 @@ export interface AgentToolResult {
 
 const EDITORIAL_POLICY = `只在用户必须行动、可审阅的阶段产物已经就绪、终止性失败/阻塞或最终结果时发布。progress 必须带当前可检查的产物或验证证据。每帖按“结论 → 用户影响 → 关键事实 → 证据 → 下一步”编辑；不要发布普通工具调用、文件读取、编译过程、原始日志、心跳或重复状态。`;
 const PROGRESS_COALESCE_WINDOW_MS = 10 * 60 * 1_000;
+const AUTO_OPTION = { const: "auto", title: "Auto", description: "由 Bridge 根据内容语义解析成确定值。" };
+
+function catalogOptions(items: readonly { id: string; label: string; description: string }[]) {
+  return [AUTO_OPTION, ...items.map((item) => ({ const: item.id, title: item.label, description: item.description }))];
+}
+
+const PRESENTATION_SCHEMA = {
+  type: "object",
+  additionalProperties: false,
+  required: ["system", "theme", "layout", "typography", "density", "mediaPlacement"],
+  properties: {
+    system: { oneOf: catalogOptions(CARD_CATALOG.systems), description: "视觉系统：Editorial 偏叙事，Swiss 偏结构化证据。" },
+    theme: { oneOf: catalogOptions(CARD_CATALOG.themes), description: "受控主题和配色；必须属于所选视觉系统。" },
+    layout: { oneOf: catalogOptions(CARD_CATALOG.layouts), description: "受控布局；部分布局要求对应 blocks 或媒体。" },
+    typography: { oneOf: catalogOptions(CARD_CATALOG.typography), description: "系统字体角色，不接受字体名。" },
+    density: { oneOf: catalogOptions(CARD_CATALOG.densities), description: "卡片信息密度。" },
+    mediaPlacement: { oneOf: catalogOptions(CARD_CATALOG.mediaPlacements), description: "媒体位置；纯文本内容使用 auto。" },
+  },
+} as const;
+
+const COMPARISON_ITEM_SCHEMA = {
+  type: "object", additionalProperties: false, required: ["label", "value"],
+  properties: {
+    label: { type: "string", minLength: 1, maxLength: 32 },
+    value: { type: "string", minLength: 1, maxLength: 48 },
+    detail: { type: "string", minLength: 1, maxLength: 100 },
+  },
+} as const;
+
+const BLOCKS_SCHEMA = {
+  type: "array",
+  maxItems: 8,
+  description: "可选结构化内容区块；交互权限不能通过 blocks 表达。",
+  items: {
+    oneOf: [
+      { type: "object", additionalProperties: false, required: ["type", "label", "detail"], properties: { type: { const: "fact" }, label: { type: "string", minLength: 1, maxLength: 32 }, detail: { type: "string", minLength: 1, maxLength: 120 }, value: { type: "string", minLength: 1, maxLength: 32 } } },
+      { type: "object", additionalProperties: false, required: ["type", "label", "value"], properties: { type: { const: "metric" }, label: { type: "string", minLength: 1, maxLength: 24 }, value: { type: "string", minLength: 1, maxLength: 24 }, unit: { type: "string", minLength: 1, maxLength: 12 }, caption: { type: "string", minLength: 1, maxLength: 80 } } },
+      { type: "object", additionalProperties: false, required: ["type", "label", "phase"], properties: { type: { const: "step" }, label: { type: "string", minLength: 1, maxLength: 48 }, detail: { type: "string", minLength: 1, maxLength: 120 }, phase: { type: "string", enum: ["done", "current", "next"] } } },
+      { type: "object", additionalProperties: false, required: ["type", "text"], properties: { type: { const: "quote" }, text: { type: "string", minLength: 1, maxLength: 240 }, attribution: { type: "string", minLength: 1, maxLength: 80 } } },
+      { type: "object", additionalProperties: false, required: ["type", "left", "right"], properties: { type: { const: "comparison" }, label: { type: "string", minLength: 1, maxLength: 48 }, left: COMPARISON_ITEM_SCHEMA, right: COMPARISON_ITEM_SCHEMA } },
+    ],
+  },
+} as const;
+
+function redactCardBlocks(blocks: CardBlock[]): CardBlock[] {
+  return blocks.map((block): CardBlock => {
+    switch (block.type) {
+      case "fact": return { ...block, label: redactText(block.label, 32), detail: redactText(block.detail, 120), ...(block.value ? { value: redactText(block.value, 32) } : {}) };
+      case "metric": return { ...block, label: redactText(block.label, 24), value: redactText(block.value, 24), ...(block.unit ? { unit: redactText(block.unit, 12) } : {}), ...(block.caption ? { caption: redactText(block.caption, 80) } : {}) };
+      case "step": return { ...block, label: redactText(block.label, 48), ...(block.detail ? { detail: redactText(block.detail, 120) } : {}) };
+      case "quote": return { ...block, text: redactText(block.text, 240), ...(block.attribution ? { attribution: redactText(block.attribution, 80) } : {}) };
+      case "comparison": return {
+        ...block,
+        ...(block.label ? { label: redactText(block.label, 48) } : {}),
+        left: { ...block.left, label: redactText(block.left.label, 32), value: redactText(block.left.value, 48), ...(block.left.detail ? { detail: redactText(block.left.detail, 100) } : {}) },
+        right: { ...block.right, label: redactText(block.right.label, 32), value: redactText(block.right.value, 48), ...(block.right.detail ? { detail: redactText(block.right.detail, 100) } : {}) },
+      };
+    }
+  });
+}
 
 const MATERIAL_FORMATS: Record<string, { kind: Material["kind"]; mimeType: string; label: string }> = {
   ".jpg": { kind: "image", mimeType: "image/jpeg", label: "图片" },
@@ -70,14 +133,15 @@ export function toolDefinitions() {
       inputSchema: {
         type: "object",
         additionalProperties: false,
-        required: ["task_id", "kind", "template", "headline", "takeaway", "highlights", "dedupe_key"],
+        required: ["task_id", "kind", "presentation", "headline", "takeaway", "highlights", "dedupe_key"],
         properties: {
           task_id: { type: "string", minLength: 1, maxLength: 160, description: "本次任务的稳定标识；同一任务后续帖子保持一致。" },
           kind: { type: "string", enum: ["progress", "decision", "attention", "result", "failure"], description: "progress 仅用于已有可检查产物或验证证据的阶段性交付。" },
-          template: { type: "string", enum: ["paper", "grid", "sticky", "marker", "poster"], description: "选择有限的文字卡模板；不能传颜色、字体或 CSS。" },
+          presentation: PRESENTATION_SCHEMA,
           headline: { type: "string", minLength: 1, maxLength: 72, description: "直接表达已经发生的结果，禁止使用“阶段进展”等空标题。" },
           takeaway: { type: "string", minLength: 1, maxLength: 320, description: "用一到两句话解释为什么这件事值得用户现在读。" },
           highlights: { type: "array", maxItems: 3, items: { type: "string", minLength: 1, maxLength: 100 }, description: "最多三条可验证事实，每条只表达一件事。" },
+          blocks: BLOCKS_SCHEMA,
           proof: { type: "string", minLength: 1, maxLength: 160, description: "可选的一项测试、检查或一手证据，不得粘贴原始日志；纯文本 progress 必须提供。" },
           content: {
             description: "可选的独立媒体卡。文本卡省略或传 {type:'text'}；图片组、视频、文档只引用已注册 material id。",
@@ -156,6 +220,13 @@ export class AgentToolService {
     }
     const session = this.resolveSession(request, input.task_id);
     const now = new Date().toISOString();
+    const blocks = redactCardBlocks(input.blocks);
+    const presentation = resolveCardPresentation({
+      kind: input.kind,
+      presentation: input.presentation,
+      blocks,
+      content: input.content ?? { type: "text" },
+    });
     const post: FeedPost = {
       id: uuidV7(),
       projectId: session.projectId ?? null,
@@ -164,10 +235,11 @@ export class AgentToolService {
       agentId: request.provider,
       sessionId: session.id,
       kind: input.kind,
-      template: input.template,
+      presentation,
       headline: redactText(input.headline, 72),
       takeaway: redactText(input.takeaway, 320),
       highlights: input.highlights.map((highlight) => redactText(highlight, 100)),
+      blocks,
       ...(input.proof ? { proof: redactText(input.proof, 160) } : {}),
       ...(input.content ? { content: input.content } : {}),
       dedupeKey: input.dedupe_key,

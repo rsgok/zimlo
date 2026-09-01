@@ -226,7 +226,7 @@ final class PhoneSetupRulesTests: XCTestCase {
     func testMacDownloadUsesStableReleaseRedirect() {
         XCTAssertEqual(
             PhoneSetupRules.macDownloadURL.absoluteString,
-            "https://zimlo-cloud.zimlo.workers.dev/releases/macos/download"
+            "https://cloud.zimlo.app/releases/macos/download"
         )
     }
 }
@@ -440,8 +440,9 @@ final class OutboxFlowTests: XCTestCase {
     private func makePost(id: String) -> FeedPost {
         FeedPost(
             id: id, projectId: nil, taskId: "t1", runId: "r1", agentId: "a1",
-            sessionId: "s1", kind: "progress", template: "", headline: "h",
-            takeaway: "t", highlights: [], proof: nil, dedupeKey: "",
+            sessionId: "s1", kind: "progress",
+            presentation: CardPresentation(system: "swiss", theme: "lemon_green", layout: "status_board", typography: "sans", density: "balanced", mediaPlacement: "none"),
+            headline: "h", takeaway: "t", highlights: [], blocks: [], proof: nil, dedupeKey: "",
             source: "test", createdAt: "2026-07-20T10:00:00.000Z"
         )
     }
@@ -636,8 +637,9 @@ final class FeedCohortRulesTests: XCTestCase {
     private func entry(id: String, unread: Bool, needsAction: Bool, settled: Bool = false) -> FeedEntry {
         let post = FeedPost(
             id: id, projectId: nil, taskId: "t-\(id)", runId: "r1", agentId: "a1",
-            sessionId: "s1", kind: "result", template: "paper", headline: id,
-            takeaway: "", highlights: [], proof: nil, dedupeKey: id,
+            sessionId: "s1", kind: "result",
+            presentation: CardPresentation(system: "editorial", theme: "ink_classic", layout: "field_note", typography: "serif", density: "balanced", mediaPlacement: "none"),
+            headline: id, takeaway: "", highlights: [], blocks: [], proof: nil, dedupeKey: id,
             source: "test", createdAt: "2026-07-20T10:00:00.000Z"
         )
         return FeedEntry(
@@ -849,8 +851,9 @@ final class TaskDirectoryProjectionTests: XCTestCase {
     private func post(id: String, projectID: String, createdAt: String) -> FeedPost {
         FeedPost(
             id: id, projectId: projectID, taskId: "task-\(id)", runId: "run-\(id)",
-            agentId: "agent", sessionId: "s1", kind: "progress", template: "paper",
-            headline: id, takeaway: id, highlights: [], proof: nil,
+            agentId: "agent", sessionId: "s1", kind: "progress",
+            presentation: CardPresentation(system: "swiss", theme: "lemon_green", layout: "status_board", typography: "sans", density: "balanced", mediaPlacement: "none"),
+            headline: id, takeaway: id, highlights: [], blocks: [], proof: nil,
             dedupeKey: id, source: "test", createdAt: createdAt
         )
     }

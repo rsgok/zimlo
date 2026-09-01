@@ -3,7 +3,7 @@ import { chmodSync, existsSync, mkdirSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { redactText, redactUnknown } from "@zimlo/adapters";
-import { FEATURE_CAPABILITIES, USER_AVATAR_IDS } from "@zimlo/protocol";
+import { CardBlockSchema, FEATURE_CAPABILITIES, ResolvedCardPresentationSchema, USER_AVATAR_IDS } from "@zimlo/protocol";
 import type {
   ApprovalCategory,
   FeedCard,
@@ -30,13 +30,12 @@ import { sanitizeEventPayload } from "./sanitization.js";
 import {
   actionFromRow,
   cardFromRow,
-  defaultTemplate,
+  defaultPresentation,
   deviceFromRow,
   eventFromRow,
   feedPostFromRow,
   json,
   materialFromRow,
-  normalizeTemplate,
   notificationSettingsFromRow,
   pushDeviceFromRow,
   sessionFromRow,
@@ -47,6 +46,7 @@ import {
   type DeviceRecord,
   type DeviceRow,
   type StoredFeedContentV2,
+  type StoredFeedContentV3,
 } from "./store-codecs.js";
 import { initializeStoreSchema, migrateNotificationDeliveryPolicy } from "./store-schema.js";
 
@@ -125,6 +125,7 @@ export class ZimloStore {
     this.cleanupEphemeralProjects();
     this.backfillAgentAvatars();
     this.migrateFeedV2();
+    this.migrateFeedV3();
     this.migrateInteractionV3();
     this.migrateNotificationResults();
     migrateNotificationDeliveryPolicy(this.database);
@@ -303,7 +304,7 @@ export class ZimloStore {
         const updateContent = this.database.prepare("UPDATE feed_posts SET content_json = ? WHERE id = ?");
         for (const post of legacyPosts) {
           const content: StoredFeedContentV2 = {
-            template: defaultTemplate(String(post.kind)),
+            template: "paper",
             headline: String(post.title).slice(0, 72),
             takeaway: String(post.body).slice(0, 320),
             highlights: [],
@@ -315,6 +316,48 @@ export class ZimloStore {
         INSERT INTO metadata(key, value) VALUES (?, '1')
         ON CONFLICT(key) DO UPDATE SET value = excluded.value
       `).run(migrationKey);
+      this.database.exec("COMMIT");
+    } catch (error) {
+      this.database.exec("ROLLBACK");
+      throw error;
+    }
+  }
+
+  private migrateFeedV3(): void {
+    const migrationKey = "feed_card_presentation_v3";
+    if (this.getMetadata(migrationKey) === "1") return;
+    this.database.exec("BEGIN IMMEDIATE");
+    try {
+      const posts = this.database.prepare("SELECT id, kind, title, body, content_json FROM feed_posts").all() as Array<Record<string, unknown>>;
+      const update = this.database.prepare("UPDATE feed_posts SET content_json = ?, title = ?, body = ? WHERE id = ?");
+      for (const post of posts) {
+        let raw: Record<string, unknown> = {};
+        try {
+          raw = post.content_json ? JSON.parse(String(post.content_json)) as Record<string, unknown> : {};
+        } catch {
+          // Invalid local beta content is replaced with a safe, readable card.
+        }
+        const content = raw.content && typeof raw.content === "object" ? raw.content as StoredFeedContentV3["content"] : { type: "text" as const };
+        const parsedBlocks = CardBlockSchema.array().max(8).safeParse(raw.blocks);
+        const blocks = parsedBlocks.success ? parsedBlocks.data : [];
+        const parsedPresentation = ResolvedCardPresentationSchema.safeParse(raw.presentation);
+        const presentation = parsedPresentation.success
+          ? parsedPresentation.data
+          : defaultPresentation(String(post.kind), content, blocks);
+        const migrated: StoredFeedContentV3 = {
+          presentation,
+          headline: redactText(typeof raw.headline === "string" ? raw.headline : String(post.title), 72),
+          takeaway: redactText(typeof raw.takeaway === "string" ? raw.takeaway : String(post.body), 320),
+          highlights: Array.isArray(raw.highlights)
+            ? raw.highlights.filter((value): value is string => typeof value === "string").slice(0, 3).map((value) => redactText(value, 100))
+            : [],
+          blocks,
+          ...(typeof raw.proof === "string" && raw.proof ? { proof: redactText(raw.proof, 160) } : {}),
+          ...(content ? { content } : {}),
+        };
+        update.run(JSON.stringify(migrated), migrated.headline, migrated.takeaway, String(post.id));
+      }
+      this.database.prepare("INSERT OR REPLACE INTO metadata(key, value) VALUES (?, '1')").run(migrationKey);
       this.database.exec("COMMIT");
     } catch (error) {
       this.database.exec("ROLLBACK");
@@ -356,7 +399,7 @@ export class ZimloStore {
   private scrubStoredContent(): void {
     const key = "content_scrub_version";
     const current = this.database.prepare("SELECT value FROM metadata WHERE key = ?").get(key) as { value: string } | undefined;
-    if (Number(current?.value ?? 0) >= 3) return;
+    if (Number(current?.value ?? 0) >= 4) return;
     this.database.exec("BEGIN IMMEDIATE");
     try {
       const events = this.database.prepare("SELECT sequence, payload_json FROM events").all() as Array<{ sequence: number; payload_json: string }>;
@@ -377,18 +420,22 @@ export class ZimloStore {
       const updatePost = this.database.prepare("UPDATE feed_posts SET content_json = ?, title = ?, body = ? WHERE id = ?");
       for (const post of posts) {
         try {
-          const content = json<StoredFeedContentV2>(post.content_json);
-          const sanitized: StoredFeedContentV2 = {
-            template: normalizeTemplate(content.template, post.kind),
+          const content = json<StoredFeedContentV3>(post.content_json);
+          const parsedBlocks = CardBlockSchema.array().max(8).safeParse(content.blocks);
+          const blocks = parsedBlocks.success ? parsedBlocks.data : [];
+          const parsedPresentation = ResolvedCardPresentationSchema.safeParse(content.presentation);
+          const sanitized: StoredFeedContentV3 = {
+            presentation: parsedPresentation.success ? parsedPresentation.data : defaultPresentation(post.kind, content.content, blocks),
             headline: redactText(content.headline, 72),
             takeaway: redactText(content.takeaway, 320),
             highlights: (content.highlights ?? []).slice(0, 3).map((highlight) => redactText(highlight, 100)),
+            blocks,
             ...(content.proof ? { proof: redactText(content.proof, 160) } : {}),
             ...(content.content ? { content: content.content } : {}),
           };
           updatePost.run(JSON.stringify(sanitized), sanitized.headline, sanitized.takeaway, post.id);
         } catch {
-          const fallback: StoredFeedContentV2 = { template: "paper", headline: "历史帖子", takeaway: "历史内容无法安全读取。", highlights: [] };
+          const fallback: StoredFeedContentV3 = { presentation: defaultPresentation(post.kind), headline: "历史帖子", takeaway: "历史内容无法安全读取。", highlights: [], blocks: [] };
           updatePost.run(JSON.stringify(fallback), fallback.headline, fallback.takeaway, post.id);
         }
       }
@@ -415,7 +462,7 @@ export class ZimloStore {
         }
       }
 
-      this.database.prepare("INSERT OR REPLACE INTO metadata(key, value) VALUES (?, ?)").run(key, "3");
+      this.database.prepare("INSERT OR REPLACE INTO metadata(key, value) VALUES (?, ?)").run(key, "4");
       this.database.exec("COMMIT");
     } catch (error) {
       this.database.exec("ROLLBACK");
@@ -670,13 +717,14 @@ export class ZimloStore {
           post.dedupeKey,
           post.createdAt,
           JSON.stringify({
-            template: post.template,
+            presentation: post.presentation,
             headline: post.headline,
             takeaway: post.takeaway,
             highlights: post.highlights,
+            blocks: post.blocks,
             ...(post.proof ? { proof: post.proof } : {}),
             ...(post.content ? { content: post.content } : {}),
-          } satisfies StoredFeedContentV2),
+          } satisfies StoredFeedContentV3),
           id,
         );
         return { post: { ...post, id, projectId }, inserted: false, coalesced: true };
@@ -701,13 +749,14 @@ export class ZimloStore {
       post.source,
       post.createdAt,
       JSON.stringify({
-        template: post.template,
+        presentation: post.presentation,
         headline: post.headline,
         takeaway: post.takeaway,
         highlights: post.highlights,
+        blocks: post.blocks,
         ...(post.proof ? { proof: post.proof } : {}),
         ...(post.content ? { content: post.content } : {}),
-      } satisfies StoredFeedContentV2),
+      } satisfies StoredFeedContentV3),
     );
     if (result.changes > 0) {
       if (projectId) {

@@ -1,0 +1,43 @@
+{
+  "version": 1,
+  "pair": {
+    "bridgePrivateKey": "AQIDBAUGBwgJCgsMDQ4PEBESExQVFhcYGRobHB0eHyA",
+    "bridgePublicKey": "B6N8vBQgk8i3VdwbEOhstCY3StFqqFPtC9_AsrhtHHw",
+    "clientPrivateKey": "ZWZnaGlqa2xtbm9wcXJzdHV2d3h5ent8fX5_gIGCg4Q",
+    "clientPublicKey": "VxR2nRFr92Q2rnS8eT0sMK0ZA8WaxSc4BcfiaYtBDDY",
+    "secret": "ycrLzM3Oz9DR0tPU1dbX2Nna29zd3t_g4eLj5OXm5-g",
+    "pairKey": "_NQusH2nI-RY9TCkbhNZ_XmAr70QrgT6CSwZj5v2XQo",
+    "deviceKey": "IJal5IyoHu6SA035QGZstzbbAzNE6OIBrqgDp_J-ln4",
+    "proofMessage": "client:pair",
+    "proof": "8ViTUHPTqEtQn7LcuaIs_upIbrgN626CNE4GhEJd5Dg"
+  },
+  "frame": {
+    "deviceKey": "IJal5IyoHu6SA035QGZstzbbAzNE6OIBrqgDp_J-ln4",
+    "clientNonce": "HyAhIiMkJSYnKCkqKywtLi8wMTIzNDU2",
+    "serverNonce": "R0hJSktMTU5PUFFSU1RVVldYWVpbXF1e",
+    "clientTxKey": "yI9ys80Wpir88y0zj1ZXwiHtZfS50sbLam9yxGi1NQs",
+    "serverTxKey": "jWy3RNTVldV6Rs0Rh6Y2P7wMW__Oy4C3Kozf-D1jVn8",
+    "counter": 7,
+    "aad": "zimlo-ws-v1:device-a",
+    "value": {
+      "type": "snapshot.request",
+      "afterSequence": 42
+    },
+    "ciphertext": "qbjN_MsI4SyKDKWDogG0VUY63dVSYlfv1qjTcb6rXa5Skhb4p6qClLw7CoKFYqis-nP0js26QZBxPgFfM1A"
+  },
+  "pushRoute": {
+    "privateKey": "CwwNDg8QERITFBUWFxgZGhscHR4fICEiIyQlJicoKSo",
+    "publicKey": "40_dm-KAxRwa8pQJbdsGFVfkIeTjAukxn4b-2FqZ4FM",
+    "ephemeralPrivateKey": "l5iZmpucnZ6foKGio6SlpqeoqaqrrK2ur7CxsrO0tbY",
+    "envelope": {
+      "ephemeralPublicKey": "FThkYS9cXUf2hNZomaneT3wwtfdKjr1plkIhK84A2Tg",
+      "nonce": "W1xdXl9gYWJjZGVm",
+      "ciphertext": "aiS3zLLYkgz0Fh6mS6aSS8_qtRCNft9zJ9tvvy7mcNSKlTC1Lz5MEeGFdyuPeGfSndXM9wu8H2DxNF__23IGFpJ_Tv8pOOXIymBm"
+    },
+    "value": {
+      "version": 1,
+      "sessionId": "session-a",
+      "actionId": "action-a"
+    }
+  }
+}

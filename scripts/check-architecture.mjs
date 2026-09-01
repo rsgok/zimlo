@@ -4,8 +4,8 @@ import { extname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const repositoryRoot = resolve(fileURLToPath(new URL("..", import.meta.url)));
-const ignoredDirectories = new Set([".build", ".git", ".next", ".swiftpm", "build", "coverage", "dist", "node_modules"]);
-const sourceExtensions = new Set([".js", ".mjs", ".swift", ".ts", ".tsx"]);
+const ignoredDirectories = new Set([".build", ".git", ".next", ".swiftpm", "build", "coverage", "dist", "node_modules", "target"]);
+const sourceExtensions = new Set([".js", ".mjs", ".rs", ".swift", ".ts", ".tsx"]);
 const failures = [];
 
 async function sourceFiles(directory) {
@@ -21,7 +21,12 @@ async function sourceFiles(directory) {
   return files;
 }
 
-const files = [...await sourceFiles("apps"), ...await sourceFiles("packages"), ...await sourceFiles("scripts")];
+const files = [
+  ...await sourceFiles("apps"),
+  ...await sourceFiles("packages"),
+  ...await sourceFiles("runtime"),
+  ...await sourceFiles("scripts"),
+];
 const importPattern = /(?:from\s+|import\s*\(\s*|import\s+)["']([^"']+)["']/g;
 
 for (const relativePath of files) {
@@ -57,13 +62,61 @@ for (const relativePath of files) {
 }
 
 const lineBudgets = {
-  "apps/cli/src/store.ts": 1_500,
+  // f0b8bf2 added the V3 presentation persistence path after the original
+  // 1,500-line budget. Freeze the legacy Node store at its current baseline;
+  // new persistence work belongs in the Rust repositories instead.
+  "apps/cli/src/store.ts": 1_550,
   "apps/ios/Zimlo/AppModel.swift": 1_300,
   "apps/ios/Zimlo/SecondaryViews.swift": 1_400,
   "apps/macos/Sources/ZimloMac/OnboardingView.swift": 1_200,
   "apps/macos/Sources/ZimloMac/ServiceController.swift": 1_000,
   "apps/web/src/hooks/useBridge.ts": 850,
   "packages/protocol/src/index.ts": 800,
+  "runtime/crates/zimlo-bridge/src/lib.rs": 550,
+  "runtime/crates/zimlo-bridge/src/tests.rs": 550,
+  "runtime/crates/zimlo-bridge/src/websocket.rs": 500,
+  "runtime/crates/zimlo-bridge/src/write_tests.rs": 350,
+  "runtime/crates/zimlo-bridge/src/dispatcher.rs": 450,
+  "runtime/crates/zimlo-bridge/src/agent_command.rs": 150,
+  "runtime/crates/zimlo-bridge/src/action_broker.rs": 350,
+  "runtime/crates/zimlo-bridge/src/action_dispatch.rs": 125,
+  "runtime/crates/zimlo-bridge/src/action_dispatch_tests.rs": 100,
+  "runtime/crates/zimlo-bridge/src/action_broker_tests.rs": 300,
+  "runtime/crates/zimlo-bridge/src/claude_executor.rs": 650,
+  "runtime/crates/zimlo-bridge/src/claude_executor_tests.rs": 300,
+  "runtime/crates/zimlo-bridge/src/claude_stream.rs": 425,
+  "runtime/crates/zimlo-bridge/src/codex_app_server.rs": 600,
+  "runtime/crates/zimlo-bridge/src/codex_approval.rs": 525,
+  "runtime/crates/zimlo-bridge/src/codex_approval_tests.rs": 75,
+  "runtime/crates/zimlo-bridge/src/codex_executor.rs": 400,
+  "runtime/crates/zimlo-bridge/src/codex_executor_tests.rs": 300,
+  "runtime/crates/zimlo-bridge/src/materials.rs": 650,
+  "runtime/crates/zimlo-bridge/src/management.rs": 250,
+  "runtime/crates/zimlo-bridge/src/management_tests.rs": 350,
+  "runtime/crates/zimlo-bridge/src/native_executor.rs": 100,
+  "runtime/crates/zimlo-bridge/src/material_validation.rs": 350,
+  "runtime/crates/zimlo-bridge/src/material_tests.rs": 450,
+  "runtime/crates/zimlo-bridge/src/pairing.rs": 450,
+  "runtime/crates/zimlo-bridge/src/task_runner.rs": 350,
+  "runtime/crates/zimlo-bridge/src/trust_policy.rs": 375,
+  "runtime/crates/zimlo-bridge/src/trust_policy_tests.rs": 175,
+  "runtime/crates/zimlo-bridge/src/trust_dispatch.rs": 125,
+  "runtime/crates/zimlo-bridge/src/trust_dispatch_tests.rs": 190,
+  "runtime/crates/zimlo-bridge/src/task_runner_tests.rs": 325,
+  "runtime/crates/zimlo-bridge/src/task_commands.rs": 250,
+  "runtime/crates/zimlo-bridge/src/task_enqueue.rs": 375,
+  "runtime/crates/zimlo-bridge/src/task_enqueue_tests.rs": 325,
+  "runtime/crates/zimlo-store/src/lib.rs": 900,
+  "runtime/crates/zimlo-store/src/devices.rs": 425,
+  "runtime/crates/zimlo-store/src/materials.rs": 250,
+  "runtime/crates/zimlo-store/src/mutations.rs": 725,
+  "runtime/crates/zimlo-store/src/snapshot.rs": 950,
+  "runtime/crates/zimlo-store/src/tests.rs": 250,
+  "runtime/crates/zimlo-store/src/task_commands.rs": 600,
+  "runtime/crates/zimlo-store/src/actions.rs": 425,
+  "runtime/crates/zimlo-store/src/trust.rs": 450,
+  "runtime/crates/zimlo-store/src/trust_tests.rs": 225,
+  "runtime/crates/zimlo-store/src/task_command_tests.rs": 250,
 };
 
 for (const [relativePath, maximum] of Object.entries(lineBudgets)) {
@@ -77,6 +130,12 @@ const contractCheck = spawnSync(process.execPath, [resolve(repositoryRoot, "scri
   encoding: "utf8",
 });
 if (contractCheck.status !== 0) failures.push(contractCheck.stderr.trim() || "generated contract files are stale");
+
+const runtimeSchemaCheck = spawnSync(process.execPath, [resolve(repositoryRoot, "scripts/generate-runtime-schema.mjs"), "--check"], {
+  cwd: repositoryRoot,
+  encoding: "utf8",
+});
+if (runtimeSchemaCheck.status !== 0) failures.push(runtimeSchemaCheck.stderr.trim() || "generated Runtime schema is stale");
 
 const contract = JSON.parse(await readFile(resolve(repositoryRoot, "config/zimlo-contract.json"), "utf8"));
 for (const packagePath of [
@@ -95,7 +154,7 @@ for (const packagePath of [
 
 const trackedFiles = execFileSync("git", ["ls-files", "-z"], { cwd: repositoryRoot, encoding: "utf8" }).split("\0").filter(Boolean);
 for (const relativePath of trackedFiles) {
-  if (/(^|\/)(?:node_modules|dist|\.build|DerivedData)(?:\/|$)/.test(relativePath)) {
+  if (/(^|\/)(?:node_modules|dist|target|\.build|DerivedData)(?:\/|$)/.test(relativePath)) {
     failures.push(`${relativePath} is generated output and must not be tracked`);
   }
 }

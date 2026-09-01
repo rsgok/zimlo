@@ -1,0 +1,17 @@
+[package]
+name = "zimlo-cli"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "zimlo"
+path = "src/main.rs"
+
+[dependencies]
+clap.workspace = true
+tokio.workspace = true
+zimlo-bridge = { path = "../zimlo-bridge" }
+zimlo-protocol = { path = "../zimlo-protocol" }
+zimlo-store = { path = "../zimlo-store" }

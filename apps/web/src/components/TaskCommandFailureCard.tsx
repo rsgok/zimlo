@@ -9,7 +9,7 @@ interface TaskCommandFailureCardProps {
 export function TaskCommandFailureCard({ command, send }: TaskCommandFailureCardProps) {
   const failed = command.state === "failed";
   return (
-    <article className={`feed-post ${failed ? "post-failure template-marker is-attention" : "post-progress template-paper"} command-failure-card`}>
+    <article className={`feed-post ${failed ? "post-failure system-attention-card is-attention" : "post-progress system-neutral-card"} command-failure-card`}>
       <div className="post-topline">
         <div><span className="post-kind">{failed ? "新任务启动失败" : "正在启动"}</span><span className="post-author">ZIMLO</span></div>
       </div>

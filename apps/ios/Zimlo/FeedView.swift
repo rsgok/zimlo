@@ -237,84 +237,219 @@ private struct PostCard: View {
         guard let content = post.content, content.type != "text" else { return nil }
         return content
     }
-    private var immersiveMedia: FeedContent? {
-        guard let mediaContent, ["image_album", "video"].contains(mediaContent.type) else { return nil }
-        return mediaContent
+    private var palette: ZimloCardPalette { ZimloCardPalette(theme: post.presentation.theme) }
+    private var isFullBleed: Bool { post.presentation.mediaPlacement == "full_bleed" && mediaContent != nil }
+    private var cardPadding: CGFloat {
+        switch post.presentation.density {
+        case "airy": 28
+        case "compact": 18
+        default: 22
+        }
     }
-    private var isImmersiveMedia: Bool { immersiveMedia != nil }
+    private var titleFont: Font {
+        let design: Font.Design = switch post.presentation.typography {
+        case "serif": .serif
+        case "mono": .monospaced
+        case "rounded": .rounded
+        default: .default
+        }
+        return .system(.largeTitle, design: design).weight(post.presentation.system == "swiss" ? .black : .bold)
+    }
+
     var body: some View {
-        VStack(alignment: .leading, spacing: 0) {
-            HStack {
-                if let project {
-                    Button { model.openAgent(projectId: project.id) } label: {
-                        AgentAvatar(value: project.agentProfile.avatar, size: 22)
-                        Text(project.agentProfile.displayName).fontWeight(.semibold)
-                    }
-                } else {
-                    Text(post.agentId).fontWeight(.semibold)
+        ZStack {
+            if isFullBleed, let mediaContent {
+                FeedMaterialCard(model: model, content: mediaContent, fullBleed: true)
+                    .ignoresSafeArea()
+                LinearGradient(colors: [.black.opacity(0.54), .clear, .black.opacity(0.88)], startPoint: .top, endPoint: .bottom)
+            }
+            VStack(alignment: .leading, spacing: 0) {
+                header
+                Spacer(minLength: isFullBleed ? 110 : 18)
+                mainContent
+                Spacer(minLength: 16)
+                footer
+            }
+            .padding(cardPadding)
+        }
+        .foregroundStyle(isFullBleed ? Color.white : palette.ink)
+        .background(isFullBleed ? Color.black : palette.surface)
+        .clipShape(RoundedRectangle(cornerRadius: post.presentation.system == "swiss" ? 8 : ZRadius.card, style: .continuous))
+        .overlay {
+            RoundedRectangle(cornerRadius: post.presentation.system == "swiss" ? 8 : ZRadius.card, style: .continuous)
+                .stroke(isFullBleed ? Color.white.opacity(0.2) : palette.ink.opacity(0.22), lineWidth: post.presentation.system == "swiss" ? 2 : 1)
+        }
+        .shadow(color: post.presentation.system == "swiss" ? palette.accent : .clear, radius: 0, x: 6, y: 6)
+    }
+
+    private var header: some View {
+        HStack {
+            if let project {
+                Button { model.openAgent(projectId: project.id) } label: {
+                    AgentAvatar(value: project.agentProfile.avatar, size: 22)
+                    Text(project.agentProfile.displayName).fontWeight(.semibold)
                 }
-                Spacer()
-                TimelineView(.periodic(from: .now, by: 30)) { _ in Text(relative(post.createdAt)) }
+            } else {
+                Text(post.agentId).fontWeight(.semibold)
             }
-            .font(ZFont.footnote).foregroundStyle(isImmersiveMedia ? Color.white.opacity(0.7) : ZColor.muted).padding(.top, 22)
+            Spacer()
+            TimelineView(.periodic(from: .now, by: 30)) { _ in Text(relative(post.createdAt)) }
+        }
+        .font(ZFont.footnote)
+        .foregroundStyle(isFullBleed ? Color.white.opacity(0.72) : palette.ink.opacity(0.62))
+    }
 
-            Spacer(minLength: mediaContent == nil ? 28 : isImmersiveMedia ? 120 : 12)
-
-            if let mediaContent, !isImmersiveMedia {
+    @ViewBuilder private var mainContent: some View {
+        if post.presentation.mediaPlacement == "split", let mediaContent {
+            HStack(alignment: .center, spacing: 16) {
                 FeedMaterialCard(model: model, content: mediaContent)
+                    .frame(maxWidth: .infinity)
+                copy
+                    .frame(maxWidth: .infinity, alignment: .leading)
             }
+        } else {
+            VStack(alignment: .leading, spacing: 0) {
+                if !isFullBleed, let mediaContent {
+                    FeedMaterialCard(model: model, content: mediaContent)
+                        .frame(maxHeight: post.presentation.mediaPlacement == "inline" ? 330 : 240)
+                        .padding(.bottom, 16)
+                }
+                copy
+            }
+        }
+    }
 
+    private var copy: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            Text("\(post.kind.uppercased()) / \(post.presentation.system.uppercased())")
+                .font(ZFont.caption2.monospaced().weight(.black))
+                .tracking(1.2)
+                .foregroundStyle(isFullBleed ? Color.white.opacity(0.78) : palette.accent)
+                .padding(.bottom, 10)
             Text(post.headline)
-                .font(mediaContent == nil ? ZFont.hero : isImmersiveMedia ? ZFont.title : ZFont.title)
-                .foregroundStyle(isImmersiveMedia ? Color.white.opacity(0.9) : ZColor.ink)
-                .lineSpacing(0)
-                .lineLimit(mediaContent == nil ? 3 : isImmersiveMedia ? 2 : 1).minimumScaleFactor(0.82)
-                .padding(.top, mediaContent == nil ? 12 : isImmersiveMedia ? 0 : 10)
+                .font(titleFont)
+                .foregroundStyle(isFullBleed ? Color.white : palette.ink)
+                .lineSpacing(-1)
+                .lineLimit(post.presentation.density == "compact" ? 2 : 3)
+                .minimumScaleFactor(0.72)
             Text(post.takeaway)
                 .font(ZFont.body)
-                .foregroundStyle(isImmersiveMedia ? Color.white.opacity(0.62) : ZColor.ink.opacity(0.7))
-                .lineLimit(mediaContent == nil ? 4 : isImmersiveMedia ? 3 : 2).lineSpacing(mediaContent == nil ? 4 : 2)
-                .padding(.top, mediaContent == nil ? 18 : 6)
-            if mediaContent == nil, !post.highlights.isEmpty {
-                VStack(alignment: .leading, spacing: 10) {
+                .foregroundStyle(isFullBleed ? Color.white.opacity(0.74) : palette.ink.opacity(0.72))
+                .lineLimit(post.presentation.density == "compact" ? 3 : 5)
+                .lineSpacing(4)
+                .padding(.top, 14)
+            CardBlocksView(blocks: post.blocks, palette: palette, fullBleed: isFullBleed, layout: post.presentation.layout)
+                .padding(.top, post.blocks.isEmpty ? 0 : 16)
+            if !post.highlights.isEmpty {
+                VStack(alignment: .leading, spacing: 8) {
                     ForEach(post.highlights.prefix(2), id: \.self) { fact in
-                        HStack(alignment: .top, spacing: 10) {
-                            Image(systemName: "checkmark").fontWeight(.black).foregroundStyle(ZColor.sageText)
+                        HStack(alignment: .top, spacing: 9) {
+                            Image(systemName: "checkmark").fontWeight(.black).foregroundStyle(isFullBleed ? Color.white : palette.accent)
                             Text(fact).font(ZFont.callout.weight(.semibold)).lineLimit(2)
                         }
                     }
-                }.padding(.top, 18)
-            }
-
-            Spacer(minLength: mediaContent == nil ? 22 : isImmersiveMedia ? 10 : 8)
-
-            if historical || session == nil {
-                HStack(spacing: 8) {
-                    Text(historical ? "历史内容" : "新任务上下文")
-                    Spacer()
                 }
-                .font(ZFont.footnote)
-                .foregroundStyle(ZColor.ink.opacity(0.72))
-                .padding(.vertical, 16)
+                .foregroundStyle(isFullBleed ? Color.white.opacity(0.82) : palette.ink.opacity(0.82))
+                .padding(.top, 15)
             }
         }
-        .padding(.horizontal, 20)
-        .foregroundStyle(isImmersiveMedia ? Color.white : ZColor.ink)
-        .background(
-            ZStack(alignment: .top) {
-                if let immersiveMedia {
-                    FeedMaterialCard(model: model, content: immersiveMedia, fullBleed: true)
-                    LinearGradient(
-                        colors: [.clear, .black.opacity(0.12), .black.opacity(0.9)],
-                        startPoint: .top,
-                        endPoint: .bottom
-                    )
-                } else {
-                    ZColor.paper
-                }
+    }
+
+    private var footer: some View {
+        HStack(alignment: .bottom, spacing: 10) {
+            if let proof = post.proof, !proof.isEmpty {
+                Label(proof, systemImage: "checkmark.seal.fill")
+                    .font(ZFont.caption2.monospaced().weight(.bold))
+                    .lineLimit(2)
             }
-        )
-        .clipShape(RoundedRectangle(cornerRadius: ZRadius.card, style: .continuous))
+            Spacer()
+            if historical || session == nil {
+                Text(historical ? "历史内容" : "新任务上下文").font(ZFont.footnote.weight(.bold))
+            } else {
+                Text("查看任务 →").font(ZFont.footnote.weight(.black))
+            }
+        }
+        .foregroundStyle(isFullBleed ? Color.white.opacity(0.76) : palette.ink.opacity(0.68))
+        .padding(.top, 12)
+        .overlay(alignment: .top) { Rectangle().fill(isFullBleed ? Color.white.opacity(0.22) : palette.ink.opacity(0.18)).frame(height: 1) }
+    }
+}
+
+private struct CardBlocksView: View {
+    let blocks: [CardBlock]
+    let palette: ZimloCardPalette
+    let fullBleed: Bool
+    let layout: String
+
+    private var foreground: Color { fullBleed ? .white : palette.ink }
+
+    var body: some View {
+        if layout == "metric_grid" {
+            LazyVGrid(columns: [.init(.flexible()), .init(.flexible())], spacing: 0) { blockViews }
+        } else {
+            VStack(alignment: .leading, spacing: 0) { blockViews }
+        }
+    }
+
+    @ViewBuilder private var blockViews: some View {
+        ForEach(Array(blocks.enumerated()), id: \.offset) { index, block in
+            switch block.type {
+            case "metric":
+                VStack(alignment: .leading, spacing: 8) {
+                    Text(block.label ?? "METRIC").font(ZFont.caption2.monospaced().weight(.black))
+                    Spacer(minLength: 10)
+                    Text((block.value ?? "—") + (block.unit.map { " \($0)" } ?? ""))
+                        .font(.system(.title, design: .rounded).weight(.black)).minimumScaleFactor(0.65)
+                    if let caption = block.caption { Text(caption).font(ZFont.caption2).opacity(0.62) }
+                }
+                .padding(12).frame(maxWidth: .infinity, minHeight: 104, alignment: .leading)
+                .background(index == 0 && !fullBleed ? palette.accent : foreground.opacity(0.06))
+                .overlay(Rectangle().stroke(foreground.opacity(0.5), lineWidth: 1))
+            case "quote":
+                VStack(alignment: .leading, spacing: 9) {
+                    Text("“\(block.text ?? "")”").font(ZFont.title2).fontWeight(.bold)
+                    if let attribution = block.attribution { Text("— \(attribution)").font(ZFont.caption) }
+                }
+                .padding(.leading, 14).overlay(alignment: .leading) { Rectangle().fill(fullBleed ? .white : palette.accent).frame(width: 5) }
+            case "comparison":
+                HStack(spacing: 0) {
+                    comparison(block.left, highlighted: false)
+                    comparison(block.right, highlighted: true)
+                }
+            case "step":
+                HStack(alignment: .top, spacing: 11) {
+                    Text(String(format: "%02d", index + 1)).font(ZFont.caption2.monospaced().weight(.black)).foregroundStyle(fullBleed ? .white : palette.accent)
+                    VStack(alignment: .leading, spacing: 3) {
+                        Text(block.label ?? "").font(ZFont.callout.weight(.bold))
+                        if let detail = block.detail { Text(detail).font(ZFont.caption2).opacity(0.64) }
+                    }
+                }
+                .padding(.vertical, 9).frame(maxWidth: .infinity, alignment: .leading)
+                .background(block.phase == "current" ? palette.accent : .clear)
+                .overlay(alignment: .top) { Rectangle().fill(foreground.opacity(0.2)).frame(height: 1) }
+            default:
+                HStack(alignment: .top) {
+                    VStack(alignment: .leading, spacing: 3) {
+                        Text(block.label ?? "FACT").font(ZFont.caption2.monospaced().weight(.black)).foregroundStyle(fullBleed ? .white : palette.accent)
+                        if let detail = block.detail { Text(detail).font(ZFont.caption2).opacity(0.64) }
+                    }
+                    Spacer()
+                    if let value = block.value { Text(value).font(ZFont.headline) }
+                }
+                .padding(.vertical, 9).overlay(alignment: .top) { Rectangle().fill(foreground.opacity(0.2)).frame(height: 1) }
+            }
+        }
+    }
+
+    private func comparison(_ item: CardComparisonItem?, highlighted: Bool) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text(item?.label ?? "—").font(ZFont.caption2.monospaced().weight(.black))
+            Text(item?.value ?? "—").font(ZFont.headline).fixedSize(horizontal: false, vertical: true)
+            if let detail = item?.detail { Text(detail).font(ZFont.caption2).opacity(0.64) }
+        }
+        .padding(11).frame(maxWidth: .infinity, alignment: .leading)
+        .background(highlighted && !fullBleed ? palette.accent : foreground.opacity(0.04))
+        .overlay(Rectangle().stroke(foreground.opacity(0.5), lineWidth: 1))
     }
 }
 

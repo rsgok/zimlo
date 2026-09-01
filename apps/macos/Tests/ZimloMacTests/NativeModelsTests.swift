@@ -237,6 +237,12 @@ final class NativeModelsTests: XCTestCase {
         ))
     }
 
+    func testFeedLayoutKeepsCardsNarrowAndOffViewportEdges() {
+        XCTAssertEqual(NativeFeedLayout.cardMinimumHeight(scrollViewportHeight: 640), 584)
+        XCTAssertEqual(NativeFeedLayout.cardMinimumHeight(scrollViewportHeight: 520), 500)
+        XCTAssertEqual(NativeFeedLayout.maximumCardWidth, 720)
+    }
+
     func testFeedMaterialPresentationUsesInlineImagesForAlbums() {
         let album = FeedContent(
             type: "image_album",
@@ -337,8 +343,9 @@ final class NativeModelsTests: XCTestCase {
     private func feedPost(id: String, kind: String, createdAt: String) -> FeedPost {
         FeedPost(
             id: id, hostId: nil, projectId: nil, taskId: "task-a", runId: "run-a",
-            agentId: "codex", sessionId: "session-a", kind: kind, template: "paper",
-            headline: "结果", takeaway: "结果已经可以查看。", highlights: [], proof: nil,
+            agentId: "codex", sessionId: "session-a", kind: kind,
+            presentation: CardPresentation(system: "editorial", theme: "ink_classic", layout: "field_note", typography: "serif", density: "balanced", mediaPlacement: "none"),
+            headline: "结果", takeaway: "结果已经可以查看。", highlights: [], blocks: [], proof: nil,
             content: nil, dedupeKey: id, source: "agent", createdAt: createdAt
         )
     }

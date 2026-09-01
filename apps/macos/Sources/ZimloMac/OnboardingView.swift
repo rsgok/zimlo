@@ -352,7 +352,8 @@ private struct CompleteStep: View {
         case .ready:
             service.completionSummary
         case .starting:
-            "正在确认本地 Bridge 和协议状态，确认完成后才能结束设置。"
+            service.runtimePreparationMessage
+                ?? "正在确认本地 Bridge 和协议状态，确认完成后才能结束设置。"
         case .stopping:
             "后台服务正在停止。请重新启动服务并通过检查后再完成设置。"
         case .manualStopped:

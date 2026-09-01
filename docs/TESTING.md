@@ -18,6 +18,8 @@ pnpm architecture:check
 pnpm test
 pnpm typecheck
 pnpm build
+pnpm runtime:check
+pnpm runtime:build:macos
 node apps/cli/dist/index.js doctor
 ```
 
@@ -25,11 +27,63 @@ node apps/cli/dist/index.js doctor
 macOS Swift package、`landing-page` 与 `work-report`，并在结束后恢复报告的已跟踪事实快照。协议或产品版本只修改
 `config/zimlo-contract.json`，随后运行 `pnpm contract:generate`；生成文件不允许手改。
 
+`pnpm runtime:check` 先确认从 Node `store-schema.ts` 生成的 SQLite bootstrap SQL 没有漂移，
+再执行 Rust 格式、Clippy（warnings 视为错误）与 workspace tests。
+Rust `zimlo-protocol` 直接读取 `packages/protocol/test-vectors`，逐 case 对拍现有 TS/iOS
+策略，并使用 `crypto.json` 对 X25519、HKDF、HMAC、XChaCha20-Poly1305 帧与 PushRoute
+执行跨语言逐字节兼容测试。`zimlo-store` 用独立线程拥有唯一 SQLite 连接，覆盖并发写入序列化、
+幂等事件、0600 权限、只读重开、独占写锁和重启恢复；Rust Bridge 还覆盖 loopback 限制、Node
+同形的完整 Snapshot 与 session events 响应，以及真实 TCP WebSocket 的鉴权、加密、防重放和
+变更广播。写模式测试另外对拍本地配对密码学、单次 token、设备落库、幂等写事务与未迁移云路径
+fail closed；Task Command 测试覆盖幂等入队、并发 CAS 抢占、取消/重试、崩溃不重复执行、执行失败
+脱敏、活跃 follow-up 延后和物料门禁。Claude 假 CLI 测试逐行对拍现有 2.1.207 fixture，验证创建与
+`--resume`、稳定 Session ID、事件入库、provider 隔离、非零退出和 managed Session 清理；假 Codex
+app-server 测试验证 initialize、thread/turn、命令审批、结构化输入、上游值映射、事件入库和进程清理；
+ActionBroker 测试覆盖确认短语、超时、幂等重放与 Runtime 重启后 fail closed。Material
+测试覆盖 loopback 导入、设备 HMAC、AES-GCM、格式与摘要校验、`0600` 落盘、Range 响应、重复注册
+和 Cloud transport 关闭。当前仍不会替换已发布的 Node Runtime。
+
+手工对读现有数据库时应先使用隔离的 `ZIMLO_HOME` fixture，然后运行：
+
+```bash
+cargo run --manifest-path runtime/Cargo.toml -p zimlo-cli -- start --port 4757 \
+  --database "/path/to/isolated/zimlo.db"
+curl http://127.0.0.1:4757/api/local/sessions/SESSION_ID/events
+curl http://127.0.0.1:4757/api/local/snapshot
+```
+
+手工验证写模式必须先停止 Node Bridge，并只使用可丢弃的隔离数据库：
+
+```bash
+cargo run --manifest-path runtime/Cargo.toml -p zimlo-cli -- start --port 4757 --lan \
+  --database "/path/to/isolated/zimlo.db" --write
+```
+
+`--write` 会取得 SQLite 独占锁并执行中断状态恢复；不要让 Node 与 Rust 同时写同一个数据库。
+构建 Node 包后，`pnpm runtime:smoke:write` 会构建 Rust debug binary、自动创建临时 Node 数据库，
+经真实 TCP 配对和加密 WebSocket 交给 Rust 独占写入，并使用 Node WebCrypto 生成 AES-GCM 物料
+交由 Rust 解密落盘；smoke 还会撤回 Node fixture 中的 queued Task Command、核验双加密回执，调用
+隔离的假 Claude binary 完成真实 WebSocket 创建与消息恢复；随后启动假 Codex app-server，通过同一
+加密 WebSocket 完成高风险审批与用户输入，再用 Node SQLite 只读重开核验命令、Action、
+Session/Event 状态和文件字节。
+
+Rust Bridge 的 WebSocket 端到端测试会启动真实 TCP listener，使用 Node/iOS 同形的设备凭据
+完成 `auth`/`auth.ok`，验证双向密钥、加密计数器和首个设备作用域 Snapshot；随后从另一条
+SQLite 连接写入数据，断言 3 秒内收到变更 Snapshot，并重放旧 counter 验证服务端以 1008
+关闭连接。默认只读模式的写命令返回 `runtime_read_only`；显式写模式放行已迁移的低风险命令与
+Codex / Claude 托管任务。Codex 高风险审批只有在设备具备审批权限、确认短语正确且活跃 resolver
+存在时才回传；项目内读取/搜索/测试/构建可由 `safe_automation` 自动放行，但复合命令、路径逃逸、
+写入和联网会 fail closed。Cloud Material 等未迁移路径仍明确拒绝。
+
 `pnpm test` 覆盖 Codex/Claude fixture parser、Project 回填与卡片归属、测试命令识别、脱敏、Feed 发帖去重与结束检查点、Action Broker 幂等与重启过期、网络地址判断、协议加密/防重放，以及 Codex app-server 审批值映射。
 
 本轮新增的自动化覆盖：
 
-- `packages/protocol`：`packages/protocol/test-vectors/` 的 6 组版本化 JSON 向量（共 83 case）逐条断言 `policy.ts` 的 Feed 合并/优先级、outbox 语义键、重连退避、快捷审批资格与可撤回状态；`client-commands` 测试覆盖 `task.command.cancel`（恰选其一定位）、`feed.dismiss.set` 与旧 `feed.dismiss` 兼容、归档/置顶的可选 idempotencyKey，以及 PushRouteV1 推送路由 schema。
+- `packages/protocol`：`packages/protocol/test-vectors/` 的 6 组策略向量（共 83 case）与 1 组确定性加密向量逐条断言 `policy.ts` 的 Feed 合并/优先级、outbox 语义键、重连退避、快捷审批资格、可撤回状态及 Rust 迁移的字节兼容；`client-commands` 测试覆盖 `task.command.cancel`（恰选其一定位）、`feed.dismiss.set` 与旧 `feed.dismiss` 兼容、归档/置顶的可选 idempotencyKey，以及 PushRouteV1 推送路由 schema。
+- `store-compat.json`：Node 与 Rust 同时读取同一 Session/Event fixture，分别通过真实 SQLite 写入、去重、读取和 JSON 模型断言，防止迁移期间字段或空值语义漂移。
+- `snapshot-compat.sql` / `snapshot-compat.json`：覆盖 Project、Session、Feed、Material、Task、Command、设备阅读状态、Action、信任策略、通知和 Push 的完整数据库 fixture；两端归一化 Snapshot 后必须得到同一个 SHA-256，Rust HTTP 与加密 WebSocket 路由还会验证该读模型及设备作用域。
+- Rust 信任策略：覆盖 `trust.policy.update` 的设备权限、只读模式、Project 不存在、outbox 幂等重放，ActionBroker 的安全自动放行/高风险询问及审计，以及 `..` 与符号链接路径逃逸；`runtime:smoke:write` 还会走 Node 加密客户端 → Rust WebSocket → fake Codex app-server 的自动/人工审批并由 Node 只读重开数据库验证。
+- Rust 本机管理：覆盖 Agent Profile 的字段校验、Project 不存在、只读模式、完整 `project.updated` 回执与设备级幂等重放；LAN 审批总开关覆盖本机管理员边界、全部活跃手机权限同步和设备密钥脱敏。跨实现 smoke 会再由 Node 客户端写入 Agent Profile，并在 Rust 退出后用 Node SQLite 驱动重开确认。
 - `apps/cli` 新增 11 个测试文件：稳定 API 错误结构（api-error）、设备列表（device-list）、doctor、feed.dismiss.set 幂等（feed-dismiss）、hooks 事件级摘要（hook-config-summary）、集成探测（integration-probes）、探测缓存（probe-cache）、服务探测（service-inspect）、服务状态文件（service-state）、指令撤回（task-command-cancel）与任务偏好（task-preferences）。
 - `apps/web`：feedSequence 固定序列/锚定/移除调和、reconnect 退避控制器、OutboxSheet 撤回语义，以及直接引用 `@zimlo/protocol` 策略函数保证与 iOS 的向量一致性。
 - `apps/ios`：`VectorTests` 用 XCTest 读取同一组 JSON 向量逐 case 断言 `SharedRules.swift`；`BehaviorTests` 覆盖高风险双确认状态机、快照缓存 savedAt 迁移、dismiss/undo 乐观更新、outbox 撤回与快捷审批路由解析。在没有 iOS 模拟器运行时的机器上，纯逻辑层（`SharedRules.swift`、`QuickApprove.swift`，均不 import UIKit）可用 macOS SDK 的 swiftc 直接编译驱动向量与逻辑断言，作为 XCTest 之外的兜底验证方式。

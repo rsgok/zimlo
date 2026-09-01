@@ -156,6 +156,7 @@ final class ServiceController: ObservableObject {
     @Published private(set) var pairingBusy = false
     @Published private(set) var integrationBusy = false
     @Published private(set) var controlBusy = false
+    @Published private(set) var runtimePreparationMessage: String?
     /// 按钮级操作错误：只展示在对应按钮/步骤附近，不影响全局 state。
     @Published private(set) var pairingIssue: OperationIssue?
     @Published private(set) var integrationIssue: OperationIssue?
@@ -192,8 +193,9 @@ final class ServiceController: ObservableObject {
     private var launchedLogOffset: UInt64 = 0
     private let baseURL = URL(string: "http://127.0.0.1:4747")!
     private let session: URLSession
+    private let runtimeInstaller: RuntimeInstaller
 
-    init(session: URLSession? = nil) {
+    init(session: URLSession? = nil, runtimeInstaller: RuntimeInstaller? = nil) {
         if let session {
             self.session = session
         } else {
@@ -203,6 +205,7 @@ final class ServiceController: ObservableObject {
             configuration.requestCachePolicy = .reloadIgnoringLocalCacheData
             self.session = URLSession(configuration: configuration)
         }
+        self.runtimeInstaller = runtimeInstaller ?? RuntimeInstaller()
     }
 
     var isReady: Bool {
@@ -220,7 +223,10 @@ final class ServiceController: ObservableObject {
     }
 
     var menuDetail: String {
-        MenuStatusDescription.detail(for: state, status: status)
+        if state == .starting, let runtimePreparationMessage {
+            return runtimePreparationMessage
+        }
+        return MenuStatusDescription.detail(for: state, status: status)
     }
 
     var completionSummary: String {
@@ -251,6 +257,7 @@ final class ServiceController: ObservableObject {
         if transitionToManualStoppedIfRequested() { return }
         switch existingService {
         case .compatible:
+            runtimePreparationMessage = nil
             resumeUnexpectedExitRecoveryForCompatibleReuse()
             let ready = await refreshStatus()
             guard RecoveryHaltPolicy.allowsAutomaticStateTransition(
@@ -287,6 +294,7 @@ final class ServiceController: ObservableObject {
         }
         stopping = false
         state = .starting
+        runtimePreparationMessage = "正在准备 Bridge Runtime…"
         startupActivity = ProcessInfo.processInfo.beginActivity(
             options: [.userInitiated, .latencyCritical],
             reason: "Starting the local Zimlo service"
@@ -298,7 +306,11 @@ final class ServiceController: ObservableObject {
             }
         }
         do {
-            try launchBundledService()
+            let runtime = try await runtimeInstaller.resolve { [weak self] message in
+                self?.runtimePreparationMessage = message
+            }
+            runtimePreparationMessage = "正在启动本地 Bridge…"
+            try launchService(using: runtime)
             // A freshly downloaded, notarized app may need a short first-launch
             // verification pass before its bundled runtime can accept requests.
             for _ in 0..<60 {
@@ -314,6 +326,7 @@ final class ServiceController: ObservableObject {
                         stopping: stopping
                     ) else { return }
                     beginMonitoring()
+                    runtimePreparationMessage = nil
                     return
                 }
             }
@@ -325,11 +338,13 @@ final class ServiceController: ObservableObject {
             recoveryHalted = true
             haltMonitoring()
             state = .unavailable("Zimlo 服务启动超时，请查看日志后重试。")
+            runtimePreparationMessage = nil
         } catch {
             recoveryHalted = true
             haltMonitoring()
+            runtimePreparationMessage = nil
             state = .unavailable(
-                (error as? ServiceFailure)?.errorDescription
+                (error as? LocalizedError)?.errorDescription
                     ?? "后台服务启动失败。请查看日志后重新检查。"
             )
         }
@@ -456,7 +471,9 @@ final class ServiceController: ObservableObject {
         }
 
         do {
-            let runtime = try bundledRuntime()
+            let runtime = try await runtimeInstaller.resolve { [weak self] message in
+                self?.runtimePreparationMessage = message
+            }
             let terminationStatus = try await Self.runBundledCommand(
                 executable: runtime.node,
                 arguments: [runtime.entrypoint.path, "stop"],
@@ -686,11 +703,10 @@ final class ServiceController: ObservableObject {
         self.process = nil
     }
 
-    private func launchBundledService() throws {
+    private func launchService(using runtime: ManagedRuntime) throws {
         guard OwnedProcessLifecyclePolicy.canLaunchReplacement(
             hasRunningOwnedProcess: process?.isRunning == true
         ) else { return }
-        let runtime = try bundledRuntime()
 
         try FileManager.default.createDirectory(at: Self.logDirectory, withIntermediateDirectories: true)
         if !FileManager.default.fileExists(atPath: Self.logURL.path) {
@@ -740,23 +756,6 @@ final class ServiceController: ObservableObject {
         }
         try process.run()
         self.process = process
-    }
-
-    private func bundledRuntime() throws -> BundledRuntime {
-        guard let resources = Bundle.main.resourceURL else {
-            throw ServiceFailure.message("应用资源不完整，请重新安装 Zimlo。")
-        }
-        let node = resources.appending(path: "runtime/node")
-        let entrypoint = resources.appending(path: "runtime/cli/dist/index.js")
-        guard FileManager.default.isExecutableFile(atPath: node.path),
-              FileManager.default.fileExists(atPath: entrypoint.path) else {
-            throw ServiceFailure.message("应用内置服务缺失，请重新下载 Zimlo。")
-        }
-        return BundledRuntime(
-            node: node,
-            entrypoint: entrypoint,
-            cliDirectory: resources.appending(path: "runtime/cli")
-        )
     }
 
     private nonisolated static func runBundledCommand(
@@ -936,20 +935,4 @@ private enum ExistingServiceProbe: Equatable {
 
 private struct IntegrationResponse: Codable {
     let integrations: [IntegrationStatus]
-}
-
-private struct BundledRuntime {
-    let node: URL
-    let entrypoint: URL
-    let cliDirectory: URL
-}
-
-private enum ServiceFailure: LocalizedError {
-    case message(String)
-
-    var errorDescription: String? {
-        switch self {
-        case .message(let value): value
-        }
-    }
 }

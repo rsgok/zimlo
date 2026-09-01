@@ -1,4 +1,12 @@
 import { z } from "zod";
+import {
+  CardBlockSchema,
+  CardPresentationInputSchema,
+  ResolvedCardPresentationSchema,
+  resolveCardPresentation,
+} from "./card-presentation.js";
+
+export * from "./card-presentation.js";
 
 export const ProviderSchema = z.enum(["codex", "claude"]);
 export type Provider = z.infer<typeof ProviderSchema>;
@@ -144,9 +152,6 @@ export const FeedPostKindSchema = z.enum([
 ]);
 export type FeedPostKind = z.infer<typeof FeedPostKindSchema>;
 
-export const FeedTemplateSchema = z.enum(["paper", "grid", "sticky", "marker", "poster"]);
-export type FeedTemplate = z.infer<typeof FeedTemplateSchema>;
-
 export const MaterialKindSchema = z.enum(["image", "video", "pdf", "document"]);
 export type MaterialKind = z.infer<typeof MaterialKindSchema>;
 
@@ -217,10 +222,11 @@ export type TaskState = z.infer<typeof TaskStateSchema>;
 export const FeedPostInputSchema = z.object({
   task_id: z.string().min(1).max(160),
   kind: FeedPostKindSchema,
-  template: FeedTemplateSchema,
+  presentation: CardPresentationInputSchema,
   headline: z.string().min(1).max(72),
   takeaway: z.string().min(1).max(320),
   highlights: z.array(z.string().min(1).max(100)).max(3).default([]),
+  blocks: z.array(CardBlockSchema).max(8).default([]),
   proof: z.string().min(1).max(160).optional(),
   content: FeedContentSchema.optional(),
   dedupe_key: z.string().min(1).max(240),
@@ -248,6 +254,20 @@ export const FeedPostInputSchema = z.object({
       message: `state=${value.state} 必须使用 kind=${requiredKind}。`,
     });
   }
+  try {
+    resolveCardPresentation({
+      kind: value.kind,
+      presentation: value.presentation,
+      blocks: value.blocks,
+      content: value.content ?? { type: "text" },
+    });
+  } catch (error) {
+    context.addIssue({
+      code: "custom",
+      path: ["presentation"],
+      message: error instanceof Error ? error.message : "卡片 presentation 无效。",
+    });
+  }
 });
 export type FeedPostInput = z.infer<typeof FeedPostInputSchema>;
 
@@ -273,10 +293,11 @@ export const FeedPostSchema = z.object({
   agentId: z.string(),
   sessionId: z.string().nullable(),
   kind: FeedPostKindSchema,
-  template: FeedTemplateSchema,
+  presentation: ResolvedCardPresentationSchema,
   headline: z.string(),
   takeaway: z.string(),
   highlights: z.array(z.string()),
+  blocks: z.array(CardBlockSchema).default([]),
   proof: z.string().optional(),
   content: FeedContentSchema.optional(),
   dedupeKey: z.string(),

@@ -29,7 +29,15 @@ Codex GUI 插件只安装 `SessionStart`、`PermissionRequest` 和仅匹配 `req
 | `packages/protocol` | Zod 协议、事件/帖子/任务状态/能力模型、设备配对与帧加密、客户端共享策略函数与测试向量 |
 | `packages/adapters` | 进程识别、transcript 扫描与容错 parser、脱敏、测试命令识别 |
 | `apps/cli` | Fastify Bridge、SQLite、发现器、Agent MCP tools、Action Broker、hooks、app-server/resume、CLI |
+| `runtime` | Rust Runtime 迁移目标：协议/加密、SQLite 单连接 actor、Axum Bridge 与原生 CLI |
 | `apps/web` | React/Vite Feed、Tasks、Agents、Task Detail、回复、审批与 Settings |
+
+Node 仍是产品默认 Runtime。Rust 的 bootstrap SQL 从 `apps/cli/src/store-schema.ts` 生成并由架构
+门禁检查漂移；带 `--database` 启动时默认只读打开现有库，已对拍完整 Snapshot、session/event
+查询、WebSocket 鉴权、方向密钥、严格计数器与数据库变更广播。显式 `--write` 时 Rust 才取得
+SQLite 独占单写者所有权，执行重启恢复，并开放已迁移的本地配对、设备管理及低风险幂等写命令。
+云中继/Push、provider discovery、hooks/MCP、集成安装与默认服务生命周期完成对照前不切换产品默认
+实现；任何阶段都禁止 Node 与 Rust 同时写同一个数据库。
 
 ## 数据流
 
@@ -105,6 +113,29 @@ Session、persistent 与高风险决策要求确认短语。永久规则只有�
 
 `zimlo start` 只绑定 `127.0.0.1`；`--lan` 仅选择 loopback、RFC1918 或 ULA 地址。二维码携带 2 分钟单次 secret，X25519 协商设备密钥，随后每个方向派生独立 XChaCha20-Poly1305 密钥并使用连接级计数器防重放。浏览器密钥保存在 IndexedDB，Mac 可立即撤销设备，并按设备持久授权手机审批。
 
+迁移中的 Rust Bridge 已兼容配对后的 `/ws` 线协议：从数据库加载未撤销设备密钥，验证
+`ws:{clientNonce}` 与服务端 proof，按方向派生密钥，严格拒绝 counter 重放或缺口。鉴权后首帧是
+设备作用域 Snapshot；只读模式下外部 writer 的 SQLite `data_version` 改变时重新广播 Snapshot。
+默认模式的写命令返回 `runtime_read_only`；显式 `--write --lan` 会启用 2 分钟单次本地配对，
+并接受设备撤销/权限、Feed/Timeline 已读与忽略、Task 置顶/归档、通知设置、用户/Agent 资料、LAN
+审批总开关及 queued Task Command 撤回等已迁移命令。这些写操作与移动端 outbox 共用 idempotency key，检查与落库位于
+同一事务。Rust Store 已实现 Task Command 幂等入队、queued → dispatching → running 的 CAS 租约、
+取消/重试及崩溃恢复；Bridge 提供串行 runner、会话关联检查、30 秒物料门禁和可注入
+`TaskExecutor`。写模式现已接入统一原生执行器：Claude 按现有路径解析 app/CLI binary，使用 `-p`、
+`--resume` 和 `stream-json` 创建或恢复任务；Codex 启动 stdio app-server，完成 initialize、
+thread/read、thread/start、thread/resume、turn/start 与通知事件映射。两者都生成与 Node 相同的稳定
+Session ID，脱敏并持久化 Session/Event；shutdown 会中止子进程，重启会清理中断的 managed Session。
+尚未启动进程的
+`dispatching` 指令会重新排队，已经 `running` 的外部执行标记为结果不确定并等待用户确认，防止
+崩溃恢复静默重复提交。Codex 的命令、文件和额外能力审批及 requestUserInput 通过 Rust ActionBroker
+持久化并映射回原 RPC；设备权限、确认短语、超时和 idempotency key 均在回传前校验。Bridge 重启后
+旧 action 即使仍在 SQLite 中也没有可投递的 resolver，因此明确拒绝并等待上游重新发起。Rust 还
+持久化设备授权的 Project 信任策略：`safe_automation` 只自动允许项目路径边界内的读取、搜索、测试
+和构建，复合命令逐段分类，符号链接或 `..` 逃逸 fail closed；写入、联网、安装、发布、删除和未知
+动作仍逐次确认，自动放行与人工询问均进入 `trust_audit`。Agent Profile 在同一 Store actor 事务内
+更新并去重，回执复用权威 Project 读模型；LAN 总开关由本机管理员控制，并同步未撤销设备的
+`can_approve`。Cloud Material 与未迁移集成/云路径仍保持 `runtime_not_migrated`。
+
 ## Cloudflare 远程通道
 
 Cloudflare Worker 负责鉴权和路由，D1 只保存 Mac 安装公钥、设备访问令牌哈希、APNs token 与投递审计；每个 Mac 安装映射到一个使用 WebSocket Hibernation API 的 Durable Object。Mac 主动建立出站 WebSocket，手机在 LAN 失败后连接同一对象。Durable Object 只看到连接 ID 与 Bridge 密文，不能读取 Snapshot、任务正文、审批内容或命令。
@@ -121,16 +152,22 @@ Mac 安装身份使用 P-256 签名，私钥只保存在权限为 `0600` 的本�
 
 物料字节不进入 WebSocket。WebSocket 只传 material id、安全元数据、任务引用和状态，因此一个视频上传不会阻塞审批、回复与实时状态。局域网设备通过带设备 HMAC 证明的 HTTP 直传 Bridge；远程设备先用每个文件独立的 AES-256-GCM 密钥加密，再把密文放入独立的 `zimlo-materials` R2 临时桶。密钥只走端到端加密的 Bridge 消息，Cloudflare 看不到文件名、MIME、任务 id 或明文。Mac 校验大小、格式特征和 SHA-256 后以 `0600` 保存，并删除成功中转对象；R2 的 24 小时生命周期负责清理断线残留。
 
+Rust 写模式已经实现同形的本地链路：loopback 原生导入、设备 HMAC 上传、AES-256-GCM 解密、
+大小/MIME/文件签名/SHA-256 校验、`0600` 原子落盘及带认证的 Range 下载；`material.register`
+重复提交按已就绪的 material id 幂等返回。Cloud R2 中转与 `material.remote.request` 仍保持
+`runtime_not_migrated`，待 relay 所有权迁移后再开放。
+
 Agent 生成的本地文件先通过 `material.publish` 注册，再由 `feed.post.content` 引用。Feed 的文字编辑语义与媒体载体保持分离：图片组、视频和文档分别是独立卡片，PDF/文档在 iOS 使用 Quick Look。限制为图片 8MB、视频 50MB/3 分钟、PDF 20MB/200 页、其他受支持文档 15MB；每任务最多 10 个、合计 80MB。Codex 图片使用 app-server 的 `localImage` 输入，其余文件和 Claude 通过可信本机路径交给 runtime，但用户界面与 Agent 回复都不得泄露绝对路径。
 
 ## 客户端共享策略
 
-Feed 合并与优先级、outbox 语义键、重连退避、可撤回状态与快捷审批资格曾由 Web（TypeScript）与 iOS（Swift）各自手写并已开始漂移。现在规则集中在两处逐行对齐的实现：
+Feed 合并与优先级、outbox 语义键、重连退避、可撤回状态与快捷审批资格曾由 Web（TypeScript）与 iOS（Swift）各自手写并已开始漂移。现在规则集中在三处逐行对齐的实现：
 
 - `packages/protocol/src/policy.ts`：TS 纯函数，apps/web 直接引用；
-- `apps/ios/Zimlo/SharedRules.swift`：不依赖 SwiftUI 的纯逻辑层。
+- `apps/ios/Zimlo/SharedRules.swift`：不依赖 SwiftUI 的纯逻辑层；
+- `runtime/crates/zimlo-protocol/src/policy.rs`：Rust Runtime 的等价实现。
 
-`packages/protocol/test-vectors/` 下的版本化 JSON 向量（feed-merge / feed-priority / outbox-keys / backoff / quick-approve / cancelable-states，共 85 个 case）同时驱动 packages/protocol 的 vitest 与 iOS 的 VectorTests（XCTest）。任何语义改动必须先改向量，再同步两侧实现。
+`packages/protocol/test-vectors/` 下的版本化 JSON 向量（feed-merge / feed-priority / outbox-keys / backoff / quick-approve / cancelable-states，共 83 个 case）同时驱动 packages/protocol 的 vitest、iOS 的 VectorTests（XCTest）和 Rust tests；`crypto.json` 另对拍 TS/Rust 的协议字节。任何语义改动必须先改向量，再同步三侧实现。
 
 Feed 展示在策略之上再加一层“页面会话固定序列”（apps/web `feedSequence.ts`，iOS `FeedView` 的 currentOrder）：首次载入按协议优先级建序后，已有卡不因已读、审批完成或快照刷新换位；新卡与重新可操作的卡只追加到 caught-up 之前；已处理卡在当前会话原位显示完成状态。
 
@@ -149,7 +186,7 @@ Feed 展示在策略之上再加一层“页面会话固定序列”（apps/web 
 - `startup-diagnostics.json`：最近一次启动结果（成功，或 `port_in_use` / `config_corrupt` / `runtime_missing` / `startup_failed` 加消息），由 `zimlo status` 与 `zimlo doctor` 展示。
 - `manual-stop`：`zimlo stop` 写入的手动停止标记。契约：只有 macOS App 的自动管理（启动拉起、崩溃自动重启、监控循环）尊重它；`zimlo start` 启动时清除（输入 start 本身就是手动动作）；`zimlo mcp` 自动拉起 Bridge 时忽略。
 
-`zimlo stop` 校验描述文件的 PID 归属后发送 SIGTERM，拒绝停止无法确认归属的进程。macOS 复用 4747 端口上已有服务前会先探测 /healthz 并要求 `protocolVersion == 4`；崩溃自动重启按 1/2/4/8/16/30 秒退避，两分钟滑动窗口内失败五次熔断，等待用户在菜单栏手动重试；EADDRINUSE、配置损坏与运行时缺失是终止型故障，不自动重启，端口占用尽力显示进程名与 PID。
+`zimlo stop` 校验描述文件的 PID 归属后发送 SIGTERM，拒绝停止无法确认归属的进程。macOS 复用 4747 端口上已有服务前会先探测 /healthz 并要求 `protocolVersion == 5`；崩溃自动重启按 1/2/4/8/16/30 秒退避，两分钟滑动窗口内失败五次熔断，等待用户在菜单栏手动重试；EADDRINUSE、配置损坏与运行时缺失是终止型故障，不自动重启，端口占用尽力显示进程名与 PID。
 
 ## 本地 API 与集成探测
 

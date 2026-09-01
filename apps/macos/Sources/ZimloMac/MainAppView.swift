@@ -8,6 +8,7 @@ struct MainAppView: View {
     @State private var section: NativeSection = .feed
     @State private var path: [NativeRoute] = []
     @State private var composer: NativeComposerContext?
+    @State private var feedLatestRequest = 0
 
     init(route: LocalBridgeRoute, service: ServiceController) {
         self.route = route
@@ -22,12 +23,13 @@ struct MainAppView: View {
             NativeTheme.paper.ignoresSafeArea()
             NavigationSplitView {
                 NativeSidebarView(
-                    selection: $section,
+                    selection: section,
                     serviceState: service.state,
                     coreState: composer == nil
                         ? (service.isReady ? store.snapshot.coreState : .offline)
                         : .composing,
-                    onCompose: { composer = NativeComposerContext() }
+                    onCompose: { composer = NativeComposerContext() },
+                    onSelect: selectSection
                 )
                 .navigationSplitViewColumnWidth(min: 210, ideal: 236, max: 270)
             } detail: {
@@ -95,7 +97,7 @@ struct MainAppView: View {
     private var sectionRoot: some View {
         switch section {
         case .feed:
-            NativeFeedView(store: store)
+            NativeFeedView(store: store, scrollToLatestRequest: feedLatestRequest)
         case .tasks:
             NativeTasksView(store: store)
         case .agents:
@@ -103,6 +105,13 @@ struct MainAppView: View {
         case .settings:
             NativeSettingsView(store: store, service: service)
         }
+    }
+
+    private func selectSection(_ nextSection: NativeSection) {
+        section = nextSection
+        guard nextSection == .feed else { return }
+        feedLatestRequest += 1
+        Task { await store.refresh() }
     }
 
     @ViewBuilder
@@ -150,10 +159,18 @@ struct MainAppView: View {
 }
 
 private struct NativeSidebarView: View {
-    @Binding var selection: NativeSection
+    let selection: NativeSection
     let serviceState: ServiceState
     let coreState: CoreActionState
     let onCompose: () -> Void
+    let onSelect: (NativeSection) -> Void
+
+    private var selectionBinding: Binding<NativeSection> {
+        Binding(
+            get: { selection },
+            set: { _ in }
+        )
+    }
 
     var body: some View {
         VStack(spacing: 0) {
@@ -171,7 +188,7 @@ private struct NativeSidebarView: View {
             .padding(.top, 12)
             .padding(.bottom, 16)
 
-            List(NativeSection.allCases, selection: $selection) { item in
+            List(NativeSection.allCases, selection: selectionBinding) { item in
                 Label {
                     VStack(alignment: .leading, spacing: 1) {
                         Text(item.title).font(.system(size: 13, weight: .semibold))
@@ -187,6 +204,10 @@ private struct NativeSidebarView: View {
                 }
                 .tag(item)
                 .padding(.vertical, 4)
+                .contentShape(Rectangle())
+                .simultaneousGesture(TapGesture().onEnded {
+                    onSelect(item)
+                })
             }
             .listStyle(.sidebar)
             .scrollContentBackground(.hidden)

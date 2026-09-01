@@ -46,6 +46,33 @@ enum ZRadius {
     static let small: CGFloat = 11
 }
 
+struct ZimloCardPalette {
+    let ink: Color
+    let surface: Color
+    let accent: Color
+
+    init(theme: String) {
+        ink = Color(zimloHex: ZimloCardCatalog.themeInk[theme] ?? "#0A0A0B")
+        surface = Color(zimloHex: ZimloCardCatalog.themeSurface[theme] ?? "#F1EFEA")
+        accent = Color(zimloHex: ZimloCardCatalog.themeAccent[theme] ?? "#183B34")
+    }
+}
+
+extension Color {
+    init(zimloHex hex: String) {
+        let value = hex.trimmingCharacters(in: CharacterSet.alphanumerics.inverted)
+        guard value.count == 6, let raw = UInt64(value, radix: 16) else {
+            self = .clear
+            return
+        }
+        self.init(
+            red: Double((raw >> 16) & 0xFF) / 255,
+            green: Double((raw >> 8) & 0xFF) / 255,
+            blue: Double(raw & 0xFF) / 255
+        )
+    }
+}
+
 struct ProviderIcon: View {
     let provider: Provider
     var size: CGFloat = 14

@@ -74,7 +74,7 @@ both can use the same Worker without reconfiguration. The official beta is
 deployed at:
 
 ```bash
-https://zimlo-cloud.zimlo.workers.dev
+https://cloud.zimlo.app
 ```
 
 The CLI uses this endpoint by default. A self-hosted deployment can override it

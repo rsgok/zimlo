@@ -38,11 +38,11 @@ describe("Bridge supervisor fail-open behavior", () => {
     root = await mkdtemp(join(tmpdir(), "zimlo-supervisor-"));
     const socketPath = join(root, "bridge.sock");
     const server = createServer((socket) => {
-      socket.once("data", () => socket.end(`${JSON.stringify({ type: "bridge_info", protocolVersion: 4 })}\n`));
+      socket.once("data", () => socket.end(`${JSON.stringify({ type: "bridge_info", protocolVersion: 5 })}\n`));
     });
     await new Promise<void>((resolve, reject) => server.listen(socketPath, resolve).once("error", reject));
     try {
-      expect(await bridgeProtocolVersion(socketPath)).toBe(4);
+      expect(await bridgeProtocolVersion(socketPath)).toBe(5);
       expect(await ensureBridgeRunning({ entrypoint: "/missing", socketPath, logPath: join(root, "log") })).toBe(true);
     } finally {
       await new Promise<void>((resolve) => server.close(() => resolve()));
