@@ -226,7 +226,7 @@ final class PhoneSetupRulesTests: XCTestCase {
     func testMacDownloadUsesStableReleaseRedirect() {
         XCTAssertEqual(
             PhoneSetupRules.macDownloadURL.absoluteString,
-            "https://zimlo-cloud.zimlo.workers.dev/releases/macos/download"
+            "https://cloud.zimlo.app/releases/macos/download"
         )
     }
 }

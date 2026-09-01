@@ -2,8 +2,8 @@
 
 import { useCallback, useEffect, useState } from "react";
 
-const RELEASE_MANIFEST_URL = "https://zimlo-cloud.zimlo.workers.dev/releases/macos/latest.json";
-const RELEASE_BASE_URL = "https://zimlo-cloud.zimlo.workers.dev/releases/macos/";
+const RELEASE_MANIFEST_URL = "https://cloud.zimlo.app/releases/macos/latest.json";
+const RELEASE_BASE_URL = "https://cloud.zimlo.app/releases/macos/";
 
 interface MacRelease {
   version: string;

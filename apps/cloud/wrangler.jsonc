@@ -4,6 +4,12 @@
   "main": "src/index.ts",
   "compatibility_date": "2026-07-26",
   "workers_dev": true,
+  "routes": [
+    {
+      "pattern": "cloud.zimlo.app",
+      "custom_domain": true
+    }
+  ],
   "observability": {
     "enabled": true
   },

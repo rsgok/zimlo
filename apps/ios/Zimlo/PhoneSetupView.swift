@@ -9,7 +9,7 @@ enum PhoneSetupRules {
     static let dismissedKey = "zimlo.phone-setup.dismissed.v1"
     static let hasEverPairedKey = "zimlo.phone-setup.has-ever-paired.v1"
     static let macDownloadURL = URL(
-        string: "https://zimlo-cloud.zimlo.workers.dev/releases/macos/download"
+        string: "https://cloud.zimlo.app/releases/macos/download"
     )!
 
     static func root(

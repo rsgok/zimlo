@@ -55,4 +55,4 @@ apps/macos/scripts/publish-release.sh \
   apps/macos/.build/release-0.3.0/Zimlo-0.3.0.dmg
 ```
 
-Sparkle 会定期检查 `https://zimlo-cloud.zimlo.workers.dev/releases/macos/appcast.xml`，验证 EdDSA 签名与 Apple 代码签名后才安装更新。
+Sparkle 会定期检查 `https://cloud.zimlo.app/releases/macos/appcast.xml`，验证 EdDSA 签名与 Apple 代码签名后才安装更新。

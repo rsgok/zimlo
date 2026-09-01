@@ -128,7 +128,7 @@ Cloudflare 不是任务数据库，Mac 仍是唯一的任务状态源：
 
 因此，手机离开电脑的 Wi-Fi **可以继续使用**，但 Mac 必须开机并运行 Zimlo。Mac 关机时不会把代码、任务正文或可执行操作托管到云端。
 
-默认线上服务已经部署在 `https://zimlo-cloud.zimlo.workers.dev`，普通用户无需配置服务器。自建或本地开发可覆盖：
+默认线上服务已经部署在 `https://cloud.zimlo.app`，普通用户无需配置服务器。自建或本地开发可覆盖：
 
 ```bash
 export ZIMLO_CLOUD_URL="https://zimlo-cloud.<account>.workers.dev"

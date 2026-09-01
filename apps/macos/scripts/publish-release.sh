@@ -17,7 +17,7 @@ verified_appcast_path="${release_dir}/appcast.verified.xml"
 release_manifest_path="${release_dir}/latest.json"
 verified_manifest_path="${release_dir}/latest.verified.json"
 bucket=${ZIMLO_RELEASE_BUCKET:-zimlo-releases}
-public_base_url=${ZIMLO_RELEASE_BASE_URL:-https://zimlo-cloud.zimlo.workers.dev/releases/macos}
+public_base_url=${ZIMLO_RELEASE_BASE_URL:-https://cloud.zimlo.app/releases/macos}
 sparkle_tools="${macos_root}/.build/artifacts/sparkle/Sparkle/bin"
 
 if [[ ! -f "${dmg_path}" ]]; then

@@ -49,7 +49,7 @@ export interface CloudPairingResponse {
 }
 
 const IDENTITY_METADATA_KEY = "cloud_installation_identity_v1";
-export const DEFAULT_CLOUD_URL = "https://zimlo-cloud.zimlo.workers.dev";
+export const DEFAULT_CLOUD_URL = "https://cloud.zimlo.app";
 
 function sha256URL(value: string): string {
   return createHash("sha256").update(value).digest("base64url");
