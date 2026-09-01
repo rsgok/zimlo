@@ -2,6 +2,7 @@ import SwiftUI
 
 struct NativeFeedView: View {
     @ObservedObject var store: NativeAppStore
+    let scrollToLatestRequest: Int
 
     private var posts: [FeedPost] {
         let dismissed = Set(store.snapshot.dismissedFeedItemIds)
@@ -20,51 +21,59 @@ struct NativeFeedView: View {
     }
 
     var body: some View {
-        VStack(spacing: 0) {
-            header
-                .padding(.horizontal, 30)
-                .padding(.vertical, 22)
-                .frame(maxWidth: 960)
-                .frame(maxWidth: .infinity)
-            Divider().opacity(0.42)
-            ScrollView {
-                LazyVStack(alignment: .leading, spacing: 28) {
-                if posts.isEmpty {
-                    ContentUnavailableView("All Caught Up", systemImage: "checkmark.circle.fill")
-                    .frame(maxWidth: .infinity, minHeight: 360)
-                    .foregroundStyle(NativeTheme.muted)
-                } else {
-                    ForEach(posts) { post in
-                        NativeFeedCard(store: store, post: post)
+        GeometryReader { geometry in
+            ScrollViewReader { proxy in
+                ScrollView {
+                    LazyVStack(alignment: .leading, spacing: 18) {
+                        Color.clear
+                            .frame(height: 14)
+                            .id(NativeFeedScrollAnchor.latest)
+                        if posts.isEmpty {
+                            ContentUnavailableView("All Caught Up", systemImage: "checkmark.circle.fill")
+                                .frame(maxWidth: .infinity, minHeight: 360)
+                                .foregroundStyle(NativeTheme.muted)
+                        } else {
+                            ForEach(posts) { post in
+                                NativeFeedCard(
+                                    store: store,
+                                    post: post,
+                                    minimumHeight: NativeFeedLayout.cardMinimumHeight(
+                                        scrollViewportHeight: geometry.size.height
+                                    )
+                                )
+                            }
+                        }
+                    }
+                    .scrollTargetLayout()
+                    .padding(.horizontal, 24)
+                    .padding(.bottom, 14)
+                    .frame(maxWidth: NativeFeedLayout.maximumCardWidth, alignment: .leading)
+                    .frame(maxWidth: .infinity, alignment: .center)
+                }
+                .onChange(of: scrollToLatestRequest) { _, _ in
+                    withAnimation(.snappy(duration: 0.24)) {
+                        proxy.scrollTo(NativeFeedScrollAnchor.latest, anchor: .top)
                     }
                 }
-                }
-                .scrollTargetLayout()
-                .padding(.horizontal, 30)
-                .padding(.vertical, 28)
-                .frame(maxWidth: 960, alignment: .leading)
-                .frame(maxWidth: .infinity, alignment: .center)
             }
-            .scrollTargetBehavior(.viewAligned)
         }
         .background(NativeTheme.paper)
-        .navigationTitle("For You")
-        .toolbar {
-            ToolbarItem {
-                Button { Task { await store.refresh() } } label: {
-                    Label("刷新", systemImage: "arrow.clockwise")
-                }
-                .help("刷新 Feed")
-            }
-        }
+        .ignoresSafeArea(.container, edges: .top)
     }
+}
 
-    private var header: some View {
-        Text("For You")
-            .font(.system(size: 28, weight: .bold, design: .rounded))
-            .foregroundStyle(NativeTheme.ink)
-            .frame(maxWidth: .infinity, alignment: .leading)
+enum NativeFeedLayout {
+    static let maximumCardWidth: CGFloat = 720
+
+    static func cardMinimumHeight(scrollViewportHeight: CGFloat) -> CGFloat {
+        // The zero-height scroll anchor, stack spacing, and vertical inset put
+        // the first card 32pt from the top and leave 24pt below it.
+        max(500, scrollViewportHeight - 56)
     }
+}
+
+private enum NativeFeedScrollAnchor {
+    static let latest = "native-feed-latest"
 }
 
 enum NativeFeedArchiveGesture {
@@ -85,6 +94,7 @@ enum NativeFeedArchiveGesture {
 private struct NativeFeedCard: View {
     @ObservedObject var store: NativeAppStore
     let post: FeedPost
+    let minimumHeight: CGFloat
     @State private var dragOffset: CGFloat = 0
     @State private var isArchiving = false
 
@@ -105,6 +115,27 @@ private struct NativeFeedCard: View {
         post.sessionId.flatMap(store.snapshot.pendingAction(for:))
     }
     private var isUnread: Bool { !store.snapshot.seenPostIds.contains(post.id) }
+    private var palette: ZimloCardPalette { ZimloCardPalette(theme: post.presentation.theme) }
+    private var mediaContent: FeedContent? {
+        guard let content = post.content, content.type != "text" else { return nil }
+        return content
+    }
+    private var isFullBleed: Bool { post.presentation.mediaPlacement == "full_bleed" && mediaContent != nil }
+    private var cardPadding: CGFloat {
+        switch post.presentation.density {
+        case "airy": 34
+        case "compact": 22
+        default: 28
+        }
+    }
+    private var titleDesign: Font.Design {
+        switch post.presentation.typography {
+        case "serif": .serif
+        case "mono": .monospaced
+        case "rounded": .rounded
+        default: .default
+        }
+    }
 
     var body: some View {
         ZStack(alignment: .trailing) {
@@ -187,102 +218,191 @@ private struct NativeFeedCard: View {
     }
 
     private var cardBody: some View {
-        VStack(alignment: .leading, spacing: 0) {
-            HStack(spacing: 11) {
-                if let project {
-                    NativeAgentAvatar(avatar: project.agentProfile.avatar, size: 36)
-                } else {
-                    NativeTaskAvatar(project: nil, provider: session?.provider ?? .codex, size: 36)
-                }
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(project?.agentProfile.displayName ?? post.agentId)
-                        .font(.system(size: 12, weight: .bold))
-                    Text(post.createdAt.zimloDate.formatted(date: .abbreviated, time: .shortened))
-                        .font(.system(size: 10, weight: .medium))
-                        .foregroundStyle(NativeTheme.muted)
-                }
-                Spacer()
-                NativeFeedKindPill(kind: post.kind)
-                if isUnread {
-                    Circle().fill(NativeTheme.acid).frame(width: 7, height: 7)
-                }
+        ZStack {
+            palette.surface
+            if isFullBleed, let mediaContent {
+                NativeFeedMaterialSummary(store: store, content: mediaContent)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .opacity(0.9)
+                LinearGradient(colors: [.black.opacity(0.54), .clear, .black.opacity(0.86)], startPoint: .top, endPoint: .bottom)
             }
-            .padding(.bottom, 18)
+            VStack(alignment: .leading, spacing: 0) {
+                HStack(spacing: 11) {
+                    if let project {
+                        NativeAgentAvatar(avatar: project.agentProfile.avatar, size: 34)
+                    } else {
+                        NativeTaskAvatar(project: nil, provider: session?.provider ?? .codex, size: 34)
+                    }
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(project?.agentProfile.displayName ?? post.agentId)
+                            .font(.system(size: 12, weight: .bold))
+                        Text(post.createdAt.zimloDate.formatted(date: .abbreviated, time: .shortened))
+                            .font(.system(size: 10, weight: .medium))
+                            .opacity(0.62)
+                    }
+                    Spacer()
+                    Text("\(post.kind.uppercased()) / \(post.presentation.system.uppercased())")
+                        .font(.system(size: 9, weight: .black, design: .monospaced))
+                        .tracking(1)
+                        .foregroundStyle(isFullBleed ? Color.white.opacity(0.78) : palette.accent)
+                    if isUnread { Circle().fill(isFullBleed ? Color.white : palette.accent).frame(width: 7, height: 7) }
+                }
+                .foregroundStyle(isFullBleed ? Color.white : palette.ink)
+                .padding(.bottom, 20)
 
+                if post.presentation.mediaPlacement == "split", let mediaContent {
+                    HStack(alignment: .center, spacing: 24) {
+                        NativeFeedMaterialSummary(store: store, content: mediaContent)
+                            .frame(maxWidth: .infinity)
+                        copy.frame(maxWidth: .infinity, alignment: .leading)
+                    }
+                } else {
+                    if !isFullBleed, let mediaContent {
+                        NativeFeedMaterialSummary(store: store, content: mediaContent)
+                            .padding(.bottom, 18)
+                    }
+                    copy
+                }
+
+                Spacer(minLength: 24)
+                HStack(spacing: 10) {
+                    if let proof = post.proof, !proof.isEmpty {
+                        Label(proof, systemImage: "checkmark.seal.fill")
+                            .font(.system(size: 10, weight: .semibold, design: .monospaced))
+                            .lineLimit(1)
+                    }
+                    Spacer()
+                    if let pendingAction {
+                        Label(pendingAction.title, systemImage: "arrow.right.circle.fill")
+                            .font(.system(size: 11, weight: .bold))
+                            .foregroundStyle(isFullBleed ? Color.white : palette.accent)
+                            .lineLimit(1)
+                    } else if post.sessionId != nil {
+                        Label("查看任务", systemImage: "arrow.right")
+                            .font(.system(size: 11, weight: .bold))
+                            .foregroundStyle(isFullBleed ? Color.white : palette.accent)
+                    }
+                }
+                .foregroundStyle(isFullBleed ? Color.white.opacity(0.76) : palette.ink.opacity(0.66))
+                .padding(.top, 14)
+                .overlay(alignment: .top) { Rectangle().fill(isFullBleed ? Color.white.opacity(0.22) : palette.ink.opacity(0.18)).frame(height: 1) }
+            }
+            .padding(cardPadding)
+        }
+        .frame(maxWidth: .infinity, minHeight: minimumHeight, alignment: .topLeading)
+        .clipShape(RoundedRectangle(cornerRadius: post.presentation.system == "swiss" ? 7 : 20, style: .continuous))
+        .overlay {
+            RoundedRectangle(cornerRadius: post.presentation.system == "swiss" ? 7 : 20, style: .continuous)
+                .stroke(isFullBleed ? Color.white.opacity(0.2) : palette.ink.opacity(0.22), lineWidth: post.presentation.system == "swiss" ? 2 : 1)
+        }
+        .shadow(color: post.presentation.system == "swiss" ? palette.accent : .black.opacity(0.24), radius: post.presentation.system == "swiss" ? 0 : 18, x: post.presentation.system == "swiss" ? 7 : 0, y: post.presentation.system == "swiss" ? 7 : 12)
+    }
+
+    private var copy: some View {
+        VStack(alignment: .leading, spacing: 0) {
             Text(post.headline)
-                .font(.system(size: 23, weight: .bold, design: .rounded))
-                .foregroundStyle(NativeTheme.ink)
+                .font(.system(size: post.presentation.density == "compact" ? 28 : 38, weight: post.presentation.system == "swiss" ? .black : .bold, design: titleDesign))
+                .tracking(-1.2)
+                .foregroundStyle(isFullBleed ? Color.white : palette.ink)
                 .fixedSize(horizontal: false, vertical: true)
-
             Text(post.takeaway)
                 .font(.system(size: 14, weight: .medium))
-                .foregroundStyle(NativeTheme.ink.opacity(0.76))
+                .foregroundStyle(isFullBleed ? Color.white.opacity(0.74) : palette.ink.opacity(0.72))
                 .lineSpacing(4)
-                .padding(.top, 9)
+                .padding(.top, 12)
                 .fixedSize(horizontal: false, vertical: true)
-
+            NativeCardBlocksView(blocks: post.blocks, palette: palette, fullBleed: isFullBleed, layout: post.presentation.layout)
+                .padding(.top, post.blocks.isEmpty ? 0 : 18)
             if !post.highlights.isEmpty {
                 VStack(alignment: .leading, spacing: 8) {
                     ForEach(post.highlights.prefix(2), id: \.self) { highlight in
                         HStack(alignment: .firstTextBaseline, spacing: 9) {
-                            Image(systemName: "checkmark")
-                                .font(.system(size: 10, weight: .black))
-                                .foregroundStyle(NativeTheme.acid)
-                            Text(highlight)
-                                .font(.system(size: 12, weight: .semibold))
-                                .foregroundStyle(NativeTheme.ink.opacity(0.86))
+                            Image(systemName: "checkmark").font(.system(size: 10, weight: .black)).foregroundStyle(isFullBleed ? Color.white : palette.accent)
+                            Text(highlight).font(.system(size: 12, weight: .semibold))
                         }
                     }
                 }
+                .foregroundStyle(isFullBleed ? Color.white.opacity(0.82) : palette.ink.opacity(0.82))
                 .padding(.top, 15)
             }
-
-            if let content = post.content {
-                NativeFeedMaterialSummary(store: store, content: content)
-                    .padding(.top, 16)
-            }
-
-            Spacer(minLength: 24)
-
-            HStack(spacing: 10) {
-                if let proof = post.proof, !proof.isEmpty {
-                    Label(proof, systemImage: "checkmark.seal.fill")
-                        .font(.system(size: 10, weight: .semibold))
-                        .foregroundStyle(NativeTheme.muted)
-                        .lineLimit(1)
-                }
-                Spacer()
-                if let pendingAction {
-                    Label(pendingAction.title, systemImage: "arrow.right.circle.fill")
-                        .font(.system(size: 11, weight: .bold))
-                        .foregroundStyle(NativeTheme.coral)
-                        .lineLimit(1)
-                } else if post.sessionId != nil {
-                    Label("查看任务", systemImage: "arrow.right")
-                        .font(.system(size: 11, weight: .bold))
-                        .foregroundStyle(NativeTheme.acid)
-                }
-            }
-            .padding(.top, 18)
         }
-        .padding(28)
-        .frame(maxWidth: .infinity, minHeight: 360, alignment: .topLeading)
-        .nativeCard(cornerRadius: 19)
-        .overlay(alignment: .leading) {
-            RoundedRectangle(cornerRadius: 2)
-                .fill(accentColor)
-                .frame(width: 3)
-                .padding(.vertical, 18)
+    }
+}
+
+private struct NativeCardBlocksView: View {
+    let blocks: [CardBlock]
+    let palette: ZimloCardPalette
+    let fullBleed: Bool
+    let layout: String
+
+    private var foreground: Color { fullBleed ? .white : palette.ink }
+
+    var body: some View {
+        if layout == "metric_grid" {
+            LazyVGrid(columns: [.init(.flexible()), .init(.flexible())], spacing: 0) { blockViews }
+        } else {
+            VStack(alignment: .leading, spacing: 0) { blockViews }
         }
     }
 
-    private var accentColor: Color {
-        switch post.kind {
-        case "failure": NativeTheme.coral
-        case "attention", "decision": NativeTheme.amber
-        case "result": NativeTheme.sage
-        default: NativeTheme.acid
+    @ViewBuilder private var blockViews: some View {
+        ForEach(Array(blocks.enumerated()), id: \.offset) { index, block in
+            switch block.type {
+            case "metric":
+                VStack(alignment: .leading, spacing: 8) {
+                    Text(block.label ?? "METRIC").font(.system(size: 9, weight: .black, design: .monospaced))
+                    Text((block.value ?? "—") + (block.unit.map { " \($0)" } ?? ""))
+                        .font(.system(size: 30, weight: .black, design: .rounded))
+                    if let caption = block.caption { Text(caption).font(.system(size: 10, weight: .medium)).opacity(0.62) }
+                }
+                .padding(12).frame(maxWidth: .infinity, minHeight: 108, alignment: .leading)
+                .background(index == 0 && !fullBleed ? palette.accent : foreground.opacity(0.05))
+                .overlay(Rectangle().stroke(foreground.opacity(0.45), lineWidth: 1))
+            case "quote":
+                VStack(alignment: .leading, spacing: 8) {
+                    Text("“\(block.text ?? "")”").font(.system(size: 22, weight: .bold, design: .serif))
+                    if let attribution = block.attribution { Text("— \(attribution)").font(.system(size: 10, weight: .semibold)) }
+                }
+                .padding(.leading, 14).overlay(alignment: .leading) { Rectangle().fill(fullBleed ? .white : palette.accent).frame(width: 5) }
+            case "comparison":
+                HStack(spacing: 0) {
+                    comparison(block.left, highlighted: false)
+                    comparison(block.right, highlighted: true)
+                }
+            case "step":
+                HStack(alignment: .top, spacing: 11) {
+                    Text(String(format: "%02d", index + 1)).font(.system(size: 10, weight: .black, design: .monospaced)).foregroundStyle(fullBleed ? .white : palette.accent)
+                    VStack(alignment: .leading, spacing: 3) {
+                        Text(block.label ?? "").font(.system(size: 12, weight: .bold))
+                        if let detail = block.detail { Text(detail).font(.system(size: 10, weight: .medium)).opacity(0.64) }
+                    }
+                }
+                .padding(.vertical, 9).frame(maxWidth: .infinity, alignment: .leading)
+                .background(block.phase == "current" ? palette.accent : .clear)
+                .overlay(alignment: .top) { Rectangle().fill(foreground.opacity(0.2)).frame(height: 1) }
+            default:
+                HStack(alignment: .top) {
+                    VStack(alignment: .leading, spacing: 3) {
+                        Text(block.label ?? "FACT").font(.system(size: 9, weight: .black, design: .monospaced)).foregroundStyle(fullBleed ? .white : palette.accent)
+                        if let detail = block.detail { Text(detail).font(.system(size: 10, weight: .medium)).opacity(0.64) }
+                    }
+                    Spacer()
+                    if let value = block.value { Text(value).font(.system(size: 13, weight: .bold)) }
+                }
+                .padding(.vertical, 9).overlay(alignment: .top) { Rectangle().fill(foreground.opacity(0.2)).frame(height: 1) }
+            }
         }
+    }
+
+    private func comparison(_ item: CardComparisonItem?, highlighted: Bool) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text(item?.label ?? "—").font(.system(size: 9, weight: .black, design: .monospaced))
+            Text(item?.value ?? "—").font(.system(size: 16, weight: .bold))
+            if let detail = item?.detail { Text(detail).font(.system(size: 10, weight: .medium)).opacity(0.64) }
+        }
+        .padding(11).frame(maxWidth: .infinity, alignment: .leading)
+        .background(highlighted && !fullBleed ? palette.accent : foreground.opacity(0.04))
+        .overlay(Rectangle().stroke(foreground.opacity(0.45), lineWidth: 1))
     }
 }
 

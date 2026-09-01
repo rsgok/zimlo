@@ -6,7 +6,8 @@ import { FeedView } from "./FeedView";
 
 const post: FeedPost = {
   id: "post-a", taskId: "task-a", runId: "run-a", agentId: "codex", sessionId: "session-a",
-  kind: "result", template: "paper", headline: "结果", takeaway: "完成", highlights: [],
+  kind: "result", presentation: { system: "editorial", theme: "ink_classic", layout: "feature", typography: "serif", density: "balanced", mediaPlacement: "none" },
+  headline: "结果", takeaway: "完成", highlights: [], blocks: [],
   dedupeKey: "result", source: "agent",
   createdAt: "2026-07-23T00:00:00.000Z",
 };

@@ -39,7 +39,23 @@ Write in the user's primary language and order the card as: conclusion → user 
 - `takeaway`: why the user should care now, in one or two sentences.
 - `highlights`: up to three verifiable facts.
 - `proof`: the strongest concise check or first-party fact, never raw logs.
-- `template`: `paper` for summaries, `grid` for evidence, `sticky` for decisions, `marker` for attention, `poster` for one major result.
+- `presentation`: always provide all six keys. Prefer `auto` unless a visual choice materially improves the message; Bridge resolves `auto` to a stable, fully explicit card before storage.
+- `blocks`: optional structured facts, metrics, steps, quotes, or comparisons. Use them only when they make evidence easier to scan; they never grant or represent interaction permissions.
+
+## Card presentation
+
+The tool schema is the source of truth and includes descriptions for every selectable value. You may choose:
+
+- `system`: `editorial` for narrative/judgment/summary, `swiss` for metrics/steps/comparison/evidence/alerts.
+- Editorial themes: `ink_classic`, `indigo_porcelain`, `forest_ink`, `kraft_paper`, `dune`, `midnight_ink`.
+- Swiss themes: `ikb`, `lemon`, `lemon_green`, `safety_orange`.
+- Editorial layouts: `feature`, `field_note`, `quote`, `story_split`, `media_quiet_zone`, `document_excerpt`.
+- Swiss layouts: `metric_grid`, `status_board`, `evidence_top`, `comparison`, `steps`, `alert`.
+- `typography`: `serif`, `sans`, `mono`, `rounded`; these are semantic system-font roles, not arbitrary font names.
+- `density`: `airy`, `balanced`, `compact`.
+- `mediaPlacement`: `hero`, `full_bleed`, `split`, `evidence`, `inline`.
+
+Every presentation key also accepts `auto`. Do not send raw CSS, hex colors, font family names, HTML, or rendering instructions. Explicit themes and layouts must belong to the chosen system. Layouts such as `metric_grid`, `quote`, `comparison`, and `steps` require the matching block; media layouts require registered media; `alert` requires `attention` or `failure`.
 
 If Zimlo is unavailable, try once and continue the coding task. Never claim a post succeeded without confirmation.
 

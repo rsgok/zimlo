@@ -17,7 +17,8 @@ function postItem(id: string, options: { unread?: boolean; needsAction?: boolean
   const createdAt = options.createdAt ?? "2026-07-23T00:00:00.000Z";
   const post: FeedPost = {
     id, taskId: `task-${id}`, runId: "run-a", agentId: "codex", sessionId: null,
-    kind: "result", template: "paper", headline: id, takeaway: "", highlights: [],
+    kind: "result", presentation: { system: "editorial", theme: "ink_classic", layout: "feature", typography: "serif", density: "balanced", mediaPlacement: "none" },
+    headline: id, takeaway: "", highlights: [], blocks: [],
     dedupeKey: id, source: "agent", createdAt,
   };
   return {

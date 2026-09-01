@@ -191,8 +191,9 @@ describe("PushService", () => {
     store.upsertAction(action);
     store.insertFeedPost({
       id: "post-unread", taskId: "task-a", runId: "run-a", agentId: "codex",
-      sessionId: "session-a", kind: "result", template: "paper", headline: "完成",
-      takeaway: "结果可查看", highlights: [], dedupeKey: "unread-a", source: "agent",
+      sessionId: "session-a", kind: "result",
+      presentation: { system: "editorial", theme: "ink_classic", layout: "field_note", typography: "serif", density: "airy", mediaPlacement: "none" },
+      headline: "完成", takeaway: "结果可查看", highlights: [], blocks: [], dedupeKey: "unread-a", source: "agent",
       createdAt: "2026-07-28T00:00:01.000Z",
     });
     expect(store.notificationUnreadCount("device_phone")).toBe(2);
@@ -330,10 +331,11 @@ describe("notification event policy", () => {
       agentId: "codex",
       sessionId: "session-a",
       kind: "result" as const,
-      template: "paper" as const,
+      presentation: { system: "editorial", theme: "ink_classic", layout: "field_note", typography: "serif", density: "airy", mediaPlacement: "none" } as const,
       headline: "任务完成",
       takeaway: "结果已经可以查看。",
       highlights: [],
+      blocks: [],
       dedupeKey: "result-a",
       source: "agent" as const,
       createdAt: "2026-08-26T00:00:01.000Z",
@@ -393,8 +395,9 @@ describe("notification event policy", () => {
     };
     const failurePost = {
       id: "post-failure", taskId: "task-a", runId: "run-a", agentId: "codex",
-      sessionId: "session-a", kind: "failure" as const, template: "paper" as const,
-      headline: "任务失败", takeaway: "请查看错误详情。", highlights: [],
+      sessionId: "session-a", kind: "failure" as const,
+      presentation: { system: "swiss", theme: "safety_orange", layout: "alert", typography: "sans", density: "airy", mediaPlacement: "none" } as const,
+      headline: "任务失败", takeaway: "请查看错误详情。", highlights: [], blocks: [],
       dedupeKey: "failure-a", source: "agent" as const, createdAt: "2026-08-26T00:00:02.000Z",
     };
 

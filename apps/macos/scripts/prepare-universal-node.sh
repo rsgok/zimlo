@@ -1,8 +1,8 @@
 #!/bin/zsh
 set -euo pipefail
 
-if (( $# != 1 )); then
-  echo "usage: prepare-universal-node.sh OUTPUT_PATH" >&2
+if (( $# < 1 || $# > 2 )); then
+  echo "usage: prepare-universal-node.sh OUTPUT_PATH [arm64|x86_64|universal]" >&2
   exit 64
 fi
 
@@ -11,6 +11,7 @@ macos_root=${script_dir:h}
 node_version=${ZIMLO_NODE_VERSION:-24.15.0}
 cache_root="${macos_root}/.build/node-${node_version}"
 output_path=$1
+requested_architecture=${2:-universal}
 checksum_url="https://nodejs.org/dist/v${node_version}/SHASUMS256.txt"
 checksum_path="${cache_root}/SHASUMS256.txt"
 
@@ -19,8 +20,18 @@ if [[ ! -f "${checksum_path}" ]]; then
   curl --fail --location --retry 3 --output "${checksum_path}" "${checksum_url}"
 fi
 
+case "${requested_architecture}" in
+  arm64) architectures=(arm64) ;;
+  x86_64) architectures=(x64) ;;
+  universal) architectures=(arm64 x64) ;;
+  *)
+    echo "Unsupported Node architecture: ${requested_architecture}" >&2
+    exit 64
+    ;;
+esac
+
 typeset -a nodes
-for architecture in arm64 x64; do
+for architecture in "${architectures[@]}"; do
   archive="node-v${node_version}-darwin-${architecture}.tar.gz"
   archive_path="${cache_root}/${archive}"
   extracted_path="${cache_root}/node-v${node_version}-darwin-${architecture}/bin/node"
@@ -48,6 +59,14 @@ for architecture in arm64 x64; do
   nodes+=("${extracted_path}")
 done
 
-lipo -create "${nodes[@]}" -output "${output_path}"
+if [[ "${requested_architecture}" == "universal" ]]; then
+  lipo -create "${nodes[@]}" -output "${output_path}"
+else
+  cp "${nodes[1]}" "${output_path}"
+fi
 chmod 755 "${output_path}"
-lipo "${output_path}" -verify_arch arm64 x86_64
+if [[ "${requested_architecture}" == "universal" ]]; then
+  lipo "${output_path}" -verify_arch arm64 x86_64
+else
+  lipo "${output_path}" -verify_arch "${requested_architecture}"
+fi

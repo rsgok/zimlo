@@ -1,16 +1,17 @@
-import { USER_AVATAR_IDS } from "@zimlo/protocol";
+import { CardBlockSchema, ResolvedCardPresentationSchema, resolveCardPresentation, USER_AVATAR_IDS } from "@zimlo/protocol";
 import type {
   ApprovalCategory,
+  CardBlock,
   FeedCard,
   FeedContent,
   FeedPost,
   FeedPostKind,
-  FeedTemplate,
   Material,
   NotificationSettings,
   PendingAction,
   ProjectTrustPolicy,
   PushDeviceRegistration,
+  ResolvedCardPresentation,
   Session,
   SessionCapabilities,
   TaskCommand,
@@ -44,7 +45,7 @@ export interface DeviceRecord {
 }
 
 export interface StoredFeedContentV2 {
-  template: FeedTemplate;
+  template: string;
   headline: string;
   takeaway: string;
   highlights: string[];
@@ -52,21 +53,26 @@ export interface StoredFeedContentV2 {
   content?: FeedContent;
 }
 
-export function defaultTemplate(kind: string): FeedTemplate {
-  const templates: Partial<Record<FeedPostKind, FeedTemplate>> = {
-    progress: "grid",
-    decision: "sticky",
-    attention: "marker",
-    result: "paper",
-    failure: "marker",
-  };
-  return templates[kind as FeedPostKind] ?? "paper";
+export interface StoredFeedContentV3 {
+  presentation: ResolvedCardPresentation;
+  headline: string;
+  takeaway: string;
+  highlights: string[];
+  blocks: CardBlock[];
+  proof?: string;
+  content?: FeedContent;
 }
 
-export function normalizeTemplate(value: unknown, kind: string): FeedTemplate {
-  return typeof value === "string" && ["paper", "grid", "sticky", "marker", "poster"].includes(value)
-    ? value as FeedTemplate
-    : defaultTemplate(kind);
+export function defaultPresentation(kind: string, content: FeedContent = { type: "text" }, blocks: CardBlock[] = []): ResolvedCardPresentation {
+  const semanticKind = ["progress", "decision", "attention", "result", "failure"].includes(kind)
+    ? kind as FeedPostKind
+    : "progress";
+  return resolveCardPresentation({
+    kind: semanticKind,
+    presentation: { system: "auto", theme: "auto", layout: "auto", typography: "auto", density: "auto", mediaPlacement: "auto" },
+    blocks,
+    content,
+  });
 }
 
 export function json<T>(value: string): T {
@@ -128,14 +134,20 @@ export function cardFromRow(row: Record<string, unknown>): FeedCard {
 }
 
 export function feedPostFromRow(row: Record<string, unknown>): FeedPost {
-  let content: StoredFeedContentV2;
+  let content: StoredFeedContentV3;
   try {
     content = row.content_json
-      ? json<StoredFeedContentV2>(String(row.content_json))
+      ? json<StoredFeedContentV3>(String(row.content_json))
       : fallbackFeedContent(row);
   } catch {
     content = fallbackFeedContent(row);
   }
+  const parsedBlocks = CardBlockSchema.array().max(8).safeParse(content.blocks);
+  const blocks = parsedBlocks.success ? parsedBlocks.data : [];
+  const parsedPresentation = ResolvedCardPresentationSchema.safeParse(content.presentation);
+  const presentation = parsedPresentation.success
+    ? parsedPresentation.data
+    : defaultPresentation(String(row.kind), content.content, blocks);
   return {
     id: String(row.id),
     projectId: row.project_id === null || row.project_id === undefined ? null : String(row.project_id),
@@ -144,10 +156,11 @@ export function feedPostFromRow(row: Record<string, unknown>): FeedPost {
     agentId: String(row.agent_id),
     sessionId: row.session_id === null ? null : String(row.session_id),
     kind: row.kind as FeedPost["kind"],
-    template: normalizeTemplate(content.template, String(row.kind)),
+    presentation,
     headline: content.headline,
     takeaway: content.takeaway,
     highlights: content.highlights,
+    blocks,
     ...(content.proof ? { proof: content.proof } : {}),
     content: content.content ?? { type: "text" },
     dedupeKey: String(row.dedupe_key),
@@ -156,12 +169,13 @@ export function feedPostFromRow(row: Record<string, unknown>): FeedPost {
   };
 }
 
-function fallbackFeedContent(row: Record<string, unknown>): StoredFeedContentV2 {
+function fallbackFeedContent(row: Record<string, unknown>): StoredFeedContentV3 {
   return {
-    template: defaultTemplate(String(row.kind)),
+    presentation: defaultPresentation(String(row.kind)),
     headline: String(row.title).slice(0, 72),
     takeaway: String(row.body).slice(0, 320),
     highlights: [],
+    blocks: [],
   };
 }
 

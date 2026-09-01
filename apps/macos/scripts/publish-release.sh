@@ -16,12 +16,19 @@ downloaded_appcast_path="${release_dir}/appcast.download.xml"
 verified_appcast_path="${release_dir}/appcast.verified.xml"
 release_manifest_path="${release_dir}/latest.json"
 verified_manifest_path="${release_dir}/latest.verified.json"
+runtime_dir="${release_dir}/runtime"
+runtime_manifest_path="${runtime_dir}/runtime-latest.json"
+verified_runtime_manifest_path="${release_dir}/runtime-latest.verified.json"
 bucket=${ZIMLO_RELEASE_BUCKET:-zimlo-releases}
 public_base_url=${ZIMLO_RELEASE_BASE_URL:-https://cloud.zimlo.app/releases/macos}
 sparkle_tools="${macos_root}/.build/artifacts/sparkle/Sparkle/bin"
 
 if [[ ! -f "${dmg_path}" ]]; then
   echo "Release DMG does not exist: ${dmg_path}" >&2
+  exit 1
+fi
+if [[ ! -f "${runtime_manifest_path}" ]]; then
+  echo "Runtime release manifest does not exist: ${runtime_manifest_path}" >&2
   exit 1
 fi
 if [[ ! -x "${sparkle_tools}/generate_appcast" ]]; then
@@ -34,6 +41,51 @@ if [[ ! "${dmg_path:t}" =~ '^Zimlo-([0-9]+\.[0-9]+\.[0-9]+([.-][0-9A-Za-z.-]+)?)
 fi
 version=${match[1]}
 
+typeset -a runtime_files
+runtime_files=("${(@f)$(node -e '
+  const payload = JSON.parse(require("node:fs").readFileSync(process.argv[1], "utf8"));
+  if (
+    payload.schemaVersion !== 1
+    || typeof payload.runtimeVersion !== "string"
+    || !Number.isSafeInteger(payload.protocolVersion)
+    || !payload.artifacts
+  ) throw new Error("Runtime manifest is invalid.");
+  for (const architecture of ["arm64", "x86_64"]) {
+    const artifact = payload.artifacts[architecture];
+    const url = new URL(artifact?.downloadURL ?? "");
+    const fileName = decodeURIComponent(url.pathname.split("/").at(-1) ?? "");
+    if (
+      url.protocol !== "https:"
+      || !/^ZimloRuntime-[0-9A-Za-z._-]+-(arm64|x86_64)\.zip$/u.test(fileName)
+      || !/^[a-f0-9]{64}$/u.test(artifact?.sha256 ?? "")
+      || !Number.isSafeInteger(artifact?.size)
+      || artifact.size < 1
+    ) throw new Error(`Runtime artifact ${architecture} is invalid.`);
+    const path = require("node:path").join(process.argv[2], fileName);
+    const data = require("node:fs").readFileSync(path);
+    const digest = require("node:crypto").createHash("sha256").update(data).digest("hex");
+    if (digest !== artifact.sha256 || data.byteLength !== artifact.size) {
+      throw new Error(`Runtime artifact ${architecture} does not match its manifest.`);
+    }
+    console.log(fileName);
+  }
+' "${runtime_manifest_path}" "${runtime_dir}")}")
+if (( ${#runtime_files[@]} != 2 )); then
+  echo "Runtime manifest must contain arm64 and x86_64 artifacts." >&2
+  exit 1
+fi
+
+runtime_verification_root=$(mktemp -d)
+trap 'rm -rf "${runtime_verification_root}"' EXIT
+for runtime_file in "${runtime_files[@]}"; do
+  runtime_extract="${runtime_verification_root}/${runtime_file:r}"
+  mkdir -p "${runtime_extract}"
+  ditto -x -k "${runtime_dir}/${runtime_file}" "${runtime_extract}"
+  runtime_helper="${runtime_extract}/ZimloBridgeRuntime.app"
+  codesign --verify --deep --strict --verbose=2 "${runtime_helper}"
+  xcrun stapler validate "${runtime_helper}"
+done
+
 # Publishing is deliberately fail-closed: a locally generated or modified DMG
 # must never become an update merely because it has the expected filename.
 codesign --verify --strict --verbose=2 "${dmg_path}"
@@ -41,7 +93,11 @@ xcrun stapler validate "${dmg_path}"
 spctl --assess --type open --context context:primary-signature --verbose=2 "${dmg_path}"
 
 cd "${repo_root}"
-rm -f "${downloaded_appcast_path}" "${verified_appcast_path}" "${verified_manifest_path}"
+rm -f \
+  "${downloaded_appcast_path}" \
+  "${verified_appcast_path}" \
+  "${verified_manifest_path}" \
+  "${verified_runtime_manifest_path}"
 appcast_status=$(
   curl --silent --show-error --location \
     --output "${downloaded_appcast_path}" \
@@ -88,6 +144,16 @@ node -e '
   require("node:fs").writeFileSync(path, `${JSON.stringify(payload)}\n`, { mode: 0o644 });
 ' "${release_manifest_path}" "${version}" "${dmg_path:t}" "${public_base_url}"
 
+for runtime_file in "${runtime_files[@]}"; do
+  pnpm --filter @zimlo/cloud exec wrangler r2 object put --remote \
+    "${bucket}/macos/${runtime_file}" \
+    --file "${runtime_dir}/${runtime_file}" \
+    --content-type "application/zip"
+done
+pnpm --filter @zimlo/cloud exec wrangler r2 object put --remote \
+  "${bucket}/macos/runtime-latest.json" \
+  --file "${runtime_manifest_path}" \
+  --content-type "application/json; charset=utf-8"
 pnpm --filter @zimlo/cloud exec wrangler r2 object put --remote \
   "${bucket}/macos/${dmg_path:t}" \
   --file "${dmg_path}" \
@@ -124,4 +190,20 @@ node -e '
     throw new Error("Published release manifest does not match the signed disk image.");
   }
 ' "${verified_manifest_path}" "${version}" "${dmg_path:t}" "${public_base_url}"
+
+curl --fail --silent --show-error --location \
+  "${public_base_url}/runtime-latest.json?verify=${version}" \
+  --output "${verified_runtime_manifest_path}"
+node -e '
+  const [expectedPath, actualPath] = process.argv.slice(1);
+  const expected = JSON.parse(require("node:fs").readFileSync(expectedPath, "utf8"));
+  const actual = JSON.parse(require("node:fs").readFileSync(actualPath, "utf8"));
+  if (JSON.stringify(actual) !== JSON.stringify(expected)) {
+    throw new Error("Published Runtime manifest does not match local artifacts.");
+  }
+' "${runtime_manifest_path}" "${verified_runtime_manifest_path}"
+for runtime_file in "${runtime_files[@]}"; do
+  curl --fail --silent --show-error --head \
+    "${public_base_url}/${runtime_file}?verify=${version}" >/dev/null
+done
 echo "${public_base_url}/appcast.xml"

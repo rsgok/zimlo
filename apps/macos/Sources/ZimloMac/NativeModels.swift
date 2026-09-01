@@ -192,15 +192,49 @@ struct FeedPost: Codable, Hashable, Identifiable {
     var agentId: String
     var sessionId: String?
     var kind: String
-    var template: String
+    var presentation: CardPresentation
     var headline: String
     var takeaway: String
     var highlights: [String]
+    var blocks: [CardBlock]
     var proof: String?
     var content: FeedContent?
     var dedupeKey: String
     var source: String
     var createdAt: String
+}
+
+struct CardPresentation: Codable, Hashable {
+    var system: String
+    var theme: String
+    var layout: String
+    var typography: String
+    var density: String
+    var mediaPlacement: String
+}
+
+struct CardComparisonItem: Codable, Hashable {
+    var label: String
+    var value: String
+    var detail: String?
+}
+
+struct CardBlock: Codable, Hashable, Identifiable {
+    var type: String
+    var label: String?
+    var detail: String?
+    var value: String?
+    var unit: String?
+    var caption: String?
+    var phase: String?
+    var text: String?
+    var attribution: String?
+    var left: CardComparisonItem?
+    var right: CardComparisonItem?
+
+    var id: String {
+        [type, label, value, text, left?.label, right?.label].compactMap { $0 }.joined(separator: ":")
+    }
 }
 
 struct Material: Codable, Hashable, Identifiable {

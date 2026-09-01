@@ -30,6 +30,15 @@ function request(name: AgentToolRequest["name"], args: unknown, id = crypto.rand
   return { type: "agent_tool", id, provider: "codex", parentPid: 4242, cwd: "/tmp/project-a", name, arguments: args };
 }
 
+const presentation = {
+  system: "auto",
+  theme: "auto",
+  layout: "auto",
+  typography: "auto",
+  density: "auto",
+  mediaPlacement: "auto",
+} as const;
+
 describe("agent-authored feed protocol", () => {
   let store: ZimloStore;
   let runtime: RuntimeHub;
@@ -49,7 +58,7 @@ describe("agent-authored feed protocol", () => {
     const args = {
       task_id: "task-a",
       kind: "progress",
-      template: "grid",
+      presentation,
       headline: "完成认证重构",
       takeaway: "刷新竞态已修复，用户不会再被重复登出。",
       highlights: ["刷新请求只保留一个在途实例"],
@@ -60,7 +69,11 @@ describe("agent-authored feed protocol", () => {
     expect(tools.handle(request("feed.post", args)).data).toMatchObject({ deduplicated: true });
     expect(store.listFeedPosts()).toHaveLength(1);
     expect(store.getFeedCheckpoint("codex", "run-a")?.decisionKind).toBe("post");
-    expect(store.listFeedPosts()[0]).toMatchObject({ template: "grid", headline: "完成认证重构", highlights: ["刷新请求只保留一个在途实例"] });
+    expect(store.listFeedPosts()[0]).toMatchObject({
+      presentation: { system: "swiss", theme: "lemon_green", layout: "status_board", mediaPlacement: "none" },
+      headline: "完成认证重构",
+      highlights: ["刷新请求只保留一个在途实例"],
+    });
   });
 
   it("exposes only the two tools the model needs", () => {
@@ -71,7 +84,7 @@ describe("agent-authored feed protocol", () => {
     const result = tools.handle(request("feed.post", {
       task_id: "task-a",
       kind: "result",
-      template: "paper",
+      presentation,
       headline: "优化已可审阅",
       takeaway: "用户现在可以直接检查最终行为。",
       highlights: ["普通轮次不再触发 Hook"],
@@ -88,7 +101,7 @@ describe("agent-authored feed protocol", () => {
 
   it("coalesces nearby progress posts for the same task", () => {
     const first = {
-      task_id: "task-a", kind: "progress", template: "grid", headline: "第一项成果可检查",
+      task_id: "task-a", kind: "progress", presentation, headline: "第一项成果可检查",
       takeaway: "第一项行为已经验证。", highlights: [], proof: "定向测试通过", dedupe_key: "task-a:stage-1",
     };
     const second = {
@@ -106,7 +119,7 @@ describe("agent-authored feed protocol", () => {
 
   it("rejects task states that do not match the card kind", () => {
     const result = tools.handle(request("feed.post", {
-      task_id: "task-a", kind: "progress", template: "grid", headline: "等待选择",
+      task_id: "task-a", kind: "progress", presentation, headline: "等待选择",
       takeaway: "需要用户决定下一步。", highlights: [], proof: "两种方案已验证",
       dedupe_key: "task-a:invalid-state", state: "waiting_input", state_reason: "等待选择",
     }));
@@ -118,7 +131,7 @@ describe("agent-authored feed protocol", () => {
     const result = tools.handle(request("feed.post", {
       task_id: "task-a",
       kind: "progress",
-      template: "grid",
+      presentation,
       headline: "正在继续优化",
       takeaway: "已经读完主要代码，下一步继续运行测试。",
       highlights: ["完成代码阅读"],
@@ -134,7 +147,7 @@ describe("agent-authored feed protocol", () => {
     const legacyAction = tools.handle(request("feed.post", {
       task_id: "task-a",
       kind: "attention",
-      template: "marker",
+      presentation,
       headline: "需要选择兼容方案",
       takeaway: "旧客户端无法读取新记录。",
       highlights: [],
@@ -160,7 +173,7 @@ describe("agent-authored feed protocol", () => {
     tools.handle(request("feed.post", {
       task_id: "task-a",
       kind: "attention",
-      template: "marker",
+      presentation,
       headline: "需要选择兼容方案",
       takeaway: "两种迁移策略会影响旧客户端。",
       highlights: ["旧客户端仍在使用"],
@@ -205,7 +218,7 @@ describe("agent-authored feed protocol", () => {
       expect(localStore.getMaterial(materialId)).toMatchObject({ kind: "image", status: "ready", origin: "agent" });
 
       const posted = localTools.handle({ ...request("feed.post", {
-        task_id: "task-a", kind: "progress", template: "paper", headline: "阶段效果图已生成",
+        task_id: "task-a", kind: "progress", presentation, headline: "阶段效果图已生成",
         takeaway: "可以直接查看最终画面。", highlights: [],
         content: { type: "image_album", materialIds: [materialId] }, dedupe_key: "task-a:image-progress",
       }), cwd: root });
@@ -249,7 +262,7 @@ describe("feed decision Stop checkpoint", () => {
         arguments: {
           task_id: "editor-task",
           kind: "result",
-          template: "paper",
+          presentation,
           headline: "归属完成",
           takeaway: "卡片继承真实 Session 的项目。",
           highlights: [],

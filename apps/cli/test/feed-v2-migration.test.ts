@@ -59,16 +59,24 @@ describe("Feed V3 storage migration", () => {
     `);
     insert.run("user-post", "instruction", "你交给 Agent 的任务", "请修复登录问题", "instruction:1", "user", "2026-07-21T00:00:00.000Z");
     insert.run("agent-post", "result", "登录问题已修复", "刷新竞态已消除", "result:1", "agent", "2026-07-21T00:01:00.000Z");
-    seed.database.prepare("DELETE FROM metadata WHERE key IN ('feed_v2_migration', 'interaction_v3_migration')").run();
+    seed.database.prepare("DELETE FROM metadata WHERE key IN ('feed_v2_migration', 'feed_card_presentation_v3', 'interaction_v3_migration')").run();
     seed.close();
 
     const migrated = new ZimloStore(path);
     expect(migrated.listFeedPosts()).toEqual([expect.objectContaining({
       id: "agent-post",
-      template: "paper",
+      presentation: {
+        system: "editorial",
+        theme: "ink_classic",
+        layout: "field_note",
+        typography: "serif",
+        density: "airy",
+        mediaPlacement: "none",
+      },
       headline: "登录问题已修复",
       takeaway: "刷新竞态已消除",
       highlights: [],
+      blocks: [],
     })]);
     expect(migrated.listEvents("session-a").filter((event) => event.kind === "user_instruction")).toEqual([
       expect.objectContaining({ payload: expect.objectContaining({ prompt: "请修复登录问题" }) }),

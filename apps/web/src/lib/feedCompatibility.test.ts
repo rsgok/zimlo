@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { isInternalZimloAction, normalizeFeedPost, normalizeSnapshot } from "./feedCompatibility";
 
 describe("Feed compatibility", () => {
-  it("maps a legacy Agent post to the V2 reading model", () => {
+  it("maps a legacy Agent post to the v5 reading model", () => {
     expect(normalizeFeedPost({
       id: "legacy-agent",
       taskId: "task-a",
@@ -16,7 +16,7 @@ describe("Feed compatibility", () => {
       source: "agent",
       createdAt: "2026-07-21T00:00:00.000Z",
     })).toMatchObject({
-      template: "grid",
+      presentation: { system: "swiss", theme: "lemon_green", layout: "status_board", typography: "sans", density: "airy", mediaPlacement: "none" },
       headline: "旧标题",
       takeaway: "旧正文",
       highlights: [],
@@ -38,7 +38,12 @@ describe("Feed compatibility", () => {
     } as never);
 
     expect(snapshot.posts).toHaveLength(1);
-    expect(snapshot.posts[0]).toMatchObject({ id: "agent", headline: "完成", template: "paper" });
+    expect(snapshot.posts[0]).toMatchObject({
+      id: "agent",
+      headline: "完成",
+      presentation: { system: "editorial", theme: "ink_classic", layout: "field_note", mediaPlacement: "none" },
+      blocks: [],
+    });
     expect(snapshot.projects).toEqual([]);
     expect(snapshot.tasks).toEqual([]);
     expect(snapshot.dismissedFeedItemIds).toEqual([]);

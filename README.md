@@ -203,7 +203,7 @@ claude mcp add --scope user zimlo -- zimlo mcp --provider claude
 
 也可以在 Mac 本机的 **Settings → Runtime 接入方式** 中查看 Codex/Claude 的 GUI、CLI 状态，并显式点击“配置 / 修复 CLI 接入”。Zimlo 启动时不会静默修改用户配置；Claude Code 的 GUI 与 CLI 共用用户级 Hooks/MCP，hook 会根据终端与父进程链记录实际 surface。Zimlo 自己创建的 Codex app-server 与 Claude runner 任务标记为 `Zimlo 托管`。
 
-Agent 的编辑门槛内置在工具描述与 Skill 中：只有用户必须行动、可审阅阶段产物已经就绪、终止性失败/阻塞或最终结果才发帖。`progress` 必须带可检查物料或具体验证证据，同一任务十分钟内的连续阶段帖由服务端合并。每张卡按“结论 → 用户影响 → 关键事实 → 证据 → 下一步”书写，并从 `paper / grid / sticky / marker / poster` 中选择模板。普通 tool call、文件读取、编译测试过程、计划变化、短暂重试和心跳保持沉默；`state` / `state_reason` 可随 `feed.post` 一次提交，不需要额外状态工具调用。
+Agent 的编辑门槛内置在工具描述与 Skill 中：只有用户必须行动、可审阅阶段产物已经就绪、终止性失败/阻塞或最终结果才发帖。`progress` 必须带可检查物料或具体验证证据，同一任务十分钟内的连续阶段帖由服务端合并。每张卡按“结论 → 用户影响 → 关键事实 → 证据 → 下一步”书写，并通过受控的 `presentation`（系统、主题、布局、字体角色、密度与媒体位置）和可选 `blocks` 表达；不接受 CSS、任意颜色或字体名。普通 tool call、文件读取、编译测试过程、计划变化、短暂重试和心跳保持沉默；`state` / `state_reason` 可随 `feed.post` 一次提交，不需要额外状态工具调用。
 
 Feed V3 的 `feed.post` 使用结构化字段：`headline`、`takeaway`、最多三条 `highlights`、可选 `proof` 和 Artifact。卡片不再携带接受、修改或审批字段；真实高风险操作继续通过独立 `PendingAction` 明确批准或拒绝。升级插件后必须新建 Codex 任务，旧协议客户端需要同步升级。
 

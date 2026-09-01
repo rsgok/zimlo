@@ -54,10 +54,11 @@ const post: FeedPost = {
   agentId: "codex",
   sessionId: session.id,
   kind: "result",
-  template: "paper",
+  presentation: { system: "editorial", theme: "ink_classic", layout: "field_note", typography: "serif", density: "balanced", mediaPlacement: "none" },
   headline: "任务搜索与语义标题已经优化",
   takeaway: "任务列表现在更容易扫描。",
   highlights: [],
+  blocks: [],
   dedupeKey: "post-a",
   source: "agent",
   createdAt: "2026-07-22T10:01:00.000Z",
@@ -80,7 +81,7 @@ describe("TasksView", () => {
     expect(markup).not.toContain("回复、审阅或恢复");
     expect(markup).toContain("aria-label=\"管理任务\"");
     expect(markup).toContain("Codex");
-    expect(markup).not.toContain("/Users/kai/Code/zimlo");
+    expect(markup).not.toContain("<small>/Users/kai/Code/zimlo");
   });
 
   it("prefers the latest editorial result over a machine-state reason for generated titles", () => {

@@ -5,6 +5,7 @@ import { FormattedText } from "./FormattedText";
 import { AgentAvatar } from "./UserAvatar";
 import { relativeTime, useNow } from "../lib/nowTicker";
 import { initialMaterialURL, materialURL } from "../lib/materialAccess";
+import "../card-system.generated.css";
 
 interface FeedPostViewProps {
   post: FeedPost;
@@ -24,14 +25,33 @@ interface MediaPreview {
   mimeType: string;
 }
 
+const POST_KIND_LABELS: Record<FeedPost["kind"], string> = {
+  progress: "PROGRESS",
+  decision: "DECISION",
+  attention: "ATTENTION",
+  result: "RESULT",
+  failure: "FAILURE",
+};
+
 export const FeedPostView = memo(function FeedPostView({ post, materials = [], session, project, onOpenProject, interactionMode = "swipe", historical = false, send = () => false }: FeedPostViewProps) {
   const now = useNow();
   const content = post.content ?? { type: "text" as const };
   const [mediaPreview, setMediaPreview] = useState<MediaPreview | null>(null);
   const taskHint = historical ? "历史" : interactionMode === "desktop" ? "打开任务" : "滑动查看任务";
+  const presentation = post.presentation;
+  const contentClass = `content-${content.type}`;
+  const presentationClass = [
+    `card-system-${presentation.system}`,
+    `card-theme-${presentation.theme}`,
+    `card-layout-${presentation.layout}`,
+    `card-type-${presentation.typography}`,
+    `card-density-${presentation.density}`,
+    `card-media-${presentation.mediaPlacement}`,
+  ].join(" ");
 
   return (
-    <article className={`feed-post post-${post.kind} template-${post.template} content-${content.type}`}>
+    <article className={`feed-post post-${post.kind} ${presentationClass} ${contentClass}`}>
+      {content.type !== "text" && <div className="post-media"><FeedMediaCard post={{ ...post, content }} materials={materials} onPreview={setMediaPreview} send={send} /></div>}
       <div className="post-topline">
         <button className="post-agent" disabled={!project} onClick={(event) => { event.stopPropagation(); if (project) onOpenProject(project.id); }}>
           {project && <AgentAvatar avatar={project.agentProfile.avatar} className="post-agent-avatar" alt="" />}
@@ -40,10 +60,11 @@ export const FeedPostView = memo(function FeedPostView({ post, materials = [], s
         <span className="post-time">{relativeTime(post.createdAt, now)}</span>
       </div>
 
-      {content.type !== "text" && <FeedMediaCard post={{ ...post, content }} materials={materials} onPreview={setMediaPreview} send={send} />}
       <div className={`post-copy ${content.type !== "text" ? "post-copy-media" : ""}`}>
+        <p className="post-eyebrow">{POST_KIND_LABELS[post.kind]} / {presentation.system.toUpperCase()}</p>
         <h2>{post.headline}</h2>
         <div className="post-takeaway"><FormattedText text={post.takeaway} compact /></div>
+        <CardBlocks blocks={post.blocks} />
         {post.highlights.length > 0 && (
           <ul className="post-highlights">
             {post.highlights.slice(0, 2).map((highlight) => <li key={highlight}>{highlight}</li>)}
@@ -52,6 +73,7 @@ export const FeedPostView = memo(function FeedPostView({ post, materials = [], s
       </div>
 
       <div className="post-footer">
+        {post.proof && <p className="post-proof"><span>VERIFIED</span>{post.proof}</p>}
         {(historical || session) && <span className="post-task-hint">{taskHint}</span>}
       </div>
       {mediaPreview && <FeedMediaViewer preview={mediaPreview} onClose={() => setMediaPreview(null)} />}
@@ -68,6 +90,32 @@ export const FeedPostView = memo(function FeedPostView({ post, materials = [], s
   && previous.historical === next.historical,
 );
 
+function CardBlocks({ blocks }: { blocks: FeedPost["blocks"] }) {
+  if (blocks.length === 0) return null;
+  return <div className="card-blocks" aria-label="结构化信息">
+    {blocks.map((block, index) => {
+      const key = `${block.type}:${index}`;
+      if (block.type === "fact") return <div className="card-block card-block-fact" key={key}>
+        <span>{block.label}</span><strong>{block.value ?? "—"}</strong><small>{block.detail}</small>
+      </div>;
+      if (block.type === "metric") return <div className="card-block card-block-metric" key={key}>
+        <span>{block.label}</span><strong>{block.value}{block.unit && <em>{block.unit}</em>}</strong>{block.caption && <small>{block.caption}</small>}
+      </div>;
+      if (block.type === "step") return <div className={`card-block card-block-step step-${block.phase}`} key={key}>
+        <span>{String(index + 1).padStart(2, "0")}</span><strong>{block.label}</strong>{block.detail && <small>{block.detail}</small>}
+      </div>;
+      if (block.type === "quote") return <blockquote className="card-block card-block-quote" key={key}>
+        <p>“{block.text}”</p>{block.attribution && <cite>— {block.attribution}</cite>}
+      </blockquote>;
+      return <div className="card-block card-block-comparison" key={key}>
+        {block.label && <span>{block.label}</span>}
+        <div><small>{block.left.label}</small><strong>{block.left.value}</strong>{block.left.detail && <p>{block.left.detail}</p>}</div>
+        <div><small>{block.right.label}</small><strong>{block.right.value}</strong>{block.right.detail && <p>{block.right.detail}</p>}</div>
+      </div>;
+    })}
+  </div>;
+}
+
 function FeedMediaCard({ post, materials, onPreview, send }: { post: FeedPost; materials: Material[]; onPreview: (preview: MediaPreview) => void; send: (command: ClientCommand) => boolean }) {
   const content = post.content ?? { type: "text" as const };
   const byId = new Map(materials.map((material) => [material.id, material]));
@@ -77,12 +125,15 @@ function FeedMediaCard({ post, materials, onPreview, send }: { post: FeedPost; m
       const material = byId.get(id);
       return material?.status === "ready" ? [material] : [];
     });
-    return <div className="feed-image-album" aria-label="图片组">
-      {values.map((material) => <div
-        className="feed-image-preview"
-        key={material.id}
-      >{asset(material)}</div>)}
-      {values.length > 1 && <div className="feed-image-dots" aria-hidden="true">{values.map((material) => <i key={material.id} />)}</div>}
+    return <div className="feed-image-shell">
+      <div className="feed-image-album" aria-label="图片组">
+        {values.map((material) => <div
+          className="feed-image-preview"
+          key={material.id}
+        >{asset(material)}</div>)}
+        {values.length > 1 && <div className="feed-image-dots" aria-hidden="true">{values.map((material) => <i key={material.id} />)}</div>}
+      </div>
+      {content.caption && <p className="feed-media-caption">{content.caption}</p>}
     </div>;
   }
   if (content.type === "video") {

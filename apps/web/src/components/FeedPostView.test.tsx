@@ -12,8 +12,10 @@ const session: Session = {
 
 const post: FeedPost = {
   id: "post-a", taskId: "task-a", runId: "run-a", agentId: "codex", sessionId: session.id,
-  kind: "attention", template: "marker", headline: "需要确认交互方向", takeaway: "Agent 正在等待回答。",
-  highlights: [], dedupeKey: "attention-a", source: "agent", createdAt: "2026-07-23T00:00:00.000Z",
+  kind: "attention",
+  presentation: { system: "swiss", theme: "safety_orange", layout: "alert", typography: "sans", density: "balanced", mediaPlacement: "none" },
+  headline: "需要确认交互方向", takeaway: "Agent 正在等待回答。",
+  highlights: [], blocks: [], dedupeKey: "attention-a", source: "agent", createdAt: "2026-07-23T00:00:00.000Z",
 };
 
 const renderPost = (value: FeedPost, materials: Material[] = [], interactionMode: "swipe" | "desktop" = "swipe", historical = false) => renderToStaticMarkup(

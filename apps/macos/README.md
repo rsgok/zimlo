@@ -12,14 +12,16 @@
 pnpm macos:build
 ```
 
-构建结果位于 `apps/macos/.build/Zimlo.app`，其中包含 Zimlo CLI、Web UI、生产依赖和 Sparkle。Swift 主程序与内置 Node Runtime 都是 Universal Binary，可同时运行在 Apple Silicon 与 Intel Mac：
+构建结果位于 `apps/macos/.build/Zimlo.app`。App 只包含原生 SwiftUI 主程序、资源和 Sparkle，当前约 18 MB；Bridge Runtime 会按当前 CPU 架构构建在 App 包外：
 
 ```bash
 file apps/macos/.build/Zimlo.app/Contents/MacOS/Zimlo
-file apps/macos/.build/Zimlo.app/Contents/Resources/runtime/node
+file apps/macos/.build/runtime-0.3.0-1/arm64/ZimloBridgeRuntime.app/Contents/MacOS/node
 ```
 
-开发脚本使用 ad-hoc 签名。内置 Node 单独声明 V8 JIT 所需的最小 Hardened Runtime entitlement，主应用不继承这项权限。
+开发脚本使用 ad-hoc 签名，并把 Runtime 开发路径写入开发 App。正式版本首次需要 Bridge 时，从 `runtime-latest.json` 选择 arm64 或 x86_64 工件，校验 HTTPS 来源、版本、协议、SHA-256、CPU 架构和 Developer ID Team 后原子安装到 `~/Library/Application Support/Zimlo/Runtime`；升级保留上一版作为回退。用户仍不需要安装 Node、pnpm 或执行终端命令。
+
+Runtime 是独立签名的 helper app。它单独声明 V8 JIT 所需的最小 Hardened Runtime entitlement，主应用不继承这项权限。发布包包含两个约 46 MB 的按架构下载工件，但任一用户只会下载与当前 Mac 匹配的一份。
 
 ## 正式发布
 
@@ -40,6 +42,7 @@ apps/macos/.build/artifacts/sparkle/Sparkle/bin/generate_keys --account zimlo
 
 ```bash
 export ZIMLO_SIGN_IDENTITY="Developer ID Application: Your Name (TEAMID)"
+export ZIMLO_TEAM_ID="TEAMID"
 export SPARKLE_PUBLIC_KEY="..."
 export APPLE_NOTARY_PROFILE="zimlo-notary"
 export ZIMLO_VERSION="0.3.0"
@@ -55,4 +58,4 @@ apps/macos/scripts/publish-release.sh \
   apps/macos/.build/release-0.3.0/Zimlo-0.3.0.dmg
 ```
 
-Sparkle 会定期检查 `https://cloud.zimlo.app/releases/macos/appcast.xml`，验证 EdDSA 签名与 Apple 代码签名后才安装更新。
+发布脚本会先上传并验证两种架构的 Runtime 与 `runtime-latest.json`，再让 Sparkle appcast 指向新版 App，避免出现 App 已更新但 Runtime 尚不可用的窗口。Sparkle 会定期检查 `https://cloud.zimlo.app/releases/macos/appcast.xml`，验证 EdDSA 签名与 Apple 代码签名后才安装更新。

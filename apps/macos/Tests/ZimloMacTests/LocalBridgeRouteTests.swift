@@ -14,7 +14,7 @@ final class LocalBridgeRouteTests: XCTestCase {
             pid: 123,
             port: 5252,
             version: "0.2.0",
-            protocolVersion: 4,
+            protocolVersion: 5,
             startedAt: "2026-08-01T00:00:00.000Z",
             socketPath: "/tmp/zimlo.sock",
             logPath: nil
@@ -36,7 +36,7 @@ final class LocalBridgeRouteTests: XCTestCase {
             pid: 123,
             port: 70_000,
             version: "0.2.0",
-            protocolVersion: 4,
+            protocolVersion: 5,
             startedAt: "2026-08-01T00:00:00.000Z",
             socketPath: "/tmp/zimlo.sock",
             logPath: nil

@@ -6,13 +6,15 @@ macos_root=${script_dir:h}
 repo_root=${macos_root:h:h}
 build_root="${macos_root}/.build/app"
 app_path=${ZIMLO_APP_OUTPUT:-"${macos_root}/.build/Zimlo.app"}
-runtime_path="${app_path}/Contents/Resources/runtime"
 products_path="${macos_root}/.build/apple/Products/Release"
 icon_source="${macos_root}/Resources/AppIcon-1024.png"
 sign_identity=${ZIMLO_SIGN_IDENTITY:--}
 version=${ZIMLO_VERSION:-0.3.0}
 build_number=${ZIMLO_BUILD_NUMBER:-1}
 sparkle_public_key=${SPARKLE_PUBLIC_KEY:-__SPARKLE_PUBLIC_KEY__}
+runtime_version=${ZIMLO_RUNTIME_VERSION:-${version}-${build_number}}
+runtime_manifest_url=${ZIMLO_RUNTIME_MANIFEST_URL:-https://cloud.zimlo.app/releases/macos/runtime-latest.json}
+runtime_team_identifier=${ZIMLO_TEAM_ID:-${APPLE_TEAM_ID:-}}
 
 if [[ "${ZIMLO_RELEASE:-0}" == "1" ]]; then
   if [[ "${sign_identity}" == "-" ]]; then
@@ -23,10 +25,16 @@ if [[ "${ZIMLO_RELEASE:-0}" == "1" ]]; then
     echo "SPARKLE_PUBLIC_KEY must be set for release builds." >&2
     exit 1
   fi
+  if [[ -z "${runtime_team_identifier}" ]]; then
+    echo "ZIMLO_TEAM_ID must identify the Developer ID team that signs Bridge Runtime artifacts." >&2
+    exit 1
+  fi
 fi
 
-cd "${repo_root}"
-pnpm build
+if [[ "${ZIMLO_SKIP_PROJECT_BUILD:-0}" != "1" ]]; then
+  cd "${repo_root}"
+  pnpm build
+fi
 
 cd "${macos_root}"
 swift build -c release --arch arm64 --arch x86_64
@@ -38,8 +46,7 @@ rm -rf "${build_root}"
 mkdir -p \
   "${app_path}/Contents/MacOS" \
   "${app_path}/Contents/Frameworks" \
-  "${app_path}/Contents/Resources" \
-  "${runtime_path}"
+  "${app_path}/Contents/Resources"
 
 cp "${products_path}/Zimlo" "${app_path}/Contents/MacOS/Zimlo"
 ditto "${products_path}/Sparkle.framework" "${app_path}/Contents/Frameworks/Sparkle.framework"
@@ -48,33 +55,15 @@ cp "${macos_root}/Resources/Info.plist" "${app_path}/Contents/Info.plist"
 /usr/libexec/PlistBuddy -c "Set :CFBundleShortVersionString ${version}" "${app_path}/Contents/Info.plist"
 /usr/libexec/PlistBuddy -c "Set :CFBundleVersion ${build_number}" "${app_path}/Contents/Info.plist"
 /usr/libexec/PlistBuddy -c "Set :SUPublicEDKey ${sparkle_public_key}" "${app_path}/Contents/Info.plist"
-
-"${script_dir}/prepare-universal-node.sh" "${runtime_path}/node"
-
-cd "${repo_root}"
-pnpm \
-  --config.package-import-method=copy \
-  --filter @zimlo/cli \
-  --prod \
-  deploy \
-  --legacy \
-  "${runtime_path}/cli"
-# pnpm's legacy deploy creates a self-reference that points back to the source
-# workspace. The packaged runtime executes dist/index.js directly and does not
-# need this link; keeping it would make the signed bundle non-relocatable.
-rm -f "${runtime_path}/cli/node_modules/.pnpm/node_modules/@zimlo/cli"
-detached_cli="${build_root}/detached-cli"
-ditto "${runtime_path}/cli" "${detached_cli}"
-rm -rf "${runtime_path}/cli"
-mv "${detached_cli}" "${runtime_path}/cli"
-source_protocol="${repo_root}/packages/protocol/dist/index.js"
-packaged_protocol="${runtime_path}/cli/node_modules/.pnpm/@zimlo+protocol@file+packages+protocol/node_modules/@zimlo/protocol/dist/index.js"
-if [[ -f "${source_protocol}" && -f "${packaged_protocol}" ]]; then
-  source_inode=$(stat -f "%d:%i" "${source_protocol}")
-  packaged_inode=$(stat -f "%d:%i" "${packaged_protocol}")
-  if [[ "${source_inode}" == "${packaged_inode}" ]]; then
-    echo "Packaged runtime still shares writable files with the source workspace." >&2
-    exit 1
+/usr/libexec/PlistBuddy -c "Add :ZimloRuntimeManifestURL string ${runtime_manifest_url}" "${app_path}/Contents/Info.plist"
+/usr/libexec/PlistBuddy -c "Add :ZimloRequiredRuntimeVersion string ${runtime_version}" "${app_path}/Contents/Info.plist"
+if [[ "${ZIMLO_RELEASE:-0}" == "1" ]]; then
+  /usr/libexec/PlistBuddy -c "Add :ZimloRuntimeTeamIdentifier string ${runtime_team_identifier}" "${app_path}/Contents/Info.plist"
+  /usr/libexec/PlistBuddy -c "Add :ZimloAllowsAdHocRuntime bool false" "${app_path}/Contents/Info.plist"
+else
+  /usr/libexec/PlistBuddy -c "Add :ZimloAllowsAdHocRuntime bool true" "${app_path}/Contents/Info.plist"
+  if [[ -n "${ZIMLO_RUNTIME_DEVELOPMENT_PATH:-}" ]]; then
+    /usr/libexec/PlistBuddy -c "Add :ZimloRuntimeDevelopmentPath string ${ZIMLO_RUNTIME_DEVELOPMENT_PATH}" "${app_path}/Contents/Info.plist"
   fi
 fi
 
@@ -100,10 +89,6 @@ codesign \
   --deep \
   --preserve-metadata=entitlements \
   "${app_path}/Contents/Frameworks/Sparkle.framework"
-codesign \
-  "${sign_options[@]}" \
-  --entitlements "${macos_root}/Resources/Node.entitlements" \
-  "${runtime_path}/node"
 typeset -a app_sign_options
 app_sign_options=("${sign_options[@]}")
 if [[ "${sign_identity}" == "-" ]]; then
@@ -113,5 +98,4 @@ codesign "${app_sign_options[@]}" "${app_path}"
 codesign --verify --deep --strict --verbose=2 "${app_path}"
 
 lipo "${app_path}/Contents/MacOS/Zimlo" -verify_arch arm64 x86_64
-lipo "${runtime_path}/node" -verify_arch arm64 x86_64
 echo "${app_path}"
