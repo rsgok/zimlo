@@ -15,6 +15,7 @@ struct NativeSettingsView: View {
                     integrationsCard
                     devicesCard
                 }
+                .fixedSize(horizontal: false, vertical: true)
                 .frame(maxWidth: .infinity, alignment: .topLeading)
                 permissionsCard
                 maintenanceCard
@@ -28,7 +29,8 @@ struct NativeSettingsView: View {
         .task {
             async let status: Void = { _ = await service.refreshStatus() }()
             async let devices: Void = store.loadDevices()
-            _ = await (status, devices)
+            async let notificationStatus: Void = notifications.refreshAuthorization()
+            _ = await (status, devices, notificationStatus)
         }
         .sheet(isPresented: $showingDevices) {
             NativeDevicesSheet(store: store)
@@ -84,7 +86,7 @@ struct NativeSettingsView: View {
             .disabled(service.integrationBusy)
         }
         .padding(18)
-        .frame(maxWidth: .infinity, minHeight: 224, alignment: .topLeading)
+        .frame(maxWidth: .infinity, minHeight: 224, maxHeight: .infinity, alignment: .topLeading)
         .nativeCard(cornerRadius: 16)
     }
 
@@ -106,7 +108,7 @@ struct NativeSettingsView: View {
             Divider().opacity(0.4)
             NativeNotificationToggleRow(
                 title: "允许 Zimlo 通知",
-                detail: "App 在后台或你正在查看其他任务时显示系统横幅。",
+                detail: notificationMasterDetail,
                 isOn: Binding(
                     get: { notifications.preferences.enabled },
                     set: { enabled in
@@ -184,6 +186,16 @@ struct NativeSettingsView: View {
         .nativeCard(cornerRadius: 16)
     }
 
+    private var notificationMasterDetail: String {
+        if notifications.preferences.enabled && notifications.authorizationDenied {
+            return "Zimlo 已开启，但被 macOS 阻止；在系统设置中允许后会自动恢复。"
+        }
+        if !notifications.preferences.enabled && notifications.authorization.isAllowed {
+            return "macOS 已允许；打开此开关后 Zimlo 才会发送通知。"
+        }
+        return "App 在后台或你正在查看其他任务时显示系统横幅。"
+    }
+
     private var devicesCard: some View {
         VStack(alignment: .leading, spacing: 12) {
             HStack {
@@ -214,6 +226,7 @@ struct NativeSettingsView: View {
                     .font(.system(size: 9.5, weight: .semibold))
                     .foregroundStyle(NativeTheme.coral)
             }
+            Spacer(minLength: 0)
             HStack(spacing: 8) {
                 Button("管理设备") { showingDevices = true }
                     .buttonStyle(.bordered)
@@ -235,7 +248,7 @@ struct NativeSettingsView: View {
             }
         }
         .padding(18)
-        .frame(maxWidth: .infinity, minHeight: 224, alignment: .topLeading)
+        .frame(maxWidth: .infinity, minHeight: 224, maxHeight: .infinity, alignment: .topLeading)
         .nativeCard(cornerRadius: 16)
     }
 
