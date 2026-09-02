@@ -373,11 +373,14 @@ impl DiscoveryService {
     }
 
     async fn ensure_session(
-        &self,
+        &mut self,
         candidate: &TranscriptCandidate,
         last_activity_at: &str,
     ) -> Result<StoredSession, io::Error> {
-        let state = self.states.get(&candidate.path).expect("candidate state");
+        // A persisted offset can skip parsing entirely when the transcript has
+        // not changed since the previous run. Recreate the in-memory state in
+        // that case instead of assuming parse_line already initialized it.
+        let state = self.state_for(candidate).clone();
         let id = stable_session_id(candidate.provider, &state.provider_session_id);
         let existing = self
             .store
@@ -1034,9 +1037,15 @@ fn now() -> String {
 
 #[cfg(test)]
 mod tests {
-    use std::path::Path;
+    use std::{fs, path::Path};
 
-    use super::{Provider, provider_session_id_from_path, stable_event_id, stable_session_id};
+    use tempfile::tempdir;
+    use zimlo_store::{Store, StoreMode};
+
+    use super::{
+        DiscoveryService, Provider, provider_session_id_from_path, stable_event_id,
+        stable_session_id,
+    };
 
     #[test]
     fn stable_ids_match_node_contract() {
@@ -1063,5 +1072,48 @@ mod tests {
             provider_session_id_from_path(Provider::Claude, Path::new("/tmp/chat.jsonl")),
             "claude-chat"
         );
+    }
+
+    #[tokio::test]
+    async fn initializes_candidate_state_when_persisted_offset_has_no_new_bytes() {
+        let directory = tempdir().expect("tempdir");
+        let database = directory.path().join("zimlo.db");
+        let codex_root = directory.path().join("codex");
+        let claude_root = directory.path().join("claude");
+        fs::create_dir_all(&codex_root).expect("create codex root");
+
+        let provider_session_id = "019cfc25-38ec-7442-86cb-d9438d50279f";
+        let transcript = codex_root.join(format!("rollout-{provider_session_id}.jsonl"));
+        fs::write(&transcript, b"{}\n").expect("write transcript");
+        let metadata = fs::metadata(&transcript).expect("transcript metadata");
+        let modified_at =
+            super::system_time_iso(metadata.modified().expect("transcript modification time"));
+
+        let store = Store::open(&database, StoreMode::ReadWriteCreate)
+            .await
+            .expect("open store");
+        store
+            .set_offset(
+                transcript.to_string_lossy(),
+                metadata.len() as i64,
+                metadata.len() as i64,
+                &modified_at,
+            )
+            .await
+            .expect("persist offset");
+
+        let mut discovery = DiscoveryService::with_roots(store.clone(), codex_root, claude_root);
+        discovery
+            .refresh_candidates(true)
+            .await
+            .expect("refresh candidates");
+
+        let session = store
+            .get_session(stable_session_id(Provider::Codex, provider_session_id))
+            .await
+            .expect("read session")
+            .expect("session created");
+        assert_eq!(session.provider_session_id, provider_session_id);
+        assert_eq!(session.transcript_path.as_deref(), transcript.to_str());
     }
 }

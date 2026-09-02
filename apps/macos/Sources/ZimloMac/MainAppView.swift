@@ -33,16 +33,19 @@ struct MainAppView: View {
                 )
                 .navigationSplitViewColumnWidth(min: 210, ideal: 236, max: 270)
             } detail: {
-                NavigationStack(path: $path) {
-                    sectionRoot
-                        .navigationDestination(for: NativeRoute.self) { route in
-                            destination(for: route)
-                        }
+                switch store.loadState {
+                case .loaded:
+                    NavigationStack(path: $path) {
+                        sectionRoot
+                            .navigationDestination(for: NativeRoute.self) { route in
+                                destination(for: route)
+                            }
+                    }
+                case .idle, .loading, .failed:
+                    loadOverlay
                 }
             }
             .navigationSplitViewStyle(.balanced)
-
-            loadOverlay
 
             if let composer {
                 NativeComposerOverlay(
@@ -145,6 +148,8 @@ struct MainAppView: View {
         switch store.loadState {
         case .idle, .loading:
             NativeLoadingView(message: "正在连接本地 Zimlo…")
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .background(NativeTheme.paper)
         case .failed(let message):
             NativeFailureView(message: message) {
                 Task {
@@ -152,6 +157,8 @@ struct MainAppView: View {
                     await store.refresh()
                 }
             }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .background(NativeTheme.paper)
         case .loaded:
             EmptyView()
         }
