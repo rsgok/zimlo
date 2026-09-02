@@ -24,7 +24,18 @@ verified_manifest_path="${release_dir}/latest.verified.json"
 verified_runtime_manifest_path="${release_dir}/runtime-latest.verified.json"
 bucket=${ZIMLO_RELEASE_BUCKET:-zimlo-releases}
 public_base_url=${ZIMLO_RELEASE_BASE_URL:-https://cloud.zimlo.app/releases/macos}
-sparkle_tools="${macos_root}/.build/artifacts/sparkle/Sparkle/bin"
+sparkle_tools=${SPARKLE_TOOLS_DIR:-}
+if [[ -z "${sparkle_tools}" ]]; then
+  for candidate in \
+    "${macos_root}/.build/artifacts/sparkle/Sparkle/bin" \
+    "${macos_root}/.build/swift-arm64/artifacts/sparkle/Sparkle/bin" \
+    "${macos_root}/.build/swift-x86_64/artifacts/sparkle/Sparkle/bin"; do
+    if [[ -x "${candidate}/generate_appcast" ]]; then
+      sparkle_tools=${candidate}
+      break
+    fi
+  done
+fi
 typeset -a architectures
 architectures=(arm64 x86_64)
 

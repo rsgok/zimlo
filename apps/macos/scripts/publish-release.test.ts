@@ -14,6 +14,12 @@ describe("macOS release publisher", () => {
     expect(script).not.toContain("object put --local");
   });
 
+  it("finds Sparkle tools produced by architecture-isolated release builds", () => {
+    expect(script).toContain("SPARKLE_TOOLS_DIR");
+    expect(script).toContain(".build/swift-arm64/artifacts/sparkle/Sparkle/bin");
+    expect(script).toContain(".build/swift-x86_64/artifacts/sparkle/Sparkle/bin");
+  });
+
   it("publishes both Runtime architectures before the app update becomes visible", () => {
     const runtimeArchiveUpload = script.indexOf('"${bucket}/macos/${runtime_file}"');
     const runtimeManifestUpload = script.indexOf('"${bucket}/macos/runtime-latest.json"');
