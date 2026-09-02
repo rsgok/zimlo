@@ -72,6 +72,7 @@ async fn dispatch(
             can_manage_trust: is_local_admin,
             writable,
             pairing: None,
+            cloud: None,
             action_broker: broker,
             host_name: "Management Mac",
         },

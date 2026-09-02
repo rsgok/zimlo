@@ -25,7 +25,7 @@ use zimlo_protocol::crypto::{
 };
 use zimlo_store::{DeviceRecord, Store, StoreError};
 
-use crate::{BridgeState, api_error};
+use crate::{BridgeState, CloudService, api_error};
 
 const PAIRING_LIFETIME_MS: i64 = 120_000;
 
@@ -39,6 +39,8 @@ pub(super) enum PairingError {
     Crypto(#[from] CryptoError),
     #[error(transparent)]
     Store(#[from] StoreError),
+    #[error("cloud pairing failed: {0}")]
+    Cloud(String),
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -48,7 +50,9 @@ pub(super) struct PairingPayload {
     pub pair_url: String,
     pub qr_data_url: String,
     pub expires_at: String,
-    pub transport: &'static str,
+    pub transport: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub local_pair_url: Option<String>,
 }
 
 pub(super) struct PairingComplete {
@@ -58,7 +62,10 @@ pub(super) struct PairingComplete {
 
 #[derive(Clone)]
 pub(super) struct PairingManager {
-    base_url: String,
+    lan_base_url: Option<String>,
+    cloud: Option<CloudService>,
+    store: Store,
+    host_name: String,
     pairings: Arc<Mutex<HashMap<String, PairingRecord>>>,
 }
 
@@ -69,14 +76,40 @@ struct PairingRecord {
 }
 
 impl PairingManager {
-    pub fn new(base_url: impl Into<String>) -> Self {
+    pub fn new(
+        store: Store,
+        host_name: impl Into<String>,
+        lan_base_url: Option<String>,
+        cloud: Option<CloudService>,
+    ) -> Self {
         Self {
-            base_url: base_url.into().trim_end_matches('/').to_owned(),
+            lan_base_url: lan_base_url.map(|value| value.trim_end_matches('/').to_owned()),
+            cloud,
+            store,
+            host_name: host_name.into(),
             pairings: Arc::new(Mutex::new(HashMap::new())),
         }
     }
 
-    pub fn create(&self) -> Result<PairingPayload, PairingError> {
+    pub async fn create(&self) -> Result<PairingPayload, PairingError> {
+        let cloud_ready = match self.cloud.as_ref() {
+            Some(cloud) if cloud.enabled() => cloud.ensure_ready().await,
+            _ => false,
+        };
+        let (base_url, transport) = if cloud_ready {
+            (
+                self.cloud
+                    .as_ref()
+                    .and_then(CloudService::relay_url)
+                    .ok_or(PairingError::State)?,
+                "cloud",
+            )
+        } else {
+            (
+                self.lan_base_url.as_deref().ok_or(PairingError::State)?,
+                "lan",
+            )
+        };
         let pair = create_key_pair()?;
         let secret = random_bytes::<32>()?;
         let relay_token = random_bytes::<32>()?;
@@ -84,7 +117,7 @@ impl PairingManager {
         let expires_at_ms = Utc::now().timestamp_millis() + PAIRING_LIFETIME_MS;
         let pair_url = format!(
             "{}/#pairingId={}&secret={}&bridgeKey={}&pairingToken={}",
-            self.base_url,
+            base_url,
             pairing_id,
             to_base64_url(&secret),
             to_base64_url(&pair.public_key),
@@ -100,17 +133,23 @@ impl PairingManager {
         let expires_at = DateTime::from_timestamp_millis(expires_at_ms)
             .ok_or(PairingError::State)?
             .to_rfc3339_opts(SecondsFormat::Millis, true);
-        let mut pairings = self.pairings.lock().map_err(|_| PairingError::State)?;
-        prune(&mut pairings, Utc::now().timestamp_millis());
-        pairings.insert(
-            pairing_id.clone(),
-            PairingRecord {
-                secret,
-                private_key: pair.private_key,
-                expires_at_ms,
-            },
-        );
-        Ok(PairingPayload {
+        {
+            let mut pairings = self.pairings.lock().map_err(|_| PairingError::State)?;
+            prune(&mut pairings, Utc::now().timestamp_millis());
+            pairings.insert(
+                pairing_id.clone(),
+                PairingRecord {
+                    secret,
+                    private_key: pair.private_key,
+                    expires_at_ms,
+                },
+            );
+        }
+        let local_pair_url = (transport == "cloud")
+            .then_some(self.lan_base_url.as_deref())
+            .flatten()
+            .map(|local| replace_pairing_base(&pair_url, local));
+        let payload = PairingPayload {
             pairing_id,
             pair_url,
             qr_data_url: format!(
@@ -118,14 +157,45 @@ impl PairingManager {
                 STANDARD.encode(svg.as_bytes())
             ),
             expires_at,
-            transport: "lan",
-        })
+            transport: transport.into(),
+            local_pair_url,
+        };
+        if transport == "cloud" {
+            let registered = self
+                .cloud
+                .as_ref()
+                .ok_or(PairingError::State)?
+                .register_pairing(
+                    &payload.pairing_id,
+                    &to_base64_url(&relay_token),
+                    &payload.expires_at,
+                )
+                .await
+                .map_err(|error| PairingError::Cloud(error.to_string()))?;
+            if !registered {
+                let _ = self.cancel_local(&payload.pairing_id);
+                return Err(PairingError::Cloud("registration rejected".into()));
+            }
+            let manager = self.clone();
+            let pairing_id = payload.pairing_id.clone();
+            tokio::spawn(async move { manager.watch_cloud(pairing_id, expires_at_ms).await });
+        }
+        Ok(payload)
     }
 
-    pub fn cancel(&self, pairing_id: &str) -> Result<bool, PairingError> {
+    fn cancel_local(&self, pairing_id: &str) -> Result<bool, PairingError> {
         let mut pairings = self.pairings.lock().map_err(|_| PairingError::State)?;
         prune(&mut pairings, Utc::now().timestamp_millis());
         Ok(pairings.remove(pairing_id).is_some())
+    }
+
+    pub async fn cancel(&self, pairing_id: &str) -> Result<bool, PairingError> {
+        let local = self.cancel_local(pairing_id)?;
+        let cloud = match self.cloud.as_ref() {
+            Some(cloud) => cloud.cancel_pairing(pairing_id).await.unwrap_or(false),
+            None => true,
+        };
+        Ok(local || cloud)
     }
 
     pub async fn complete(
@@ -176,6 +246,65 @@ impl PairingManager {
             device,
         }))
     }
+
+    async fn watch_cloud(&self, pairing_id: String, expires_at_ms: i64) {
+        let Some(cloud) = self.cloud.as_ref() else {
+            return;
+        };
+        while Utc::now().timestamp_millis() < expires_at_ms {
+            match cloud.pending_pairing_request(&pairing_id).await {
+                Ok(Some(request)) => {
+                    let result = self
+                        .complete(
+                            &self.store,
+                            &pairing_id,
+                            &request.client_public_key,
+                            &request.proof,
+                            request.name.as_deref(),
+                        )
+                        .await;
+                    let (status, response) = match result {
+                        Ok(Some(result)) => {
+                            let credentials = cloud
+                                .provision_device(&result.device.id)
+                                .await
+                                .ok()
+                                .flatten();
+                            (
+                                200,
+                                json!({
+                                    "host": host_value(
+                                        &self.store.get_metadata("host_identity_v1").await.ok().flatten().unwrap_or_default(),
+                                        &self.host_name,
+                                        &now(),
+                                    ),
+                                    "deviceId": result.device.id,
+                                    "serverProof": result.server_proof,
+                                    "cloud": credentials,
+                                }),
+                            )
+                        }
+                        _ => (410, json!({ "error": "Pairing expired, used, or invalid" })),
+                    };
+                    let _ = cloud
+                        .complete_pairing(&pairing_id, &request.request_id, &response, status)
+                        .await;
+                    return;
+                }
+                Ok(None) | Err(_) => {
+                    tokio::time::sleep(std::time::Duration::from_millis(500)).await
+                }
+            }
+        }
+        let _ = self.cancel_local(&pairing_id);
+    }
+}
+
+fn replace_pairing_base(pair_url: &str, base_url: &str) -> String {
+    pair_url
+        .find("/#")
+        .map(|index| format!("{}{}", base_url.trim_end_matches('/'), &pair_url[index..]))
+        .unwrap_or_else(|| pair_url.to_owned())
 }
 
 fn prune(pairings: &mut HashMap<String, PairingRecord>, now_ms: i64) {
@@ -283,7 +412,7 @@ pub(super) async fn create_pairing(
             true,
         );
     };
-    match pairing.create() {
+    match pairing.create().await {
         Ok(payload) => Json(payload).into_response(),
         Err(error) => {
             eprintln!("[zimlo:rust-bridge] 创建配对失败: {error}");
@@ -313,8 +442,11 @@ pub(super) async fn cancel_pairing(
     let cancelled = state
         .pairing
         .as_ref()
-        .and_then(|pairing| pairing.cancel(&pairing_id).ok())
-        .unwrap_or(false);
+        .map(|pairing| pairing.cancel(&pairing_id));
+    let cancelled = match cancelled {
+        Some(result) => result.await.unwrap_or(false),
+        None => false,
+    };
     if cancelled {
         Json(json!({ "ok": true })).into_response()
     } else {
@@ -375,10 +507,19 @@ pub(super) async fn complete_pairing(
                     );
                 }
             };
+            let cloud = match state.cloud.as_ref() {
+                Some(cloud) => cloud
+                    .provision_device(&result.device.id)
+                    .await
+                    .ok()
+                    .flatten(),
+                None => None,
+            };
             Json(json!({
                 "host": host_value(&host_id, &state.host_name, &now()),
                 "deviceId": result.device.id,
                 "serverProof": result.server_proof,
+                "cloud": cloud,
             }))
             .into_response()
         }

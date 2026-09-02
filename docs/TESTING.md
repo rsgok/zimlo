@@ -4,7 +4,7 @@
 
 ```bash
 pnpm exec vitest run apps/cli/test/codex-plugin.test.ts
-node apps/cli/dist/index.js codex-plugin status
+cargo run --locked --manifest-path runtime/Cargo.toml -p zimlo-cli -- codex-plugin status
 ```
 
 手工验证：在本机 Settings 点击“准备 Codex 插件”，使用 deeplink 打开 Codex Plugins，安装并审核 hooks，然后**新建**任务。确认新任务只看到 `feed.post` 与 `material.publish`，MCP 会在 Bridge 未运行时自动拉起它；插件只声明 `SessionStart`、`PermissionRequest` 与 matcher 为 `request_user_input` 的 `PreToolUse`。用户原始指令只进入 Task Detail，不得出现在 Feed。普通轮次必须为 0 hook 且静默结束；只有可审阅产物、用户行动、终止性失败/阻塞或最终结果才调用结构化 `feed.post`。
@@ -19,8 +19,9 @@ pnpm test
 pnpm typecheck
 pnpm build
 pnpm runtime:check
+pnpm runtime:parity
+pnpm runtime:benchmark
 pnpm runtime:build:macos
-node apps/cli/dist/index.js doctor
 ```
 
 核心仓库可直接运行 `pnpm check`。发布或大范围重构使用 `pnpm check:all`，它会额外验证
@@ -34,14 +35,21 @@ Rust `zimlo-protocol` 直接读取 `packages/protocol/test-vectors`，逐 case �
 执行跨语言逐字节兼容测试。`zimlo-store` 用独立线程拥有唯一 SQLite 连接，覆盖并发写入序列化、
 幂等事件、0600 权限、只读重开、独占写锁和重启恢复；Rust Bridge 还覆盖 loopback 限制、Node
 同形的完整 Snapshot 与 session events 响应，以及真实 TCP WebSocket 的鉴权、加密、防重放和
-变更广播。写模式测试另外对拍本地配对密码学、单次 token、设备落库、幂等写事务与未迁移云路径
+变更广播。写模式测试另外对拍本地配对密码学、单次 token、设备落库、幂等写事务与非法命令
 fail closed；Task Command 测试覆盖幂等入队、并发 CAS 抢占、取消/重试、崩溃不重复执行、执行失败
 脱敏、活跃 follow-up 延后和物料门禁。Claude 假 CLI 测试逐行对拍现有 2.1.207 fixture，验证创建与
 `--resume`、稳定 Session ID、事件入库、provider 隔离、非零退出和 managed Session 清理；假 Codex
 app-server 测试验证 initialize、thread/turn、命令审批、结构化输入、上游值映射、事件入库和进程清理；
 ActionBroker 测试覆盖确认短语、超时、幂等重放与 Runtime 重启后 fail closed。Material
 测试覆盖 loopback 导入、设备 HMAC、AES-GCM、格式与摘要校验、`0600` 落盘、Range 响应、重复注册
-和 Cloud transport 关闭。当前仍不会替换已发布的 Node Runtime。
+以及本地/Cloud Material、provider discovery、hooks/MCP、集成与 Cloud/Push 生命周期。
+
+`pnpm runtime:parity` 在两个隔离 HOME 中同时启动 Node 参考实现与 Rust 产品实现，验证产品 CLI
+运维命令、全部 client command、health、bootstrap、Snapshot、MCP schema/live call、hook、脱敏与
+任务终态语义。原始结果见 [`runtime-parity-results.json`](./runtime-parity-results.json)，能力矩阵见
+[`RUNTIME_PARITY.md`](./RUNTIME_PARITY.md)。`pnpm runtime:benchmark` 在同一机器和隔离空库条件下
+对比冷启动、RSS、health/Snapshot loopback 延迟与 Runtime 组件体积，报告见
+[`RUNTIME_PERFORMANCE.md`](./RUNTIME_PERFORMANCE.md)。
 
 手工对读现有数据库时应先使用隔离的 `ZIMLO_HOME` fixture，然后运行：
 
@@ -52,7 +60,7 @@ curl http://127.0.0.1:4757/api/local/sessions/SESSION_ID/events
 curl http://127.0.0.1:4757/api/local/snapshot
 ```
 
-手工验证写模式必须先停止 Node Bridge，并只使用可丢弃的隔离数据库：
+手工验证显式写模式必须先停止其他 Bridge，并只使用可丢弃的隔离数据库：
 
 ```bash
 cargo run --manifest-path runtime/Cargo.toml -p zimlo-cli -- start --port 4757 --lan \
@@ -70,10 +78,10 @@ Session/Event 状态和文件字节。
 Rust Bridge 的 WebSocket 端到端测试会启动真实 TCP listener，使用 Node/iOS 同形的设备凭据
 完成 `auth`/`auth.ok`，验证双向密钥、加密计数器和首个设备作用域 Snapshot；随后从另一条
 SQLite 连接写入数据，断言 3 秒内收到变更 Snapshot，并重放旧 counter 验证服务端以 1008
-关闭连接。默认只读模式的写命令返回 `runtime_read_only`；显式写模式放行已迁移的低风险命令与
+关闭连接。显式只读模式的写命令返回 `runtime_read_only`；产品默认写模式放行低风险命令与
 Codex / Claude 托管任务。Codex 高风险审批只有在设备具备审批权限、确认短语正确且活跃 resolver
 存在时才回传；项目内读取/搜索/测试/构建可由 `safe_automation` 自动放行，但复合命令、路径逃逸、
-写入和联网会 fail closed。Cloud Material 等未迁移路径仍明确拒绝。
+写入和联网会 fail closed。Cloud Material、远程 relay 与 Push 另有成功/失败回归覆盖。
 
 `pnpm test` 覆盖 Codex/Claude fixture parser、Project 回填与卡片归属、测试命令识别、脱敏、Feed 发帖去重与结束检查点、Action Broker 幂等与重启过期、网络地址判断、协议加密/防重放，以及 Codex app-server 审批值映射。
 
@@ -93,7 +101,7 @@ Codex / Claude 托管任务。Codex 高风险审批只有在设备具备审批�
 启动 Bridge 后可运行端到端加密握手 smoke：
 
 ```bash
-node apps/cli/dist/index.js start --port 4747
+pnpm start
 pnpm --filter @zimlo/cli smoke
 ```
 

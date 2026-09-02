@@ -1,6 +1,6 @@
 # Zimlo for iOS
 
-原生 SwiftUI 客户端，复用 Zimlo Bridge protocol v4，不是 WebView 包装。
+原生 SwiftUI 客户端，复用 Zimlo Bridge protocol v5，不是 WebView 包装。
 
 ## 已实现的闭环
 
@@ -71,12 +71,12 @@ xcodebuild \
 开发时先在 Mac 启动 Bridge：
 
 ```bash
-node apps/cli/dist/index.js start
+pnpm start
 ```
 
 再打开 `apps/ios/Zimlo.xcodeproj`，选择 iPhone 模拟器或已签名真机运行，并使用 Mac 网页 Settings 中生成的配对信息。首次配对默认通过两分钟有效的 Cloudflare 配对房间完成，真机与 Mac 不需要处于同一 LAN；配对后也可在外网继续同步。
 
-Bridge 在局域网使用用户提供的 HTTP / WebSocket 地址，但所有配对证明和应用消息均由 Zimlo protocol v4 自行认证和端到端加密。
+Bridge 在局域网使用用户提供的 HTTP / WebSocket 地址，但所有配对证明和应用消息均由 Zimlo protocol v5 自行认证和端到端加密。
 
 ## 安装到自己的 iPhone
 
@@ -84,7 +84,7 @@ Bridge 在局域网使用用户提供的 HTTP / WebSocket 地址，但所有配�
 2. 在 Zimlo target 的 **Signing & Capabilities** 选择自己的 Team，并确保 Bundle Identifier 唯一。
 3. 保留 **Push Notifications** capability；首次只调试局域网功能时可以暂不配置 APNs。
 4. 用数据线或已启用无线调试的方式连接 iPhone，在 Xcode 顶部选择该设备后运行。
-5. 打开 Mac 版 Zimlo（源码调试时执行 `node apps/cli/dist/index.js start`），生成配对二维码并使用 App 扫码。
+5. 打开 Mac 版 Zimlo（源码调试时执行 `pnpm start`），生成配对二维码并使用 App 扫码。
 6. 配对成功且 Mac 报告推送服务可用后，App 会请求一次系统通知权限；拒绝后可随时从 Zimlo 设置页进入系统设置重新开启。
 
 真机 APNs 需要 Apple Developer 签名、Push Notifications entitlement，以及已经部署的 Cloudflare Worker。App 本身不再包含 Relay URL 或全局注册密钥：Worker 地址和每台手机独有的随机访问令牌都由 Mac 在可信配对响应中下发。

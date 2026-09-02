@@ -11,7 +11,7 @@ use zimlo_protocol::crypto::{
 use zimlo_store::{DeviceAuthRecord, SnapshotOptions, Store, StoreError};
 
 use crate::{
-    ActionBroker,
+    ActionBroker, CloudService,
     dispatcher::{self, DispatchContext, DispatchResult},
     pairing::PairingManager,
     ws_frame::{Incoming, SecureFrame, close_socket, incoming},
@@ -25,6 +25,7 @@ struct MessageContext<'a> {
     writable: bool,
     pairing: Option<&'a PairingManager>,
     action_broker: &'a ActionBroker,
+    cloud: Option<&'a CloudService>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -74,6 +75,7 @@ pub(super) async fn serve(
     host_name: String,
     writable: bool,
     pairing: Option<PairingManager>,
+    cloud: Option<CloudService>,
     action_broker: ActionBroker,
 ) {
     let Some(auth) = receive_authentication(&mut socket).await else {
@@ -109,6 +111,7 @@ pub(super) async fn serve(
         writable,
         pairing: pairing.as_ref(),
         action_broker: &action_broker,
+        cloud: cloud.as_ref(),
     };
     loop {
         tokio::select! {
@@ -131,6 +134,18 @@ pub(super) async fn serve(
                 }
             }
             _ = poll.tick() => {
+                match store.active_device(&connection.device.id).await {
+                    Ok(Some(device)) => connection.device = device,
+                    Ok(None) => {
+                        close_socket(&mut socket, close_code::POLICY, "Device revoked").await;
+                        return;
+                    }
+                    Err(error) => {
+                        eprintln!("[zimlo:rust-bridge] 校验设备状态失败: {error}");
+                        close_socket(&mut socket, close_code::ERROR, "Store unavailable").await;
+                        return;
+                    }
+                }
                 match store.data_version().await {
                     Ok(version) if version != data_version => {
                         data_version = version;
@@ -280,6 +295,7 @@ async fn handle_secure_message(
         writable,
         pairing,
         action_broker,
+        cloud,
     } = context;
     let frame = match serde_json::from_slice::<SecureFrame>(payload) {
         Ok(frame) if frame.r#type == "secure" => frame,
@@ -360,6 +376,7 @@ async fn handle_secure_message(
                     can_manage_trust: connection.device.can_manage_trust,
                     writable: *writable,
                     pairing: *pairing,
+                    cloud: *cloud,
                     action_broker,
                     host_name,
                 },

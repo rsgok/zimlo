@@ -23,9 +23,7 @@ enum HealthCheck {
 /// pairing is unavailable. The Bridge still restricts local admin routes to
 /// loopback and accepts phone traffic only from trusted private networks.
 enum DesktopBridgeLaunch {
-    static func arguments(entrypoint: URL) -> [String] {
-        ["--use-env-proxy", entrypoint.path, "start", "--lan"]
-    }
+    static let arguments = ["start", "--lan"]
 }
 
 enum PairingAutostartPolicy {

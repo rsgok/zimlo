@@ -8,9 +8,30 @@ use zimlo_store::{
     TrustAuditRecord,
 };
 
-use crate::trust_policy;
+use crate::{PushService, trust_policy};
 
 const DEFAULT_TIMEOUT: Duration = Duration::from_secs(8 * 60);
+const REMINDER_LEAD: Duration = Duration::from_secs(5 * 60);
+const REMINDER_MIN_DELAY: Duration = Duration::from_secs(60);
+const REMINDER_MIN_REMAINING: Duration = Duration::from_secs(90);
+
+fn approval_reminder_delay(action: &PendingActionRecord) -> Option<Duration> {
+    if action.state != "pending" {
+        return None;
+    }
+    let expires_at = chrono::DateTime::parse_from_rfc3339(&action.expires_at)
+        .ok()?
+        .with_timezone(&Utc);
+    let now = Utc::now();
+    let remaining = (expires_at - now).to_std().ok()?;
+    if remaining < REMINDER_MIN_REMAINING {
+        return None;
+    }
+    let delay = remaining
+        .saturating_sub(REMINDER_LEAD)
+        .max(REMINDER_MIN_DELAY);
+    (delay < remaining).then_some(delay)
+}
 
 #[derive(Debug, Clone)]
 pub struct NewAction {
@@ -61,13 +82,19 @@ struct Resolver {
 pub struct ActionBroker {
     store: Store,
     resolvers: Arc<Mutex<HashMap<String, Resolver>>>,
+    push: Option<PushService>,
 }
 
 impl ActionBroker {
     pub fn new(store: Store) -> Self {
+        Self::with_push(store, None)
+    }
+
+    pub fn with_push(store: Store, push: Option<PushService>) -> Self {
         Self {
             store,
             resolvers: Arc::new(Mutex::new(HashMap::new())),
+            push,
         }
     }
 
@@ -104,6 +131,7 @@ impl ActionBroker {
             return Ok(ActionTicket { action, result });
         }
         let action = self.store.upsert_action(action).await?;
+        self.schedule_approval_notifications(action.clone());
         let (sender, result) = tokio::sync::oneshot::channel();
         let broker = self.clone();
         let action_id = action.action_id.clone();
@@ -119,6 +147,49 @@ impl ActionBroker {
             },
         );
         Ok(ActionTicket { action, result })
+    }
+
+    fn schedule_approval_notifications(&self, action: PendingActionRecord) {
+        let Some(push) = self.push.clone() else {
+            return;
+        };
+        let store = self.store.clone();
+        let immediate = action.clone();
+        let immediate_push = push.clone();
+        tokio::spawn(async move {
+            let title = store
+                .get_session(&immediate.session_id)
+                .await
+                .ok()
+                .flatten()
+                .map(|session| session.title);
+            immediate_push
+                .notify_approval(immediate, title, false)
+                .await;
+        });
+        let Some(delay) = approval_reminder_delay(&action) else {
+            return;
+        };
+        let store = self.store.clone();
+        tokio::spawn(async move {
+            tokio::time::sleep(delay).await;
+            let Ok(Some(current)) = store.get_action(&action.action_id).await else {
+                return;
+            };
+            if current.state != "pending"
+                || chrono::DateTime::parse_from_rfc3339(&current.expires_at)
+                    .is_ok_and(|expires| expires <= Utc::now())
+            {
+                return;
+            }
+            let title = store
+                .get_session(&current.session_id)
+                .await
+                .ok()
+                .flatten()
+                .map(|session| session.title);
+            push.notify_approval(current, title, true).await;
+        });
     }
 
     async fn automatic_resolution(

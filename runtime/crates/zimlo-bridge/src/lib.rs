@@ -1,4 +1,4 @@
-use std::{future::Future, io, net::SocketAddr};
+use std::{future::Future, io, net::SocketAddr, path::PathBuf};
 
 use axum::{
     Json, Router,
@@ -9,23 +9,33 @@ use axum::{
 };
 use serde::Serialize;
 use tokio::net::TcpListener;
-use zimlo_protocol::{ZIMLO_PROTOCOL_VERSION, ZIMLO_VERSION};
-use zimlo_store::{SnapshotOptions, Store, StoreError, UnifiedEvent};
+use tower_http::services::{ServeDir, ServeFile};
+use zimlo_protocol::{
+    ZIMLO_PROTOCOL_VERSION, ZIMLO_VERSION,
+    crypto::{random_bytes, to_base64_url},
+};
+use zimlo_store::{DeviceRecord, SnapshotOptions, Store, StoreError, UnifiedEvent};
 
 mod action_broker;
 mod action_dispatch;
 mod agent_command;
 mod claude_executor;
 mod claude_stream;
+mod cloud;
 mod codex_app_server;
 mod codex_approval;
 mod codex_executor;
+mod codex_stream;
+mod discovery;
 mod dispatcher;
+mod integrations;
+mod local_socket;
 mod management;
 mod material_validation;
 mod materials;
 mod native_executor;
 mod pairing;
+mod push_service;
 mod task_commands;
 mod task_enqueue;
 mod task_runner;
@@ -37,8 +47,12 @@ pub use action_broker::{
     ActionBroker, ActionTicket, DecisionResolution, DecisionSubmission, NewAction,
 };
 pub use claude_executor::ClaudeTaskExecutor;
+pub use cloud::{CloudError, CloudRelay, CloudService, DEFAULT_CLOUD_URL, DeviceCloudCredentials};
 pub use codex_executor::CodexTaskExecutor;
+pub use discovery::DiscoveryService;
+pub use local_socket::run_until_shutdown as run_local_control_until_shutdown;
 pub use native_executor::NativeTaskExecutor;
+pub use push_service::PushService;
 pub use task_runner::{ResolvedMaterial, TaskCommandRunner, TaskExecutionResult, TaskExecutor};
 
 use pairing::PairingManager;
@@ -50,13 +64,16 @@ pub(crate) struct BridgeState {
     host_name: String,
     writable: bool,
     pairing: Option<PairingManager>,
+    cloud: Option<CloudService>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Clone)]
 pub struct BridgeConfig {
     pub host_name: String,
     pub writable: bool,
     pub pairing_base_url: Option<String>,
+    pub web_root: Option<PathBuf>,
+    pub cloud: Option<CloudService>,
 }
 
 impl BridgeConfig {
@@ -65,6 +82,8 @@ impl BridgeConfig {
             host_name: host_name.into(),
             writable: false,
             pairing_base_url: None,
+            web_root: None,
+            cloud: None,
         }
     }
 }
@@ -94,6 +113,7 @@ pub fn router() -> Router {
         host_name: "Mac".into(),
         writable: false,
         pairing: None,
+        cloud: None,
     })
 }
 
@@ -115,18 +135,30 @@ pub fn router_with_config_and_broker(
     config: BridgeConfig,
     action_broker: ActionBroker,
 ) -> Router {
-    let pairing = config
-        .writable
-        .then_some(config.pairing_base_url)
-        .flatten()
-        .map(PairingManager::new);
-    routes(BridgeState {
+    let pairing = config.writable.then(|| {
+        PairingManager::new(
+            store.clone(),
+            config.host_name.clone(),
+            config.pairing_base_url.clone(),
+            config.cloud.clone(),
+        )
+    });
+    let router = routes(BridgeState {
         store: Some(store),
         action_broker: Some(action_broker),
         host_name: config.host_name,
         writable: config.writable,
         pairing,
-    })
+        cloud: config.cloud,
+    });
+    match config.web_root {
+        Some(web_root) => {
+            let index = web_root.join("index.html");
+            router
+                .fallback_service(ServeDir::new(web_root).not_found_service(ServeFile::new(index)))
+        }
+        None => router,
+    }
 }
 
 fn routes(state: BridgeState) -> Router {
@@ -137,6 +169,9 @@ fn routes(state: BridgeState) -> Router {
             get(session_events),
         )
         .route("/api/local/snapshot", get(local_snapshot))
+        .route("/api/local/commands", post(local_commands))
+        .route("/api/local/status", get(local_status))
+        .route("/api/local/integrations", post(local_integrations))
         .route(
             "/api/materials/{material_id}/blob",
             put(materials::receive_blob).layer(DefaultBodyLimit::max(materials::MAX_BODY_BYTES)),
@@ -189,6 +224,7 @@ async fn websocket_upgrade(
                 state.host_name,
                 state.writable,
                 state.pairing,
+                state.cloud,
                 action_broker,
             )
         })
@@ -262,15 +298,18 @@ pub async fn bind(port: u16, lan: bool) -> io::Result<TcpListener> {
     TcpListener::bind(address).await
 }
 
-async fn health() -> Json<HealthResponse> {
+async fn health(State(state): State<BridgeState>) -> Json<HealthResponse> {
     Json(HealthResponse {
         ok: true,
         version: ZIMLO_VERSION,
         protocol_version: ZIMLO_PROTOCOL_VERSION,
         features: FeatureCapabilities {
             project_trust_policy: true,
-            push_notifications: true,
-            remote_sync: true,
+            push_notifications: state
+                .cloud
+                .as_ref()
+                .is_some_and(CloudService::push_notifications_available),
+            remote_sync: state.cloud.as_ref().is_some_and(CloudService::enabled),
             multi_host: true,
         },
     })
@@ -362,9 +401,19 @@ async fn local_snapshot(
             true,
         );
     };
-    let now = chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Millis, true);
+    if state.writable
+        && let Err(error) = ensure_local_admin(&store).await
+    {
+        eprintln!("[zimlo:rust-bridge] 初始化本机管理设备失败: {error}");
+        return api_error(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "bootstrap_unavailable",
+            "本机管理设备初始化失败。",
+            true,
+        );
+    }
     match store
-        .snapshot(SnapshotOptions::local(state.host_name, now))
+        .snapshot(SnapshotOptions::local(state.host_name, now()))
         .await
     {
         Ok(snapshot) => Json(snapshot).into_response(),
@@ -384,6 +433,225 @@ async fn local_snapshot(
             )
         }
     }
+}
+
+async fn local_commands(
+    ConnectInfo(peer): ConnectInfo<SocketAddr>,
+    State(state): State<BridgeState>,
+    Json(command): Json<serde_json::Value>,
+) -> Response {
+    if !peer.ip().is_loopback() {
+        return api_error(
+            StatusCode::FORBIDDEN,
+            "loopback_only",
+            "仅允许本机访问。",
+            false,
+        );
+    }
+    let Some(store) = state.store else {
+        return api_error(
+            StatusCode::SERVICE_UNAVAILABLE,
+            "runtime_not_configured",
+            "Rust Runtime 尚未配置数据库。",
+            true,
+        );
+    };
+    let Some(action_broker) = state.action_broker else {
+        return api_error(
+            StatusCode::SERVICE_UNAVAILABLE,
+            "runtime_not_configured",
+            "Rust Runtime 尚未配置审批代理。",
+            true,
+        );
+    };
+    let device = match ensure_local_admin(&store).await {
+        Ok(device) => device,
+        Err(error) => {
+            eprintln!("[zimlo:rust-bridge] 初始化本机管理设备失败: {error}");
+            return api_error(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "bootstrap_unavailable",
+                "本机管理设备初始化失败。",
+                true,
+            );
+        }
+    };
+    let result = dispatcher::dispatch(
+        dispatcher::DispatchContext {
+            store: &store,
+            device_id: &device.id,
+            is_local_admin: true,
+            can_approve: true,
+            can_manage_trust: true,
+            writable: state.writable,
+            pairing: state.pairing.as_ref(),
+            cloud: state.cloud.as_ref(),
+            action_broker: &action_broker,
+            host_name: &state.host_name,
+        },
+        &command,
+    )
+    .await;
+    let messages = match result {
+        Ok(dispatcher::DispatchResult::Message(message)) => vec![message],
+        Ok(dispatcher::DispatchResult::Messages(messages)) => messages,
+        Ok(dispatcher::DispatchResult::Snapshot) => Vec::new(),
+        Ok(dispatcher::DispatchResult::Invalid) | Err(StoreError::InvalidMutation) => {
+            return api_error(
+                StatusCode::BAD_REQUEST,
+                "invalid_command",
+                "操作参数不受支持。",
+                false,
+            );
+        }
+        Err(error) => {
+            eprintln!("[zimlo:rust-bridge] 本机命令失败: {error}");
+            return api_error(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "store_unavailable",
+                "本机任务数据暂时不可用。",
+                true,
+            );
+        }
+    };
+    match store
+        .snapshot(SnapshotOptions::for_device(
+            &state.host_name,
+            now(),
+            &device.id,
+        ))
+        .await
+    {
+        Ok(snapshot) => Json(serde_json::json!({
+            "ok": true,
+            "messages": messages,
+            "snapshot": snapshot,
+        }))
+        .into_response(),
+        Err(error) => {
+            eprintln!("[zimlo:rust-bridge] 本机命令 Snapshot 失败: {error}");
+            api_error(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "store_unavailable",
+                "本机任务数据暂时不可用。",
+                true,
+            )
+        }
+    }
+}
+
+async fn local_status(
+    ConnectInfo(peer): ConnectInfo<SocketAddr>,
+    State(state): State<BridgeState>,
+) -> Response {
+    if !peer.ip().is_loopback() {
+        return api_error(
+            StatusCode::FORBIDDEN,
+            "loopback_only",
+            "仅允许本机访问。",
+            false,
+        );
+    }
+    let Some(store) = state.store else {
+        return api_error(
+            StatusCode::SERVICE_UNAVAILABLE,
+            "runtime_not_configured",
+            "Rust Runtime 尚未配置数据库。",
+            true,
+        );
+    };
+    match store.list_devices().await {
+        Ok(devices) => {
+            let integrations = integrations::statuses().await.unwrap_or_default();
+            Json(serde_json::json!({
+            "ready": true,
+            "cloud": state.cloud.as_ref().is_some_and(CloudService::enabled),
+            "pushNotifications": state.cloud.as_ref().is_some_and(CloudService::push_notifications_available),
+            "pairedDeviceCount": devices.into_iter()
+                .filter(|device| !device.is_local_admin && device.revoked_at.is_none())
+                .count(),
+            "integrations": integrations,
+        }))
+        .into_response()
+        }
+        Err(error) => {
+            eprintln!("[zimlo:rust-bridge] 本机状态失败: {error}");
+            api_error(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "status_unavailable",
+                "本地状态检查失败。",
+                true,
+            )
+        }
+    }
+}
+
+async fn local_integrations(
+    ConnectInfo(peer): ConnectInfo<SocketAddr>,
+    Json(body): Json<serde_json::Value>,
+) -> Response {
+    if !peer.ip().is_loopback() {
+        return api_error(
+            StatusCode::FORBIDDEN,
+            "loopback_only",
+            "仅允许本机访问。",
+            false,
+        );
+    }
+    let Some(target) = body.get("target").and_then(serde_json::Value::as_str) else {
+        return api_error(
+            StatusCode::BAD_REQUEST,
+            "unknown_integration_target",
+            "未知的集成目标。",
+            false,
+        );
+    };
+    if !matches!(target, "all" | "codex_gui" | "cli") {
+        return api_error(
+            StatusCode::BAD_REQUEST,
+            "unknown_integration_target",
+            "未知的集成目标。",
+            false,
+        );
+    }
+    match integrations::install(target).await {
+        Ok(integrations) => {
+            Json(serde_json::json!({ "integrations": integrations })).into_response()
+        }
+        Err(error) => {
+            eprintln!("[zimlo:rust-integrations] {error}");
+            api_error(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "integration_install_failed",
+                "Agent 接入配置失败。",
+                true,
+            )
+        }
+    }
+}
+
+async fn ensure_local_admin(store: &Store) -> Result<DeviceRecord, StoreError> {
+    let now = now();
+    let key = random_bytes::<32>().map_err(|error| {
+        StoreError::PreparePath(format!("local key generation failed: {error}"))
+    })?;
+    store
+        .ensure_local_admin(DeviceRecord {
+            id: format!("local_{}", uuid::Uuid::now_v7()),
+            name: "Local Mac browser".into(),
+            key_base64: to_base64_url(&key),
+            created_at: now.clone(),
+            last_seen_at: now,
+            revoked_at: None,
+            is_local_admin: true,
+            can_approve: true,
+            can_manage_trust: true,
+        })
+        .await
+}
+
+fn now() -> String {
+    chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Millis, true)
 }
 
 fn api_error(
