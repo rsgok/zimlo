@@ -84,9 +84,7 @@ struct NativeFeedView: View {
 private extension View {
     @ViewBuilder
     func nativeFeedScrollTargetBehavior() -> some View {
-        if #available(macOS 26.0, *) {
-            scrollTargetBehavior(.viewAligned(limitBehavior: .alwaysByOne, anchor: .center))
-        } else if #available(macOS 15.0, *) {
+        if #available(macOS 15.0, *) {
             scrollTargetBehavior(.viewAligned(limitBehavior: .alwaysByOne))
         } else {
             scrollTargetBehavior(.viewAligned)
