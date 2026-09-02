@@ -15,6 +15,7 @@ import {
   type APNsSecretBindings,
 } from "./apns-config.js";
 import { validPairingId } from "./identifiers.js";
+import { pairingLandingPage } from "./pairing-landing.js";
 import { PairingRoom } from "./pairing-room.js";
 import { latestMacReleaseName, releaseAssetHeaders, releaseAssetKey } from "./release-assets.js";
 import { RelayRoom } from "./relay-room.js";
@@ -619,6 +620,9 @@ export default {
     const browserCrossOrigin = url.pathname === "/api/pair" || /^\/v1\/materials\/[^/]+$/u.test(url.pathname);
     if (request.method === "OPTIONS" && browserCrossOrigin) {
       return new Response(null, { status: 204, headers: browserCORSHeaders() });
+    }
+    if ((request.method === "GET" || request.method === "HEAD") && url.pathname === "/") {
+      return pairingLandingPage(request.method === "HEAD");
     }
     if (request.method === "GET" && url.pathname === "/healthz") {
       const push = apnsConfigurationStatus(env);

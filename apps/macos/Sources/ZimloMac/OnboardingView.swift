@@ -263,9 +263,9 @@ private struct PhoneStep: View {
             return "这台 iPhone 已安全配对。离开当前 Wi-Fi 后，Zimlo 会自动切换到加密云连接。"
         }
         if usesLocalPairing {
-            return "云端暂不可用，已切换到本地配对。请让 iPhone 与 Mac 连接同一 Wi-Fi 后扫码。"
+            return "云端暂不可用，已切换到本地配对。请让 iPhone 与 Mac 连接同一 Wi-Fi，再打开 iPhone Zimlo 使用 App 内扫码。"
         }
-        return "打开 iPhone 上的 Zimlo 扫描二维码。手机和 Mac 不需要连接同一个 Wi-Fi。"
+        return "打开 iPhone Zimlo，点 App 内“扫描配对二维码”（不要使用系统相机）。手机和 Mac 不需要连接同一个 Wi-Fi。"
     }
 
     var body: some View {

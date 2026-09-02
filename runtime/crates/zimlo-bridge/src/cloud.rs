@@ -65,6 +65,7 @@ struct CloudIdentity {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct DeviceCloudCredentials {
+    #[serde(rename = "relayURL")]
     pub relay_url: String,
     pub access_token: String,
 }
@@ -909,7 +910,23 @@ mod tests {
     use zimlo_protocol::crypto::from_base64_url;
     use zimlo_store::{Store, StoreMode};
 
-    use super::{CloudService, sign_message};
+    use super::{CloudService, DeviceCloudCredentials, sign_message};
+
+    #[test]
+    fn serializes_device_cloud_credentials_with_the_shared_url_acronym() {
+        let credentials = DeviceCloudCredentials {
+            relay_url: "https://cloud.example".into(),
+            access_token: "access-token".into(),
+        };
+
+        assert_eq!(
+            serde_json::to_value(credentials).expect("credentials JSON"),
+            serde_json::json!({
+                "relayURL": "https://cloud.example",
+                "accessToken": "access-token",
+            })
+        );
+    }
 
     #[tokio::test]
     async fn persists_node_compatible_p256_identity_and_p1363_signature() {

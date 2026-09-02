@@ -100,6 +100,8 @@ async function startRuntime() {
     cwd: repositoryRoot,
     env: {
       ...process.env,
+      ZIMLO_HOME: temporaryRoot,
+      ZIMLO_CLOUD_DISABLED: "1",
       ZIMLO_HOST_NAME: "Rust Write Smoke",
       ZIMLO_LAN_HOST: "192.168.1.50",
       ZIMLO_CLAUDE_BIN: fakeClaudePath,

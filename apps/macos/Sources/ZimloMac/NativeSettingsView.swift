@@ -212,7 +212,7 @@ struct NativeSettingsView: View {
                     .padding(6)
                     .background(Color.white)
                     .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
-                Text("用 iPhone Zimlo 扫码连接")
+                Text("打开 iPhone Zimlo，使用 App 内扫码（不要用系统相机）")
                     .font(.system(size: 9.5, weight: .medium)).foregroundStyle(NativeTheme.muted)
             } else {
                 Text("手机与 Mac 通过加密通道同步任务。生成二维码后，两分钟内完成扫描。")

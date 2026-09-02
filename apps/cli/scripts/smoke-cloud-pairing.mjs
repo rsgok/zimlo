@@ -240,10 +240,10 @@ try {
     break;
   }
 
-  if (!completed?.deviceId || !completed?.cloud?.accessToken || !completed?.cloud?.relayURL) {
+  if (completed?.deviceId) smokeDeviceId = completed.deviceId;
+  if (!smokeDeviceId || !completed?.cloud?.accessToken || !completed?.cloud?.relayURL) {
     throw new Error("Cloud pairing response did not provision device relay credentials");
   }
-  smokeDeviceId = completed.deviceId;
   if (!verifyProof(pairKey, `server:${completed.deviceId}`, completed.serverProof)) {
     throw new Error("Cloud pairing server proof is invalid");
   }
