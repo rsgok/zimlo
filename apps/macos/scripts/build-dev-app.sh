@@ -17,10 +17,11 @@ ZIMLO_SIGN_IDENTITY=- \
 ZIMLO_RUNTIME_VERSION="${runtime_version}" \
 "${script_dir}/build-runtime.sh" "${architecture}" >/dev/null
 
-runtime_path="${macos_root}/.build/runtime-${runtime_version}/${architecture}/ZimloBridgeRuntime.app"
+runtime_archive="${macos_root}/.build/runtime-${runtime_version}/ZimloRuntime-${runtime_version}-${architecture}.zip"
 ZIMLO_SKIP_PROJECT_BUILD=1 \
 ZIMLO_RELEASE=0 \
 ZIMLO_SIGN_IDENTITY=- \
+ZIMLO_ARCHITECTURE="${architecture}" \
 ZIMLO_RUNTIME_VERSION="${runtime_version}" \
-ZIMLO_RUNTIME_DEVELOPMENT_PATH="${runtime_path}" \
+ZIMLO_RUNTIME_EMBEDDED_ARCHIVE="${runtime_archive}" \
 "${script_dir}/build-app.sh"

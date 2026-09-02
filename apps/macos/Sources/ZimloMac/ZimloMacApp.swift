@@ -105,6 +105,16 @@ final class WindowCoordinator: NSObject, NSWindowDelegate {
         }
     }
 
+    func showSettingsFromMenu() {
+        Task { @MainActor in
+            try? await Task.sleep(for: Self.menuDismissalDelay)
+            guard !Task.isCancelled else { return }
+            showMainApp()
+            await Task.yield()
+            NotificationCenter.default.post(name: .zimloOpenSettings, object: nil)
+        }
+    }
+
     func showOnboardingFromMenu() {
         Task { @MainActor in
             try? await Task.sleep(for: Self.menuDismissalDelay)
@@ -228,6 +238,7 @@ final class WindowCoordinator: NSObject, NSWindowDelegate {
 
 extension Notification.Name {
     static let zimloOpenTask = Notification.Name("app.zimlo.open-task")
+    static let zimloOpenSettings = Notification.Name("app.zimlo.open-settings")
 }
 
 @MainActor

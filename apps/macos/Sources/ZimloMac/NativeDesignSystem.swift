@@ -16,6 +16,73 @@ enum NativeTheme {
     static let border = Color.white.opacity(0.085)
 }
 
+struct NativeSegmentedTabs<Value: Hashable>: View {
+    let options: [Value]
+    @Binding var selection: Value
+    let title: (Value) -> String
+
+    var body: some View {
+        HStack(spacing: 3) {
+            ForEach(options, id: \.self) { option in
+                Button {
+                    selection = option
+                } label: {
+                    Text(title(option))
+                        .font(.system(size: 11, weight: .semibold))
+                        .foregroundStyle(selection == option ? NativeTheme.paper : NativeTheme.ink.opacity(0.72))
+                        .padding(.horizontal, 13)
+                        .frame(minHeight: 26)
+                        .background(selection == option ? NativeTheme.acid : Color.clear)
+                        .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel(title(option))
+                .accessibilityAddTraits(selection == option ? .isSelected : [])
+            }
+        }
+        .padding(3)
+        .background(NativeTheme.control)
+        .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+    }
+}
+
+struct NativeToolbarSearchField: View {
+    @Binding var text: String
+    let prompt: String
+    var width: CGFloat = 252
+
+    var body: some View {
+        HStack(spacing: 7) {
+            Image(systemName: "magnifyingglass")
+                .font(.system(size: 12, weight: .semibold))
+                .foregroundStyle(NativeTheme.muted)
+            TextField(prompt, text: $text)
+                .textFieldStyle(.plain)
+                .font(.system(size: 12, weight: .medium))
+            if !text.isEmpty {
+                Button {
+                    text = ""
+                } label: {
+                    Image(systemName: "xmark.circle.fill")
+                        .font(.system(size: 11, weight: .semibold))
+                        .foregroundStyle(NativeTheme.muted)
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("清除搜索")
+            }
+        }
+        .padding(.horizontal, 10)
+        .frame(width: width, height: 32)
+        .background(NativeTheme.control)
+        .clipShape(RoundedRectangle(cornerRadius: 9, style: .continuous))
+        .overlay {
+            RoundedRectangle(cornerRadius: 9, style: .continuous)
+                .stroke(NativeTheme.border, lineWidth: 1)
+        }
+    }
+}
+
 struct ZimloCardPalette {
     let ink: Color
     let surface: Color

@@ -30,7 +30,11 @@ struct NativeAgentsView: View {
         }
         .background(NativeTheme.paper)
         .navigationTitle("Agents")
-        .searchable(text: $query, placement: .toolbar, prompt: "搜索 Agent 或项目")
+        .toolbar {
+            ToolbarItem(placement: .principal) {
+                NativeToolbarSearchField(text: $query, prompt: "搜索 Agent 或项目")
+            }
+        }
         .overlay {
             if projects.isEmpty {
                 ContentUnavailableView(

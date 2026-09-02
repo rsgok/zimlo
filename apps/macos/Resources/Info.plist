@@ -36,7 +36,7 @@
 	<key>NSSpeechRecognitionUsageDescription</key>
 	<string>Zimlo 需要使用语音识别，把你的语音转换为任务文字。</string>
 	<key>SUFeedURL</key>
-	<string>https://cloud.zimlo.app/releases/macos/appcast.xml</string>
+	<string>https://cloud.zimlo.app/releases/macos/appcast-arm64.xml</string>
 	<key>SUPublicEDKey</key>
 	<string>__SPARKLE_PUBLIC_KEY__</string>
 	<key>SUEnableAutomaticChecks</key>

@@ -13,7 +13,7 @@ on:
         type: string
 
 permissions:
-  contents: read
+  contents: write
 
 concurrency:
   group: release-macos
@@ -45,6 +45,10 @@ jobs:
         with:
           node-version: 24.15.0
           cache: pnpm
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-darwin,x86_64-apple-darwin
 
       - run: pnpm install --frozen-lockfile
 
@@ -106,13 +110,31 @@ jobs:
           chmod 600 "$private_key_path"
           SPARKLE_PRIVATE_KEY_FILE="$private_key_path" \
             apps/macos/scripts/publish-release.sh \
-            "apps/macos/.build/release-${ZIMLO_VERSION}/Zimlo-${ZIMLO_VERSION}.dmg"
+            "apps/macos/.build/release-${ZIMLO_VERSION}"
 
       - uses: actions/upload-artifact@v4
         with:
           name: Zimlo-${{ inputs.version }}-notarized
-          path: apps/macos/.build/release-${{ inputs.version }}/Zimlo-${{ inputs.version }}.dmg
+          path: apps/macos/.build/release-${{ inputs.version }}/Zimlo-${{ inputs.version }}-*.dmg
           if-no-files-found: error
+
+      - name: Publish GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          release_tag="v${ZIMLO_VERSION}"
+          assets=(
+            "apps/macos/.build/release-${ZIMLO_VERSION}/Zimlo-${ZIMLO_VERSION}-arm64.dmg"
+            "apps/macos/.build/release-${ZIMLO_VERSION}/Zimlo-${ZIMLO_VERSION}-x86_64.dmg"
+          )
+          if gh release view "$release_tag" >/dev/null 2>&1; then
+            gh release upload "$release_tag" "${assets[@]}" --clobber
+          else
+            gh release create "$release_tag" "${assets[@]}" \
+              --target "$GITHUB_SHA" \
+              --title "Zimlo ${ZIMLO_VERSION}" \
+              --generate-notes
+          fi
 
       - name: Remove temporary signing keychain
         if: always()

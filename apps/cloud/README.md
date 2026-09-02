@@ -115,9 +115,14 @@ Add the binding below to `wrangler.jsonc` and redeploy the Worker:
 ]
 ```
 
-`GET /releases/macos/appcast.xml` uses a short cache while versioned DMGs are
-immutable. If R2 has not been bound, the release endpoint returns
-`503 release_storage_unavailable` without affecting pairing, relay, or push.
+`GET /releases/macos/appcast-arm64.xml` and
+`GET /releases/macos/appcast-x86_64.xml` use a short cache while the two
+architecture-specific DMGs are immutable. `GET /releases/macos/download?arch=arm64`
+or `?arch=x86_64` redirects to the matching artifact in `latest.json`; without an
+explicit architecture the endpoint defaults to arm64 (and honors the browser
+architecture client hint when present). If R2 has not been bound, the release
+endpoint returns `503 release_storage_unavailable` without affecting pairing,
+relay, or push.
 
 ## Runtime flow
 

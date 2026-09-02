@@ -17,7 +17,12 @@ import {
 import { validPairingId } from "./identifiers.js";
 import { pairingLandingPage } from "./pairing-landing.js";
 import { PairingRoom } from "./pairing-room.js";
-import { latestMacReleaseName, releaseAssetHeaders, releaseAssetKey } from "./release-assets.js";
+import {
+  latestMacReleaseName,
+  type MacReleaseArchitecture,
+  releaseAssetHeaders,
+  releaseAssetKey,
+} from "./release-assets.js";
 import { RelayRoom } from "./relay-room.js";
 import { ZIMLO_PROTOCOL_VERSION } from "./contract.generated.js";
 
@@ -100,7 +105,18 @@ async function latestMacRelease(request: Request, env: Env): Promise<Response> {
   } catch {
     return jsonError(503, "release_manifest_invalid");
   }
-  const fileName = latestMacReleaseName(value);
+  const requestURL = new URL(request.url);
+  const requestedArchitecture = requestURL.searchParams.get("arch");
+  if (requestedArchitecture !== null
+      && requestedArchitecture !== "arm64"
+      && requestedArchitecture !== "x86_64") {
+    return jsonError(400, "release_architecture_invalid");
+  }
+  const clientArchitecture = request.headers.get("sec-ch-ua-arch")?.toLowerCase().includes("x86") == true
+    ? "x86_64"
+    : "arm64";
+  const architecture = (requestedArchitecture ?? clientArchitecture) as MacReleaseArchitecture;
+  const fileName = latestMacReleaseName(value, architecture);
   if (!fileName) return jsonError(503, "release_manifest_invalid");
   const target = new URL(request.url);
   target.pathname = `/releases/macos/${encodeURIComponent(fileName)}`;

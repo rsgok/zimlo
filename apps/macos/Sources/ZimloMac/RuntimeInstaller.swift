@@ -45,7 +45,28 @@ struct RuntimeConfiguration: Sendable {
     let expectedProtocolVersion: Int
     let expectedTeamIdentifier: String?
     let allowsAdHocSignature: Bool
+    let embeddedRuntimeArchiveURL: URL?
     let developmentRuntimeURL: URL?
+
+    init(
+        rootDirectory: URL,
+        manifestURL: URL,
+        requiredVersion: String,
+        expectedProtocolVersion: Int,
+        expectedTeamIdentifier: String?,
+        allowsAdHocSignature: Bool,
+        embeddedRuntimeArchiveURL: URL? = nil,
+        developmentRuntimeURL: URL?
+    ) {
+        self.rootDirectory = rootDirectory
+        self.manifestURL = manifestURL
+        self.requiredVersion = requiredVersion
+        self.expectedProtocolVersion = expectedProtocolVersion
+        self.expectedTeamIdentifier = expectedTeamIdentifier
+        self.allowsAdHocSignature = allowsAdHocSignature
+        self.embeddedRuntimeArchiveURL = embeddedRuntimeArchiveURL
+        self.developmentRuntimeURL = developmentRuntimeURL
+    }
 
     static func live(bundle: Bundle = .main) -> RuntimeConfiguration {
         let info = bundle.infoDictionary ?? [:]
@@ -62,6 +83,11 @@ struct RuntimeConfiguration: Sendable {
             ?? "\(appVersion)-\(build)"
         let developmentPath = (info["ZimloRuntimeDevelopmentPath"] as? String)
             .flatMap { $0.isEmpty ? nil : URL(fileURLWithPath: $0, isDirectory: true) }
+        let embeddedArchive = bundle.bundleURL
+            .appending(path: "Contents/Resources/Runtime/ZimloRuntime.zip")
+        let embeddedRuntimeArchiveURL = FileManager.default.fileExists(atPath: embeddedArchive.path)
+            ? embeddedArchive
+            : nil
 
         return RuntimeConfiguration(
             rootDirectory: appSupport
@@ -72,6 +98,7 @@ struct RuntimeConfiguration: Sendable {
             expectedProtocolVersion: ZimloContract.protocolVersion,
             expectedTeamIdentifier: info["ZimloRuntimeTeamIdentifier"] as? String,
             allowsAdHocSignature: info["ZimloAllowsAdHocRuntime"] as? Bool ?? false,
+            embeddedRuntimeArchiveURL: embeddedRuntimeArchiveURL,
             developmentRuntimeURL: developmentPath
         )
     }
@@ -157,6 +184,23 @@ actor RuntimeInstaller {
             return exact
         }
 
+        var embeddedFailure: Error?
+        if let embeddedArchive = configuration.embeddedRuntimeArchiveURL {
+            do {
+                await progress("正在安装随 Zimlo 提供的 Bridge Runtime…")
+                let installedRuntime = try install(
+                    archive: embeddedArchive,
+                    expectedArtifact: nil,
+                    validator: validator,
+                    store: store
+                )
+                await progress(nil)
+                return installedRuntime
+            } catch {
+                embeddedFailure = error
+            }
+        }
+
         do {
             await progress("正在获取适合这台 Mac 的 Bridge Runtime…")
             let manifest = try await fetchManifest()
@@ -170,30 +214,12 @@ actor RuntimeInstaller {
             defer { try? FileManager.default.removeItem(at: archive) }
 
             await progress("正在校验并安装 Bridge Runtime…")
-            let digest = try RuntimeFileDigest.sha256(at: archive)
-            guard digest.caseInsensitiveCompare(artifact.sha256) == .orderedSame else {
-                throw RuntimeInstallerError.integrityMismatch
-            }
-            let size = try archive.resourceValues(forKeys: [.fileSizeKey]).fileSize.map(Int64.init) ?? 0
-            guard size == artifact.size else {
-                throw RuntimeInstallerError.integrityMismatch
-            }
-
-            let stagingDirectory = configuration.rootDirectory
-                .appending(path: "staging-\(UUID().uuidString)", directoryHint: .isDirectory)
-            try FileManager.default.createDirectory(
-                at: configuration.rootDirectory,
-                withIntermediateDirectories: true
+            let installedRuntime = try install(
+                archive: archive,
+                expectedArtifact: artifact,
+                validator: validator,
+                store: store
             )
-            defer { try? FileManager.default.removeItem(at: stagingDirectory) }
-            try RuntimeArchive.extract(archive, to: stagingDirectory)
-            let helper = stagingDirectory
-                .appending(path: "ZimloBridgeRuntime.app", directoryHint: .isDirectory)
-            let runtime = try validator.validate(
-                helperBundle: helper,
-                requiredVersion: configuration.requiredVersion
-            )
-            let installedRuntime = try store.install(runtime, sha256: digest)
             await progress(nil)
             return installedRuntime
         } catch {
@@ -204,8 +230,45 @@ actor RuntimeInstaller {
                 return fallback
             }
             await progress(nil)
+            if let embeddedFailure {
+                throw embeddedFailure
+            }
             throw error
         }
+    }
+
+    private func install(
+        archive: URL,
+        expectedArtifact: RuntimeArtifact?,
+        validator: RuntimeValidator,
+        store: RuntimeStore
+    ) throws -> ManagedRuntime {
+        let digest = try RuntimeFileDigest.sha256(at: archive)
+        if let expectedArtifact {
+            guard digest.caseInsensitiveCompare(expectedArtifact.sha256) == .orderedSame else {
+                throw RuntimeInstallerError.integrityMismatch
+            }
+            let size = try archive.resourceValues(forKeys: [.fileSizeKey]).fileSize.map(Int64.init) ?? 0
+            guard size == expectedArtifact.size else {
+                throw RuntimeInstallerError.integrityMismatch
+            }
+        }
+
+        let stagingDirectory = configuration.rootDirectory
+            .appending(path: "staging-\(UUID().uuidString)", directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(
+            at: configuration.rootDirectory,
+            withIntermediateDirectories: true
+        )
+        defer { try? FileManager.default.removeItem(at: stagingDirectory) }
+        try RuntimeArchive.extract(archive, to: stagingDirectory)
+        let helper = stagingDirectory
+            .appending(path: "ZimloBridgeRuntime.app", directoryHint: .isDirectory)
+        let runtime = try validator.validate(
+            helperBundle: helper,
+            requiredVersion: configuration.requiredVersion
+        )
+        return try store.install(runtime, sha256: digest)
     }
 
     private func fetchManifest() async throws -> RuntimeReleaseManifest {

@@ -12,17 +12,16 @@
 pnpm macos:build
 ```
 
-构建结果位于 `apps/macos/.build/Zimlo.app`。App 只包含原生 SwiftUI 主程序、资源和 Sparkle，当前约 18 MB；Bridge Runtime 会按当前 CPU 架构构建在 App 包外：
+构建结果位于 `apps/macos/.build/Zimlo.app`。开发 App 和内置 Rust Runtime 都只包含当前 Mac 的 CPU 架构；Runtime 压缩包位于 App 的 `Contents/Resources/Runtime/ZimloRuntime.zip`，新机器首次启动不需要联网下载：
 
 ```bash
 file apps/macos/.build/Zimlo.app/Contents/MacOS/Zimlo
-file apps/macos/.build/runtime-0.3.0-1/arm64/ZimloBridgeRuntime.app/Contents/MacOS/zimlo
+unzip -l apps/macos/.build/Zimlo.app/Contents/Resources/Runtime/ZimloRuntime.zip
 ```
 
-开发脚本使用 ad-hoc 签名，并把 Runtime 开发路径写入开发 App。正式版本首次需要 Bridge 时，从 `runtime-latest.json` 选择 arm64 或 x86_64 工件，校验 HTTPS 来源、版本、协议、SHA-256、CPU 架构和 Developer ID Team 后原子安装到 `~/Library/Application Support/Zimlo/Runtime`；升级保留上一版作为回退。用户仍不需要安装 Node、pnpm 或执行终端命令。
+启动时优先复用已安装的匹配版本，其次校验并安装 App 内置 Runtime；只有内置副本不可用时才从 `runtime-latest.json` 下载同架构工件。安装过程校验版本、协议、SHA-256、CPU 架构和 Developer ID Team，并原子安装到 `~/Library/Application Support/Zimlo/Runtime`；升级保留上一版作为回退。用户不需要安装 Node、pnpm 或执行终端命令。
 
-Runtime 是独立签名的原生 Rust helper app，不需要 V8 JIT entitlement。发布包按 arm64 / x86_64
-分别生成工件，任一用户只会下载与当前 Mac 匹配的一份。
+Runtime 是独立签名的原生 Rust helper app，不需要 V8 JIT entitlement。发布系统分别生成 `arm64` 和 `x86_64` App、DMG、Runtime 与 Sparkle appcast；用户只会安装和更新与当前 Mac 匹配的一套。
 
 ## 正式发布
 
@@ -51,12 +50,12 @@ export ZIMLO_BUILD_NUMBER="1"
 pnpm macos:release
 ```
 
-发布到 Cloudflare R2 并更新 Sparkle appcast：
+发布到 Cloudflare R2 并更新两条架构独立的 Sparkle appcast：
 
 ```bash
 export SPARKLE_KEY_ACCOUNT="zimlo"
 apps/macos/scripts/publish-release.sh \
-  apps/macos/.build/release-0.3.0/Zimlo-0.3.0.dmg
+  apps/macos/.build/release-0.3.0
 ```
 
-发布脚本会先上传并验证两种架构的 Runtime 与 `runtime-latest.json`，再让 Sparkle appcast 指向新版 App，避免出现 App 已更新但 Runtime 尚不可用的窗口。Sparkle 会定期检查 `https://cloud.zimlo.app/releases/macos/appcast.xml`，验证 EdDSA 签名与 Apple 代码签名后才安装更新。
+输出为 `Zimlo-0.3.0-arm64.dmg` 与 `Zimlo-0.3.0-x86_64.dmg`。发布脚本会先上传并验证两种架构的 Runtime 和 DMG，再更新 `appcast-arm64.xml`、`appcast-x86_64.xml` 与架构化 `latest.json`。原来的 `appcast.xml` 会继续包含两个带硬件约束的更新项，确保已有 Universal App 能平滑迁移。Sparkle 验证 EdDSA 与 Apple 代码签名后才安装对应架构更新。

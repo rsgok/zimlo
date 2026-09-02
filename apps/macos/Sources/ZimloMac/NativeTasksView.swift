@@ -19,6 +19,10 @@ private enum NativeTaskFilter: String, CaseIterable, Identifiable {
     }
 }
 
+enum NativeTaskLayout {
+    static let maximumListWidth: CGFloat = 840
+}
+
 struct NativeTasksView: View {
     @ObservedObject var store: NativeAppStore
     @State private var filter: NativeTaskFilter = .all
@@ -82,7 +86,6 @@ struct NativeTasksView: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            taskFilter
             if sessions.isEmpty {
                 ContentUnavailableView(
                     query.isEmpty ? "这里还没有任务" : "没有匹配的任务",
@@ -100,32 +103,32 @@ struct NativeTasksView: View {
                 }
                 .listStyle(.plain)
                 .scrollContentBackground(.hidden)
+                .contentMargins(.top, 28, for: .scrollContent)
+                .frame(maxWidth: NativeTaskLayout.maximumListWidth)
+                .frame(maxWidth: .infinity, alignment: .center)
             }
         }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(NativeTheme.paper)
         .navigationTitle("Tasks")
-        .searchable(text: $query, placement: .toolbar, prompt: "搜索任务或项目")
+        .toolbar {
+            ToolbarItem(placement: .principal) {
+                HStack(spacing: 12) {
+                    taskFilter
+                    NativeToolbarSearchField(text: $query, prompt: "搜索任务或项目")
+                }
+                .fixedSize()
+            }
+        }
     }
 
     private var taskFilter: some View {
-        HStack(spacing: 10) {
-            Picker("任务状态", selection: $filter) {
-                ForEach(NativeTaskFilter.allCases) { item in
-                    Text(item.label).tag(item)
-                }
-            }
-            .pickerStyle(.segmented)
-            .labelsHidden()
-            .fixedSize(horizontal: true, vertical: false)
-            Spacer()
-            Text("\(sessions.count) 个任务")
-                .font(.system(size: 11, weight: .semibold))
-                .foregroundStyle(NativeTheme.muted)
-        }
-        .padding(.horizontal, 24)
-        .padding(.vertical, 15)
-        .background(NativeTheme.paper)
-        .overlay(alignment: .bottom) { Divider().overlay(NativeTheme.border) }
+        NativeSegmentedTabs(
+            options: NativeTaskFilter.allCases,
+            selection: $filter,
+            title: { $0.label }
+        )
+        .fixedSize()
     }
 
     private func priority(_ state: String) -> Int {

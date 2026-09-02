@@ -33,16 +33,11 @@ struct MainAppView: View {
                 )
                 .navigationSplitViewColumnWidth(min: 210, ideal: 236, max: 270)
             } detail: {
-                switch store.loadState {
-                case .loaded:
-                    NavigationStack(path: $path) {
-                        sectionRoot
-                            .navigationDestination(for: NativeRoute.self) { route in
-                                destination(for: route)
-                            }
-                    }
-                case .idle, .loading, .failed:
-                    loadOverlay
+                NavigationStack(path: $path) {
+                    detailRoot
+                        .navigationDestination(for: NativeRoute.self) { route in
+                            destination(for: route)
+                        }
                 }
             }
             .navigationSplitViewStyle(.balanced)
@@ -87,6 +82,10 @@ struct MainAppView: View {
             section = .tasks
             path = [.task(sessionID)]
         }
+        .onReceive(NotificationCenter.default.publisher(for: .zimloOpenSettings)) { _ in
+            section = .settings
+            path.removeAll()
+        }
         .onDisappear { MacNotificationManager.shared.setVisibleSessionID(nil) }
         .onChange(of: service.state) { _, current in
             guard current == .ready else { return }
@@ -94,6 +93,20 @@ struct MainAppView: View {
         }
         .animation(.snappy(duration: 0.24), value: composer != nil)
         .animation(.easeOut(duration: 0.18), value: store.notice)
+    }
+
+    @ViewBuilder
+    private var detailRoot: some View {
+        if section == .settings {
+            NativeSettingsView(store: store, service: service)
+        } else {
+            switch store.loadState {
+            case .loaded:
+                sectionRoot
+            case .idle, .loading, .failed:
+                loadOverlay
+            }
+        }
     }
 
     @ViewBuilder
@@ -106,7 +119,7 @@ struct MainAppView: View {
         case .agents:
             NativeAgentsView(store: store)
         case .settings:
-            NativeSettingsView(store: store, service: service)
+            EmptyView()
         }
     }
 
@@ -175,7 +188,7 @@ private struct NativeSidebarView: View {
     private var selectionBinding: Binding<NativeSection> {
         Binding(
             get: { selection },
-            set: { _ in }
+            set: { onSelect($0) }
         )
     }
 
@@ -212,9 +225,6 @@ private struct NativeSidebarView: View {
                 .tag(item)
                 .padding(.vertical, 4)
                 .contentShape(Rectangle())
-                .simultaneousGesture(TapGesture().onEnded {
-                    onSelect(item)
-                })
             }
             .listStyle(.sidebar)
             .scrollContentBackground(.hidden)

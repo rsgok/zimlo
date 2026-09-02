@@ -1,24 +1,38 @@
+import ServiceManagement
 import SwiftUI
+
+enum NativeSettingsPane: String, CaseIterable, Identifiable {
+    case general
+    case connections
+    case notifications
+    case advanced
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .general: "常规"
+        case .connections: "连接"
+        case .notifications: "通知"
+        case .advanced: "高级"
+        }
+    }
+
+}
 
 struct NativeSettingsView: View {
     @ObservedObject var store: NativeAppStore
     @ObservedObject var service: ServiceController
     @ObservedObject private var notifications = MacNotificationManager.shared
     @State private var showingDevices = false
+    @State private var launchAtLogin = SMAppService.mainApp.status == .enabled
+    @State private var launchAtLoginMessage: String?
+    @State private var pane: NativeSettingsPane = .general
 
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 16) {
-                serviceCard
-                notificationsCard
-                HStack(alignment: .top, spacing: 14) {
-                    integrationsCard
-                    devicesCard
-                }
-                .fixedSize(horizontal: false, vertical: true)
-                .frame(maxWidth: .infinity, alignment: .topLeading)
-                permissionsCard
-                maintenanceCard
+                paneContent
             }
             .padding(26)
             .frame(maxWidth: 900, alignment: .leading)
@@ -26,7 +40,13 @@ struct NativeSettingsView: View {
         }
         .background(NativeTheme.paper)
         .navigationTitle("设置")
+        .toolbar {
+            ToolbarItem(placement: .principal) {
+                panePicker
+            }
+        }
         .task {
+            synchronizeLaunchAtLogin()
             async let status: Void = { _ = await service.refreshStatus() }()
             async let devices: Void = store.loadDevices()
             async let notificationStatus: Void = notifications.refreshAuthorization()
@@ -35,6 +55,71 @@ struct NativeSettingsView: View {
         .sheet(isPresented: $showingDevices) {
             NativeDevicesSheet(store: store)
         }
+    }
+
+    private var panePicker: some View {
+        NativeSegmentedTabs(
+            options: NativeSettingsPane.allCases,
+            selection: $pane,
+            title: { $0.title }
+        )
+        .fixedSize()
+    }
+
+    @ViewBuilder
+    private var paneContent: some View {
+        switch pane {
+        case .general:
+            VStack(spacing: 16) {
+                generalCard
+                serviceCard
+            }
+        case .connections:
+            HStack(alignment: .top, spacing: 14) {
+                integrationsCard
+                devicesCard
+            }
+            .fixedSize(horizontal: false, vertical: true)
+            .frame(maxWidth: .infinity, alignment: .topLeading)
+        case .notifications:
+            VStack(spacing: 16) {
+                notificationMasterCard
+                HStack(alignment: .top, spacing: 14) {
+                    notificationContentCard
+                    notificationBehaviorCard
+                }
+                .fixedSize(horizontal: false, vertical: true)
+            }
+        case .advanced:
+            VStack(spacing: 16) {
+                permissionsCard
+                maintenanceCard
+            }
+        }
+    }
+
+    private var generalCard: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text("常规").font(.system(size: 14, weight: .bold, design: .rounded))
+            HStack(spacing: 18) {
+                VStack(alignment: .leading, spacing: 3) {
+                    Text("登录时自动启动").font(.system(size: 11.5, weight: .bold))
+                    Text(launchAtLoginMessage ?? "登录 Mac 后自动启动 Zimlo 和本地 Bridge。")
+                        .font(.system(size: 9.5, weight: .medium))
+                        .foregroundStyle(launchAtLoginMessage == nil ? NativeTheme.muted : NativeTheme.coral)
+                }
+                Spacer(minLength: 0)
+                Toggle("登录时自动启动", isOn: $launchAtLogin)
+                    .labelsHidden()
+                    .toggleStyle(.switch)
+                    .onChange(of: launchAtLogin) { _, enabled in
+                        updateLaunchAtLogin(enabled)
+                    }
+            }
+        }
+        .padding(18)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .nativeCard(cornerRadius: 16)
     }
 
     private var serviceCard: some View {
@@ -90,7 +175,7 @@ struct NativeSettingsView: View {
         .nativeCard(cornerRadius: 16)
     }
 
-    private var notificationsCard: some View {
+    private var notificationMasterCard: some View {
         VStack(alignment: .leading, spacing: 13) {
             HStack {
                 VStack(alignment: .leading, spacing: 3) {
@@ -121,6 +206,20 @@ struct NativeSettingsView: View {
                     }
                 )
             )
+
+            if notifications.authorizationDenied {
+                Button("打开系统通知设置") { notifications.openSystemSettings() }
+                    .buttonStyle(.bordered)
+            }
+        }
+        .padding(18)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .nativeCard(cornerRadius: 16)
+    }
+
+    private var notificationContentCard: some View {
+        VStack(alignment: .leading, spacing: 13) {
+            Text("提醒内容").font(.system(size: 14, weight: .bold, design: .rounded))
             NativeNotificationToggleRow(
                 title: "审批与回复",
                 detail: "Agent 需要你的决定或输入时立即提醒。",
@@ -148,6 +247,15 @@ struct NativeSettingsView: View {
                 ),
                 disabled: !notifications.preferences.enabled
             )
+        }
+        .padding(18)
+        .frame(maxWidth: .infinity, minHeight: 220, maxHeight: .infinity, alignment: .topLeading)
+        .nativeCard(cornerRadius: 16)
+    }
+
+    private var notificationBehaviorCard: some View {
+        VStack(alignment: .leading, spacing: 13) {
+            Text("显示与节奏").font(.system(size: 14, weight: .bold, design: .rounded))
             NativeNotificationToggleRow(
                 title: "仅关键通知",
                 detail: "只保留审批、单次审批提醒和失败通知。",
@@ -175,14 +283,9 @@ struct NativeSettingsView: View {
                 ),
                 disabled: !notifications.preferences.enabled
             )
-
-            if notifications.authorizationDenied {
-                Button("打开系统通知设置") { notifications.openSystemSettings() }
-                    .buttonStyle(.bordered)
-            }
         }
         .padding(18)
-        .frame(maxWidth: .infinity, alignment: .leading)
+        .frame(maxWidth: .infinity, minHeight: 220, maxHeight: .infinity, alignment: .topLeading)
         .nativeCard(cornerRadius: 16)
     }
 
@@ -295,6 +398,34 @@ struct NativeSettingsView: View {
         .padding(18)
         .frame(maxWidth: .infinity, alignment: .leading)
         .nativeCard(cornerRadius: 16)
+    }
+
+    private func synchronizeLaunchAtLogin() {
+        let status = SMAppService.mainApp.status
+        launchAtLogin = status == .enabled
+        launchAtLoginMessage = status == .requiresApproval
+            ? "需要在“系统设置 > 通用 > 登录项”中允许 Zimlo。"
+            : nil
+    }
+
+    private func updateLaunchAtLogin(_ enabled: Bool) {
+        let current = SMAppService.mainApp.status == .enabled
+        guard enabled != current else { return }
+        do {
+            if enabled {
+                try SMAppService.mainApp.register()
+            } else {
+                try SMAppService.mainApp.unregister()
+            }
+            launchAtLoginMessage = nil
+        } catch {
+            launchAtLoginMessage = enabled
+                ? "无法启用；请在“系统设置 > 通用 > 登录项”中允许 Zimlo。"
+                : "无法关闭；请在系统设置中重试。"
+            launchAtLogin = SMAppService.mainApp.status == .enabled
+            return
+        }
+        synchronizeLaunchAtLogin()
     }
 
     private var serviceColor: Color {

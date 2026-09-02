@@ -22,53 +22,84 @@ struct NativeFeedView: View {
 
     var body: some View {
         GeometryReader { geometry in
-            ScrollViewReader { proxy in
-                ScrollView {
-                    LazyVStack(alignment: .leading, spacing: 18) {
-                        Color.clear
-                            .frame(height: 14)
-                            .id(NativeFeedScrollAnchor.latest)
-                        if posts.isEmpty {
-                            ContentUnavailableView("All Caught Up", systemImage: "checkmark.circle.fill")
-                                .frame(maxWidth: .infinity, minHeight: 360)
-                                .foregroundStyle(NativeTheme.muted)
-                        } else {
-                            ForEach(posts) { post in
-                                NativeFeedCard(
-                                    store: store,
-                                    post: post,
-                                    minimumHeight: NativeFeedLayout.cardMinimumHeight(
-                                        scrollViewportHeight: geometry.size.height
+            ZStack(alignment: .top) {
+                ScrollViewReader { proxy in
+                    ScrollView {
+                        LazyVStack(alignment: .leading, spacing: 0) {
+                            if posts.isEmpty {
+                                ContentUnavailableView("All Caught Up", systemImage: "checkmark.circle.fill")
+                                    .frame(maxWidth: .infinity)
+                                    .frame(height: geometry.size.height)
+                                    .foregroundStyle(NativeTheme.muted)
+                                    .id(NativeFeedScrollAnchor.latest)
+                            } else {
+                                ForEach(posts) { post in
+                                    NativeFeedCard(
+                                        store: store,
+                                        post: post,
+                                        minimumHeight: NativeFeedLayout.cardMinimumHeight(
+                                            scrollViewportHeight: geometry.size.height
+                                        )
                                     )
-                                )
+                                    .padding(.vertical, NativeFeedLayout.edgeInset)
+                                    // The scroll target occupies exactly one viewport;
+                                    // the shorter card is centered inside that page.
+                                    .frame(height: geometry.size.height, alignment: .center)
+                                    .id(post.id)
+                                }
+                            }
+                        }
+                        .scrollTargetLayout()
+                        .padding(.horizontal, NativeFeedLayout.edgeInset)
+                        .frame(maxWidth: NativeFeedLayout.maximumCardWidth, alignment: .leading)
+                        .frame(maxWidth: .infinity, alignment: .center)
+                    }
+                    .scrollIndicators(.hidden)
+                    // Snap each trackpad or wheel gesture with the chosen card centered
+                    // in the viewport instead of pinning its top edge to the window.
+                    .nativeFeedScrollTargetBehavior()
+                    .onChange(of: scrollToLatestRequest) { _, _ in
+                        withAnimation(.snappy(duration: 0.24)) {
+                            if let latestID = posts.first?.id {
+                                proxy.scrollTo(latestID, anchor: .center)
+                            } else {
+                                proxy.scrollTo(NativeFeedScrollAnchor.latest, anchor: .top)
                             }
                         }
                     }
-                    .scrollTargetLayout()
-                    .padding(.horizontal, 24)
-                    .padding(.bottom, 14)
-                    .frame(maxWidth: NativeFeedLayout.maximumCardWidth, alignment: .leading)
-                    .frame(maxWidth: .infinity, alignment: .center)
                 }
-                .onChange(of: scrollToLatestRequest) { _, _ in
-                    withAnimation(.snappy(duration: 0.24)) {
-                        proxy.scrollTo(NativeFeedScrollAnchor.latest, anchor: .top)
-                    }
-                }
+
+                // macOS lets scrolling content travel beneath the transparent titlebar.
+                // Keep neighboring cards out of that chrome while retaining native scrolling.
+                NativeTheme.paper
+                    .frame(height: geometry.safeAreaInsets.top)
+                    .ignoresSafeArea(.container, edges: .top)
+                    .allowsHitTesting(false)
             }
         }
         .background(NativeTheme.paper)
-        .ignoresSafeArea(.container, edges: .top)
+    }
+}
+
+private extension View {
+    @ViewBuilder
+    func nativeFeedScrollTargetBehavior() -> some View {
+        if #available(macOS 26.0, *) {
+            scrollTargetBehavior(.viewAligned(limitBehavior: .alwaysByOne, anchor: .center))
+        } else if #available(macOS 15.0, *) {
+            scrollTargetBehavior(.viewAligned(limitBehavior: .alwaysByOne))
+        } else {
+            scrollTargetBehavior(.viewAligned)
+        }
     }
 }
 
 enum NativeFeedLayout {
     static let maximumCardWidth: CGFloat = 720
+    static let edgeInset: CGFloat = 28
 
     static func cardMinimumHeight(scrollViewportHeight: CGFloat) -> CGFloat {
-        // The zero-height scroll anchor, stack spacing, and vertical inset put
-        // the first card 32pt from the top and leave 24pt below it.
-        max(500, scrollViewportHeight - 56)
+        max(500, scrollViewportHeight - edgeInset * 2)
     }
 }
 

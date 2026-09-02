@@ -5,24 +5,43 @@ import { useCallback, useEffect, useState } from "react";
 const RELEASE_MANIFEST_URL = "https://cloud.zimlo.app/releases/macos/latest.json";
 const RELEASE_BASE_URL = "https://cloud.zimlo.app/releases/macos/";
 
-interface MacRelease {
-  version: string;
+interface MacReleaseArtifact {
   fileName: string;
   downloadURL: string;
+}
+
+interface MacRelease {
+  schemaVersion: 2;
+  version: string;
   minimumSystemVersion: string;
+  artifacts: {
+    arm64: MacReleaseArtifact;
+    x86_64: MacReleaseArtifact;
+  };
+}
+
+function isMacReleaseArtifact(value: unknown, architecture: "arm64" | "x86_64"): value is MacReleaseArtifact {
+  if (!value || typeof value !== "object") return false;
+  const artifact = value as Partial<MacReleaseArtifact>;
+  return (
+    typeof artifact.fileName === "string"
+    && artifact.fileName.endsWith(`-${architecture}.dmg`)
+    && /^Zimlo-[0-9A-Za-z._-]+\.dmg$/u.test(artifact.fileName)
+    && typeof artifact.downloadURL === "string"
+    && artifact.downloadURL.startsWith(RELEASE_BASE_URL)
+  );
 }
 
 function isMacRelease(value: unknown): value is MacRelease {
   if (!value || typeof value !== "object") return false;
   const release = value as Partial<MacRelease>;
   return (
-    typeof release.version === "string"
+    release.schemaVersion === 2
+    && typeof release.version === "string"
     && /^\d+\.\d+\.\d+(?:[.-][0-9A-Za-z.-]+)?$/u.test(release.version)
-    && typeof release.fileName === "string"
-    && /^Zimlo-[0-9A-Za-z.-]+\.dmg$/u.test(release.fileName)
-    && typeof release.downloadURL === "string"
-    && release.downloadURL.startsWith(RELEASE_BASE_URL)
     && typeof release.minimumSystemVersion === "string"
+    && isMacReleaseArtifact(release.artifacts?.arm64, "arm64")
+    && isMacReleaseArtifact(release.artifacts?.x86_64, "x86_64")
   );
 }
 
@@ -86,15 +105,20 @@ export function BetaDownload() {
           </button>
         )}
         {state.status === "ready" && (
-          <a className="button button--primary" href={state.release.downloadURL}>
-            Download for Mac <span aria-hidden="true">↓</span>
-          </a>
+          <>
+            <a className="button button--primary" href={state.release.artifacts.arm64.downloadURL}>
+              Apple silicon <span aria-hidden="true">↓</span>
+            </a>
+            <a className="button button--dark" href={state.release.artifacts.x86_64.downloadURL}>
+              Intel Mac <span aria-hidden="true">↓</span>
+            </a>
+          </>
         )}
         <a className="button button--dark" href="#demo">See real cards ↓</a>
       </div>
       <p className="beta-release-note">
         {state.status === "ready"
-          ? `Zimlo ${state.release.version} · Universal app · macOS ${state.release.minimumSystemVersion}+`
+          ? `Zimlo ${state.release.version} · Apple silicon or Intel · macOS ${state.release.minimumSystemVersion}+`
           : state.status === "error"
             ? "Could not reach the release server. Check your connection and retry."
             : "Signed Mac download and iPhone TestFlight access will appear here when the Beta opens."}

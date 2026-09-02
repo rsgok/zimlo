@@ -3,8 +3,8 @@ import { latestMacReleaseName, releaseAssetHeaders, releaseAssetKey } from "./re
 
 describe("macOS release assets", () => {
   it("maps only flat, safe release filenames into the bucket prefix", () => {
-    expect(releaseAssetKey("/releases/macos/appcast.xml")).toBe("macos/appcast.xml");
-    expect(releaseAssetKey("/releases/macos/Zimlo-0.3.0.dmg")).toBe("macos/Zimlo-0.3.0.dmg");
+    expect(releaseAssetKey("/releases/macos/appcast-arm64.xml")).toBe("macos/appcast-arm64.xml");
+    expect(releaseAssetKey("/releases/macos/Zimlo-0.3.0-arm64.dmg")).toBe("macos/Zimlo-0.3.0-arm64.dmg");
     expect(releaseAssetKey("/releases/macos/runtime-latest.json")).toBe("macos/runtime-latest.json");
     expect(releaseAssetKey("/releases/macos/ZimloRuntime-0.3.0-1-arm64.zip"))
       .toBe("macos/ZimloRuntime-0.3.0-1-arm64.zip");
@@ -24,11 +24,11 @@ describe("macOS release assets", () => {
       "cache-control": "public, max-age=300, must-revalidate",
       "access-control-allow-origin": "*",
     });
-    expect(releaseAssetHeaders("appcast.xml")).toMatchObject({
+    expect(releaseAssetHeaders("appcast-x86_64.xml")).toMatchObject({
       "content-type": "application/xml; charset=utf-8",
       "cache-control": "public, max-age=300, must-revalidate",
     });
-    expect(releaseAssetHeaders("Zimlo-0.3.0.dmg")).toMatchObject({
+    expect(releaseAssetHeaders("Zimlo-0.3.0-arm64.dmg")).toMatchObject({
       "content-type": "application/x-apple-diskimage",
       "cache-control": "public, max-age=31536000, immutable",
     });
@@ -39,9 +39,17 @@ describe("macOS release assets", () => {
   });
 
   it("accepts only a flat signed-release filename from the latest manifest", () => {
-    expect(latestMacReleaseName({ fileName: "Zimlo-0.3.0.dmg" })).toBe("Zimlo-0.3.0.dmg");
-    expect(latestMacReleaseName({ fileName: "../Zimlo-0.3.0.dmg" })).toBeNull();
-    expect(latestMacReleaseName({ fileName: "Other-0.3.0.dmg" })).toBeNull();
-    expect(latestMacReleaseName(null)).toBeNull();
+    const manifest = {
+      schemaVersion: 2,
+      artifacts: {
+        arm64: { fileName: "Zimlo-0.3.0-arm64.dmg" },
+        x86_64: { fileName: "Zimlo-0.3.0-x86_64.dmg" },
+      },
+    };
+    expect(latestMacReleaseName(manifest, "arm64")).toBe("Zimlo-0.3.0-arm64.dmg");
+    expect(latestMacReleaseName(manifest, "x86_64")).toBe("Zimlo-0.3.0-x86_64.dmg");
+    expect(latestMacReleaseName({ ...manifest, artifacts: { arm64: manifest.artifacts.x86_64 } }, "arm64")).toBeNull();
+    expect(latestMacReleaseName({ ...manifest, artifacts: { arm64: { fileName: "../Zimlo.dmg" } } }, "arm64")).toBeNull();
+    expect(latestMacReleaseName(null, "arm64")).toBeNull();
   });
 });

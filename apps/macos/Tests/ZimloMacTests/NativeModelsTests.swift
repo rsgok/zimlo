@@ -241,6 +241,14 @@ final class NativeModelsTests: XCTestCase {
         XCTAssertEqual(NativeFeedLayout.cardMinimumHeight(scrollViewportHeight: 640), 584)
         XCTAssertEqual(NativeFeedLayout.cardMinimumHeight(scrollViewportHeight: 520), 500)
         XCTAssertEqual(NativeFeedLayout.maximumCardWidth, 720)
+        XCTAssertEqual(
+            NativeFeedLayout.cardMinimumHeight(scrollViewportHeight: 640) + NativeFeedLayout.edgeInset * 2,
+            640
+        )
+    }
+
+    func testTaskListUsesACenteredReadingWidth() {
+        XCTAssertEqual(NativeTaskLayout.maximumListWidth, 840)
     }
 
     func testFeedMaterialPresentationUsesInlineImagesForAlbums() {

@@ -1,5 +1,4 @@
 import AppKit
-import ServiceManagement
 import SwiftUI
 
 enum ZColor {
@@ -427,8 +426,6 @@ enum OnboardingCompletionGate {
 struct MenuPanel: View {
     let model: AppModel
     @ObservedObject private var service: ServiceController
-    @State private var launchAtLogin = SMAppService.mainApp.status == .enabled
-    @State private var menuNotice: String?
 
     init(model: AppModel) {
         self.model = model
@@ -446,19 +443,6 @@ struct MenuPanel: View {
         }
     }
 
-    private var detail: String {
-        service.state.recoveryMessage ?? menuNotice ?? service.menuDetail
-    }
-
-    private var detailColor: Color {
-        if menuNotice != nil { return ZColor.warning }
-        switch service.state {
-        case .ready, .manualStopped: return ZColor.muted
-        case .starting, .stopping: return ZColor.warning
-        case .degraded, .unavailable: return ZColor.coral
-        }
-    }
-
     private var statusColor: Color {
         switch service.state {
         case .ready: ZColor.acid
@@ -469,8 +453,15 @@ struct MenuPanel: View {
         }
     }
 
-    private var detailSymbol: String {
-        menuNotice == nil ? service.menuBarSymbol : "info.circle.fill"
+    private var primaryLabel: String {
+        model.onboarding.completed ? "打开 Zimlo" : "完成初始设置"
+    }
+
+    private var showsServiceDetail: Bool {
+        switch service.state {
+        case .ready: false
+        case .starting, .stopping, .degraded, .manualStopped, .unavailable: true
+        }
     }
 
     @ViewBuilder
@@ -524,29 +515,22 @@ struct MenuPanel: View {
             .padding(.top, 16)
             .padding(.bottom, 8)
 
-            HStack(spacing: 9) {
-                Image(systemName: detailSymbol)
-                    .font(.system(size: 12, weight: .bold))
-                    .foregroundStyle(menuNotice == nil ? statusColor : detailColor)
-                    .frame(width: 16)
-                Text(detail)
-                    .font(.system(size: 12, weight: .semibold))
-                    .foregroundStyle(detailColor)
-                    .lineLimit(2)
-                Spacer(minLength: 0)
+            if showsServiceDetail {
+                HStack(spacing: 9) {
+                    Image(systemName: service.menuBarSymbol)
+                        .font(.system(size: 12, weight: .bold))
+                        .foregroundStyle(statusColor)
+                        .frame(width: 16)
+                    Text(service.state.recoveryMessage ?? service.menuDetail)
+                        .font(.system(size: 11, weight: .semibold))
+                        .foregroundStyle(ZColor.muted)
+                        .lineLimit(2)
+                    Spacer(minLength: 0)
+                }
+                .padding(.horizontal, 12)
+                .padding(.bottom, 10)
+                .accessibilityElement(children: .combine)
             }
-            .padding(.horizontal, 11)
-            .padding(.vertical, 10)
-            .background(ZColor.surface)
-            .clipShape(RoundedRectangle(cornerRadius: 11, style: .continuous))
-            .overlay {
-                RoundedRectangle(cornerRadius: 11, style: .continuous)
-                    .stroke(ZColor.border, lineWidth: 1)
-            }
-            .padding(.horizontal, 12)
-            .padding(.bottom, 12)
-            .accessibilityElement(children: .combine)
-            .accessibilityLabel("服务详情：\(detail)")
 
             ZDivider()
 
@@ -554,52 +538,25 @@ struct MenuPanel: View {
                 serviceControl
                 MenuAction(
                     icon: "rectangle.stack",
-                    label: "打开 Zimlo",
-                    trailingIcon: nil,
-                    disabled: !service.isReady
+                    label: primaryLabel,
+                    trailingIcon: nil
                 ) {
-                    WindowCoordinator.shared.showMainAppFromMenu()
-                }
-                MenuAction(icon: "qrcode", label: "连接手机") {
-                    model.onboarding.step = 2
-                    WindowCoordinator.shared.showOnboardingFromMenu()
-                }
-                MenuAction(icon: "wand.and.stars", label: "设置 Agent") {
-                    model.onboarding.step = 1
-                    WindowCoordinator.shared.showOnboardingFromMenu()
-                }
-            }
-            .padding(10)
-
-            ZDivider()
-
-            VStack(spacing: 4) {
-                MenuAction(icon: "arrow.triangle.2.circlepath", label: "检查更新", trailingIcon: nil) {
-                    if !model.updates.checkForUpdates() {
-                        menuNotice = "当前是本地开发版；发布版会在这里检查更新"
+                    if model.onboarding.completed {
+                        WindowCoordinator.shared.showMainAppFromMenu()
+                    } else {
+                        WindowCoordinator.shared.showOnboardingFromMenu()
                     }
                 }
-                MenuAction(icon: "doc.text.magnifyingglass", label: "查看日志", trailingIcon: "arrow.up.right") {
-                    service.openLog()
+                MenuAction(
+                    icon: "gearshape",
+                    label: "设置…",
+                    trailingIcon: nil,
+                    disabled: !model.onboarding.completed
+                ) {
+                    WindowCoordinator.shared.showSettingsFromMenu()
                 }
             }
             .padding(10)
-
-            ZDivider()
-
-            Toggle(isOn: $launchAtLogin) {
-                Label("登录时自动启动", systemImage: "power")
-                    .font(.system(size: 12, weight: .semibold))
-                    .foregroundStyle(ZColor.ink)
-            }
-            .toggleStyle(.switch)
-            .tint(ZColor.acid)
-            .controlSize(.small)
-            .padding(.horizontal, 16)
-            .padding(.vertical, 12)
-            .onChange(of: launchAtLogin) { _, enabled in
-                updateLaunchAtLogin(enabled)
-            }
 
             ZDivider()
 
@@ -614,48 +571,15 @@ struct MenuPanel: View {
             .font(.system(size: 12, weight: .semibold))
             .padding(16)
         }
-        .frame(width: 310)
+        .frame(width: 284)
         .foregroundStyle(ZColor.ink)
         .background(ZColor.sidebar)
         .overlay(Rectangle().stroke(ZColor.border, lineWidth: 1))
         .preferredColorScheme(.dark)
-        .onAppear {
-            synchronizeLaunchAtLogin()
-        }
         .task {
             guard service.state != .manualStopped else { return }
             _ = await service.refreshStatus()
         }
-    }
-
-    private func synchronizeLaunchAtLogin() {
-        let status = SMAppService.mainApp.status
-        launchAtLogin = status == .enabled
-        if status == .requiresApproval {
-            menuNotice = "需要在“系统设置 > 通用 > 登录项”中允许 Zimlo。"
-        } else {
-            menuNotice = nil
-        }
-    }
-
-    private func updateLaunchAtLogin(_ enabled: Bool) {
-        let current = SMAppService.mainApp.status == .enabled
-        guard enabled != current else { return }
-        do {
-            if enabled {
-                try SMAppService.mainApp.register()
-            } else {
-                try SMAppService.mainApp.unregister()
-            }
-            menuNotice = nil
-        } catch {
-            menuNotice = enabled
-                ? "无法启用登录启动；请在“系统设置 > 通用 > 登录项”中允许 Zimlo。"
-                : "无法关闭登录启动；请在系统设置中重试。"
-            launchAtLogin = SMAppService.mainApp.status == .enabled
-            return
-        }
-        synchronizeLaunchAtLogin()
     }
 }
 

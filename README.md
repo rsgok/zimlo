@@ -53,7 +53,7 @@ pnpm macos:build
 open apps/macos/.build/Zimlo.app
 ```
 
-该开发包已经是 Universal App，按机器架构安装原生 Rust Runtime，并包含 Sparkle（自动检查并下载更新，由用户手动安装）。Runtime 工件不包含 Node 可执行文件或 `node_modules`。正式发布命令会完成 Developer ID 签名、公证、DMG、Sparkle appcast 与 Cloudflare R2 上传；第一次公开发布仍需提供 Apple Developer 凭据、Sparkle 密钥并在 Cloudflare 账号中启用 R2。普通用户最终不会接触 `pnpm`、Node.js 或 `zimlo start`。
+开发包只包含当前 Mac 架构，并内置同架构原生 Rust Runtime；首次启动无需下载。正式发布分别产出 arm64 与 x86_64 的 App、DMG 和 Sparkle 更新流，Runtime 工件不包含 Node 可执行文件或 `node_modules`。发布命令会完成 Developer ID 签名、公证、两份 DMG、两条 Sparkle appcast 与 Cloudflare R2 上传；第一次公开发布仍需提供 Apple Developer 凭据、Sparkle 密钥并在 Cloudflare 账号中启用 R2。普通用户不会接触 `pnpm`、Node.js 或 `zimlo start`。
 
 ## 开发者：从源码运行
 
