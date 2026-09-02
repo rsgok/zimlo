@@ -113,6 +113,7 @@ for architecture in "${architectures[@]}"; do
   dmg_path="${release_dir}/Zimlo-${version}-${architecture}.dmg"
   appcast_path="${release_dir}/appcast-${architecture}.xml"
   appcast_source="${appcast_work_root}/${architecture}"
+  appcast_work_path="${appcast_source}/appcast-${architecture}.xml"
   mkdir -p "${appcast_source}"
   ditto "${dmg_path}" "${appcast_source}/${dmg_path:t}"
 
@@ -122,13 +123,13 @@ for architecture in "${architectures[@]}"; do
 
   appcast_status=$(
     curl --silent --show-error --location \
-      --output "${appcast_source}/appcast.xml" \
+      --output "${appcast_work_path}" \
       --write-out "%{http_code}" \
       "${public_base_url}/appcast-${architecture}.xml?preflight=${version}"
   )
   case "${appcast_status}" in
     200) ;;
-    404) rm -f "${appcast_source}/appcast.xml" ;;
+    404) rm -f "${appcast_work_path}" ;;
     *)
       echo "Unable to read the ${architecture} appcast (HTTP ${appcast_status}); refusing to overwrite update history." >&2
       exit 1
@@ -141,7 +142,7 @@ for architecture in "${architectures[@]}"; do
     --maximum-versions 3 \
     --maximum-deltas 0 \
     "${appcast_source}"
-  ditto "${appcast_source}/appcast.xml" "${appcast_path}"
+  ditto "${appcast_work_path}" "${appcast_path}"
 
   if ! grep -Fq "${dmg_path:t}" "${appcast_path}" || ! grep -Fq "sparkle:edSignature=" "${appcast_path}"; then
     echo "Generated ${architecture} appcast does not contain the signed ${dmg_path:t} update." >&2
@@ -150,15 +151,14 @@ for architecture in "${architectures[@]}"; do
 done
 
 # Keep the legacy architecture-neutral feed alive for already-installed
-# universal builds. Sparkle inspects both thin App bundles and writes the
-# hardware requirement that selects the compatible update.
+# universal builds. Sparkle groups archives by their embedded SUFeedURL, so the
+# two architecture feeds are generated separately and their signed newest
+# items are merged into the legacy history. ARM is deliberately first: Sparkle
+# filters it out on Intel and prefers the first equal-version item on Apple
+# Silicon.
 legacy_appcast_source="${appcast_work_root}/legacy"
 legacy_appcast_path="${release_dir}/appcast.xml"
 mkdir -p "${legacy_appcast_source}"
-for architecture in "${architectures[@]}"; do
-  dmg_path="${release_dir}/Zimlo-${version}-${architecture}.dmg"
-  ditto "${dmg_path}" "${legacy_appcast_source}/${dmg_path:t}"
-done
 legacy_appcast_status=$(
   curl --silent --show-error --location \
     --output "${legacy_appcast_source}/appcast.xml" \
@@ -173,13 +173,13 @@ case "${legacy_appcast_status}" in
     exit 1
     ;;
 esac
-"${sparkle_tools}/generate_appcast" \
-  "${key_options[@]}" \
-  --download-url-prefix "${public_base_url}/" \
-  --maximum-versions 3 \
-  --maximum-deltas 0 \
-  "${legacy_appcast_source}"
-ditto "${legacy_appcast_source}/appcast.xml" "${legacy_appcast_path}"
+node "${script_dir}/merge-legacy-appcast.mjs" \
+  "${legacy_appcast_source}/appcast.xml" \
+  "${release_dir}/appcast-arm64.xml" \
+  "${release_dir}/appcast-x86_64.xml" \
+  "Zimlo-${version}-arm64.dmg" \
+  "Zimlo-${version}-x86_64.dmg" \
+  "${legacy_appcast_path}"
 for architecture in "${architectures[@]}"; do
   if ! grep -Fq "Zimlo-${version}-${architecture}.dmg" "${legacy_appcast_path}"; then
     echo "Legacy appcast does not contain the ${architecture} update." >&2
