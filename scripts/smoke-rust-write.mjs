@@ -79,7 +79,13 @@ function prepareNodeDatabase() {
   const store = new ZimloStore(databasePath);
   store.database.exec(readFileSync(fixturePath, "utf8"));
   store.database.prepare("UPDATE project_locations SET path = ? WHERE project_id = 'project-snapshot'").run(workspacePath);
-  store.database.prepare("UPDATE task_commands SET state = 'dispatching', error = 'interrupted'").run();
+  // Keep the recovered fixture command queued until the encrypted client can
+  // cancel it. A deliberately unsupported provider prevents discovery from
+  // racing the native Codex/Claude runner while preserving the persistence
+  // and cancellation contract under test.
+  store.database.prepare(
+    "UPDATE task_commands SET state = 'dispatching', provider = 'fixture', error = 'interrupted' WHERE id = 'command-snapshot'",
+  ).run();
   store.close();
 }
 

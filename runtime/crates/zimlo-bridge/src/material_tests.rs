@@ -67,6 +67,8 @@ fn router(store: Store) -> axum::Router {
             host_name: "Material Mac".into(),
             writable: true,
             pairing_base_url: None,
+            web_root: None,
+            cloud: None,
         },
     )
 }
@@ -254,6 +256,7 @@ async fn paired_upload_authenticates_decrypts_and_registers_idempotently() {
             can_manage_trust: true,
             writable: true,
             pairing: None,
+            cloud: None,
             action_broker: &broker,
             host_name: "Material Mac",
         },
@@ -277,6 +280,7 @@ async fn paired_upload_authenticates_decrypts_and_registers_idempotently() {
             can_manage_trust: true,
             writable: true,
             pairing: None,
+            cloud: None,
             action_broker: &broker,
             host_name: "Material Mac",
         },
@@ -364,6 +368,7 @@ async fn material_routes_reject_bad_auth_invalid_content_and_cloud_transport() {
             can_manage_trust: true,
             writable: true,
             pairing: None,
+            cloud: None,
             action_broker: &broker,
             host_name: "Material Mac",
         },
@@ -381,13 +386,18 @@ async fn material_routes_reject_bad_auth_invalid_content_and_cloud_transport() {
             },
             "transport": "cloud",
             "encryptionKey": to_base64_url(&[1; 32]),
-            "idempotencyKey": "cloud-not-migrated"
+            "idempotencyKey": "cloud-unavailable"
         }),
     )
     .await
-    .expect("cloud guard");
+    .expect("cloud handling");
     let DispatchResult::Message(message) = cloud else {
-        panic!("cloud transport should fail closed");
+        panic!("cloud transport should return material state");
     };
-    assert_eq!(message["code"], "runtime_not_migrated");
+    assert_eq!(message["type"], "material.updated");
+    assert_eq!(message["material"]["status"], "failed");
+    assert_eq!(
+        message["material"]["error"],
+        "找不到已上传的物料，请重新选择。"
+    );
 }

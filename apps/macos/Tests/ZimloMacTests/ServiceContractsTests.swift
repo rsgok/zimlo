@@ -67,11 +67,7 @@ final class HealthCheckTests: XCTestCase {
 
 final class DesktopBridgeLaunchTests: XCTestCase {
     func testDesktopBridgeEnablesTrustedLANFallback() {
-        let entrypoint = URL(fileURLWithPath: "/Applications/Zimlo.app/Contents/Resources/runtime/cli/dist/index.js")
-        XCTAssertEqual(
-            DesktopBridgeLaunch.arguments(entrypoint: entrypoint),
-            ["--use-env-proxy", entrypoint.path, "start", "--lan"]
-        )
+        XCTAssertEqual(DesktopBridgeLaunch.arguments, ["start", "--lan"])
     }
 }
 

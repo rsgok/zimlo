@@ -47,6 +47,7 @@ async fn update(
             can_manage_trust,
             writable,
             pairing: None,
+            cloud: None,
             action_broker: broker,
             host_name: "Dispatch Mac",
         },

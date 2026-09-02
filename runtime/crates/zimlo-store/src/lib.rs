@@ -16,17 +16,23 @@ use thiserror::Error;
 use tokio::sync::oneshot;
 
 mod actions;
+mod agent_tools;
 mod devices;
+mod discovery;
 mod materials;
 mod mutations;
+mod push;
 mod snapshot;
 mod task_commands;
 mod trust;
 
 pub use actions::{ActionResult, DecisionRecord, PendingActionRecord, StoredActionResult};
+pub use agent_tools::AgentToolInput;
 pub use devices::{DeviceAuthRecord, DeviceRecord};
+pub use discovery::ClearedProcesses;
 pub use materials::MaterialRecord;
 pub use mutations::{MutationResult, NotificationSettingsInput, SafeMutation};
+pub use push::{ActivePushDevice, NotificationSettingsRecord, PushDeviceRecord};
 pub use snapshot::{SnapshotFeatures, SnapshotOptions};
 pub use task_commands::{
     CancelTaskCommandResult, InsertTaskCommandResult, RetryTaskCommandResult, TaskCommandRecord,
@@ -145,6 +151,10 @@ enum Command {
         value: String,
         reply: oneshot::Sender<Result<(), StoreError>>,
     },
+    DeleteMetadata {
+        key: String,
+        reply: oneshot::Sender<Result<(), StoreError>>,
+    },
     SessionExists {
         session_id: String,
         reply: oneshot::Sender<Result<bool, StoreError>>,
@@ -177,10 +187,13 @@ enum Command {
         options: SnapshotOptions,
         reply: oneshot::Sender<Result<Value, StoreError>>,
     },
+    Discovery(discovery::DiscoveryCommand),
     Action(actions::ActionCommand),
+    AgentTool(agent_tools::AgentToolCommand),
     Device(devices::DeviceCommand),
     Material(materials::MaterialCommand),
     Mutation(mutations::MutationCommand),
+    Push(push::PushCommand),
     TaskCommand(task_commands::TaskCommand),
     Trust(trust::TrustCommand),
     Shutdown,
@@ -250,6 +263,15 @@ impl Store {
         self.send(Command::SetMetadata {
             key: key.into(),
             value: value.into(),
+            reply,
+        })?;
+        receive(response).await
+    }
+
+    pub async fn delete_metadata(&self, key: impl Into<String>) -> Result<(), StoreError> {
+        let (reply, response) = oneshot::channel();
+        self.send(Command::DeleteMetadata {
+            key: key.into(),
             reply,
         })?;
         receive(response).await
@@ -329,6 +351,69 @@ impl Store {
     pub async fn snapshot(&self, options: SnapshotOptions) -> Result<Value, StoreError> {
         let (reply, response) = oneshot::channel();
         self.send(Command::Snapshot { options, reply })?;
+        receive(response).await
+    }
+
+    pub async fn get_offset(&self, path: impl Into<String>) -> Result<Option<i64>, StoreError> {
+        let (reply, response) = oneshot::channel();
+        self.send(Command::Discovery(discovery::DiscoveryCommand::GetOffset {
+            path: path.into(),
+            reply,
+        }))?;
+        receive(response).await
+    }
+
+    pub async fn set_offset(
+        &self,
+        path: impl Into<String>,
+        offset: i64,
+        size: i64,
+        modified_at: impl Into<String>,
+    ) -> Result<(), StoreError> {
+        let (reply, response) = oneshot::channel();
+        self.send(Command::Discovery(discovery::DiscoveryCommand::SetOffset {
+            path: path.into(),
+            offset,
+            size,
+            modified_at: modified_at.into(),
+            reply,
+        }))?;
+        receive(response).await
+    }
+
+    pub async fn get_session_by_provider_id(
+        &self,
+        provider: impl Into<String>,
+        provider_session_id: impl Into<String>,
+    ) -> Result<Option<StoredSession>, StoreError> {
+        let (reply, response) = oneshot::channel();
+        self.send(Command::Discovery(
+            discovery::DiscoveryCommand::GetSessionByProviderId {
+                provider: provider.into(),
+                provider_session_id: provider_session_id.into(),
+                reply,
+            },
+        ))?;
+        receive(response).await
+    }
+
+    pub async fn clear_inactive_processes(
+        &self,
+        active_pids: std::collections::HashSet<i64>,
+    ) -> Result<ClearedProcesses, StoreError> {
+        let (reply, response) = oneshot::channel();
+        self.send(Command::Discovery(
+            discovery::DiscoveryCommand::ClearInactiveProcesses { active_pids, reply },
+        ))?;
+        receive(response).await
+    }
+
+    pub async fn prune(&self, retention_days: i64) -> Result<(), StoreError> {
+        let (reply, response) = oneshot::channel();
+        self.send(Command::Discovery(discovery::DiscoveryCommand::Prune {
+            retention_days,
+            reply,
+        }))?;
         receive(response).await
     }
 
@@ -586,6 +671,13 @@ fn run_actor(
             Command::SetMetadata { key, value, reply } => {
                 let _ = reply.send(set_metadata(&connection, &key, &value));
             }
+            Command::DeleteMetadata { key, reply } => {
+                let result = delete_metadata(&connection, &key);
+                if result.is_ok() {
+                    revision.fetch_add(1, Ordering::Relaxed);
+                }
+                let _ = reply.send(result);
+            }
             Command::SessionExists { session_id, reply } => {
                 let _ = reply.send(session_exists(&connection, &session_id));
             }
@@ -625,8 +717,18 @@ fn run_actor(
             Command::Snapshot { options, reply } => {
                 let _ = reply.send(snapshot::build(&connection, &options));
             }
+            Command::Discovery(command) => {
+                if discovery::execute(&mut connection, command) {
+                    revision.fetch_add(1, Ordering::Relaxed);
+                }
+            }
             Command::Action(command) => {
                 if actions::execute(&mut connection, command) {
+                    revision.fetch_add(1, Ordering::Relaxed);
+                }
+            }
+            Command::AgentTool(command) => {
+                if agent_tools::execute(&mut connection, command) {
                     revision.fetch_add(1, Ordering::Relaxed);
                 }
             }
@@ -642,6 +744,11 @@ fn run_actor(
             }
             Command::Mutation(command) => {
                 if mutations::execute(&mut connection, command) {
+                    revision.fetch_add(1, Ordering::Relaxed);
+                }
+            }
+            Command::Push(command) => {
+                if push::execute(&connection, command) {
                     revision.fetch_add(1, Ordering::Relaxed);
                 }
             }
@@ -676,6 +783,13 @@ fn set_metadata(connection: &Connection, key: &str, value: &str) -> Result<(), S
              ON CONFLICT(key) DO UPDATE SET value = excluded.value",
             params![key, value],
         )
+        .map(|_| ())
+        .map_err(sqlite_error)
+}
+
+fn delete_metadata(connection: &Connection, key: &str) -> Result<(), StoreError> {
+    connection
+        .execute("DELETE FROM metadata WHERE key = ?1", [key])
         .map(|_| ())
         .map_err(sqlite_error)
 }

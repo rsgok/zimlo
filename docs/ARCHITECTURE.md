@@ -11,7 +11,7 @@ Codex GUI 不提供 CLI 的 `/hooks` 浏览器，因此 Zimlo 不再把用户级
 ```text
 Zimlo Codex plugin
 ├── .codex-plugin/plugin.json
-├── .mcp.json                  # 安装时写入绝对 Node/CLI 路径
+├── .mcp.json                  # 安装时写入绝对 Rust zimlo 路径
 ├── skills/zimlo-feed/SKILL.md
 └── hooks/hooks.json           # 安装时写入绝对 hook 命令
 ```
@@ -28,16 +28,14 @@ Codex GUI 插件只安装 `SessionStart`、`PermissionRequest` 和仅匹配 `req
 |---|---|
 | `packages/protocol` | Zod 协议、事件/帖子/任务状态/能力模型、设备配对与帧加密、客户端共享策略函数与测试向量 |
 | `packages/adapters` | 进程识别、transcript 扫描与容错 parser、脱敏、测试命令识别 |
-| `apps/cli` | Fastify Bridge、SQLite、发现器、Agent MCP tools、Action Broker、hooks、app-server/resume、CLI |
-| `runtime` | Rust Runtime 迁移目标：协议/加密、SQLite 单连接 actor、Axum Bridge 与原生 CLI |
+| `apps/cli` | Node/TypeScript 参考 Runtime：仅用于兼容测试、黑盒对拍与迁移回归，不随产品交付 |
+| `runtime` | 产品 Runtime：Rust 协议/加密、SQLite actor、Axum Bridge、发现器、Agent 执行器、Cloud/Push、hooks/MCP 与原生 CLI |
 | `apps/web` | React/Vite Feed、Tasks、Agents、Task Detail、回复、审批与 Settings |
 
-Node 仍是产品默认 Runtime。Rust 的 bootstrap SQL 从 `apps/cli/src/store-schema.ts` 生成并由架构
-门禁检查漂移；带 `--database` 启动时默认只读打开现有库，已对拍完整 Snapshot、session/event
-查询、WebSocket 鉴权、方向密钥、严格计数器与数据库变更广播。显式 `--write` 时 Rust 才取得
-SQLite 独占单写者所有权，执行重启恢复，并开放已迁移的本地配对、设备管理及低风险幂等写命令。
-云中继/Push、provider discovery、hooks/MCP、集成安装与默认服务生命周期完成对照前不切换产品默认
-实现；任何阶段都禁止 Node 与 Rust 同时写同一个数据库。
+Rust 是唯一产品默认 Runtime。无参数 `zimlo start` 取得默认数据库的独占单写者所有权；显式
+`--database` 仍默认只读，只有迁移/诊断场景加 `--write`。bootstrap SQL 从 TypeScript 参考 schema
+生成并由架构门禁检查漂移。Node 参考实现只在隔离 HOME 中参与 parity/smoke，不与产品 Runtime
+同时写同一个数据库。对拍范围与结果见 [`RUNTIME_PARITY.md`](./RUNTIME_PARITY.md)。
 
 ## 数据流
 
@@ -113,12 +111,12 @@ Session、persistent 与高风险决策要求确认短语。永久规则只有�
 
 `zimlo start` 只绑定 `127.0.0.1`；`--lan` 仅选择 loopback、RFC1918 或 ULA 地址。二维码携带 2 分钟单次 secret，X25519 协商设备密钥，随后每个方向派生独立 XChaCha20-Poly1305 密钥并使用连接级计数器防重放。浏览器密钥保存在 IndexedDB，Mac 可立即撤销设备，并按设备持久授权手机审批。
 
-迁移中的 Rust Bridge 已兼容配对后的 `/ws` 线协议：从数据库加载未撤销设备密钥，验证
+Rust Bridge 负责配对后的 `/ws` 线协议：从数据库加载未撤销设备密钥，验证
 `ws:{clientNonce}` 与服务端 proof，按方向派生密钥，严格拒绝 counter 重放或缺口。鉴权后首帧是
 设备作用域 Snapshot；只读模式下外部 writer 的 SQLite `data_version` 改变时重新广播 Snapshot。
-默认模式的写命令返回 `runtime_read_only`；显式 `--write --lan` 会启用 2 分钟单次本地配对，
-并接受设备撤销/权限、Feed/Timeline 已读与忽略、Task 置顶/归档、通知设置、用户/Agent 资料、LAN
-审批总开关及 queued Task Command 撤回等已迁移命令。这些写操作与移动端 outbox 共用 idempotency key，检查与落库位于
+显式只读模式的写命令返回 `runtime_read_only`；产品默认写模式可选 `--lan` 并启用 2 分钟单次
+本地配对，接受设备撤销/权限、Feed/Timeline 已读与忽略、Task 置顶/归档、通知设置、用户/Agent
+资料、LAN 审批总开关及 queued Task Command 撤回。这些写操作与移动端 outbox 共用 idempotency key，检查与落库位于
 同一事务。Rust Store 已实现 Task Command 幂等入队、queued → dispatching → running 的 CAS 租约、
 取消/重试及崩溃恢复；Bridge 提供串行 runner、会话关联检查、30 秒物料门禁和可注入
 `TaskExecutor`。写模式现已接入统一原生执行器：Claude 按现有路径解析 app/CLI binary，使用 `-p`、
@@ -134,7 +132,7 @@ Session ID，脱敏并持久化 Session/Event；shutdown 会中止子进程，�
 和构建，复合命令逐段分类，符号链接或 `..` 逃逸 fail closed；写入、联网、安装、发布、删除和未知
 动作仍逐次确认，自动放行与人工询问均进入 `trust_audit`。Agent Profile 在同一 Store actor 事务内
 更新并去重，回执复用权威 Project 读模型；LAN 总开关由本机管理员控制，并同步未撤销设备的
-`can_approve`。Cloud Material 与未迁移集成/云路径仍保持 `runtime_not_migrated`。
+`can_approve`。同一进程还承载 provider discovery、Cloud relay、Push、远程 Material 与集成安装。
 
 ## Cloudflare 远程通道
 
@@ -152,10 +150,9 @@ Mac 安装身份使用 P-256 签名，私钥只保存在权限为 `0600` 的本�
 
 物料字节不进入 WebSocket。WebSocket 只传 material id、安全元数据、任务引用和状态，因此一个视频上传不会阻塞审批、回复与实时状态。局域网设备通过带设备 HMAC 证明的 HTTP 直传 Bridge；远程设备先用每个文件独立的 AES-256-GCM 密钥加密，再把密文放入独立的 `zimlo-materials` R2 临时桶。密钥只走端到端加密的 Bridge 消息，Cloudflare 看不到文件名、MIME、任务 id 或明文。Mac 校验大小、格式特征和 SHA-256 后以 `0600` 保存，并删除成功中转对象；R2 的 24 小时生命周期负责清理断线残留。
 
-Rust 写模式已经实现同形的本地链路：loopback 原生导入、设备 HMAC 上传、AES-256-GCM 解密、
-大小/MIME/文件签名/SHA-256 校验、`0600` 原子落盘及带认证的 Range 下载；`material.register`
-重复提交按已就绪的 material id 幂等返回。Cloud R2 中转与 `material.remote.request` 仍保持
-`runtime_not_migrated`，待 relay 所有权迁移后再开放。
+Rust Runtime 实现 loopback 原生导入、设备 HMAC 上传、AES-256-GCM 解密、大小/MIME/文件签名/
+SHA-256 校验、`0600` 原子落盘及带认证的 Range 下载；`material.register` 重复提交按已就绪的
+material id 幂等返回。远程 `material.remote.request` 通过 Cloud R2 临时密文中转，成功接收后删除对象。
 
 Agent 生成的本地文件先通过 `material.publish` 注册，再由 `feed.post.content` 引用。Feed 的文字编辑语义与媒体载体保持分离：图片组、视频和文档分别是独立卡片，PDF/文档在 iOS 使用 Quick Look。限制为图片 8MB、视频 50MB/3 分钟、PDF 20MB/200 页、其他受支持文档 15MB；每任务最多 10 个、合计 80MB。Codex 图片使用 app-server 的 `localImage` 输入，其余文件和 Claude 通过可信本机路径交给 runtime，但用户界面与 Agent 回复都不得泄露绝对路径。
 

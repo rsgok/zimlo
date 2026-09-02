@@ -53,7 +53,7 @@ pnpm macos:build
 open apps/macos/.build/Zimlo.app
 ```
 
-该开发包已经是 Universal App，包含 Intel / Apple Silicon Node Runtime 和 Sparkle（自动检查并下载更新，由用户手动安装）。正式发布命令会完成 Developer ID 签名、公证、DMG、Sparkle appcast 与 Cloudflare R2 上传；第一次公开发布仍需提供 Apple Developer 凭据、Sparkle 密钥并在 Cloudflare 账号中启用 R2。普通用户最终不会接触 `pnpm`、Node.js 或 `zimlo start`。
+该开发包已经是 Universal App，按机器架构安装原生 Rust Runtime，并包含 Sparkle（自动检查并下载更新，由用户手动安装）。Runtime 工件不包含 Node 可执行文件或 `node_modules`。正式发布命令会完成 Developer ID 签名、公证、DMG、Sparkle appcast 与 Cloudflare R2 上传；第一次公开发布仍需提供 Apple Developer 凭据、Sparkle 密钥并在 Cloudflare 账号中启用 R2。普通用户最终不会接触 `pnpm`、Node.js 或 `zimlo start`。
 
 ## 开发者：从源码运行
 
@@ -70,61 +70,40 @@ open apps/macos/.build/Zimlo.app
 ```bash
 pnpm install
 pnpm check
-node apps/cli/dist/index.js doctor
+pnpm runtime:parity
 ```
 
-Rust Runtime 仍处于迁移阶段，默认不会接管写入。它已经包含协议/加密兼容层、SQLite
-单连接 actor、`/healthz`、兼容现有 Node 数据库的完整 Snapshot、session events、加密
-WebSocket 通道与项目级信任策略：
+Rust Runtime 是产品默认实现。`pnpm start` 与 macOS App 都启动同一个 `zimlo start`：它取得
+`~/.zimlo/zimlo.db` 的单写者所有权，并启动 HTTP/WebSocket Bridge、本地 Unix Socket、MCP/hook
+入口、session 发现、Codex/Claude task runner、Cloud relay、Push 与静态 Web 管理页。
 
 ```bash
 pnpm runtime:check
-cargo run --manifest-path runtime/Cargo.toml -p zimlo-cli -- start --port 4757
-cargo run --manifest-path runtime/Cargo.toml -p zimlo-cli -- start --port 4757 \
-  --database "$ZIMLO_HOME/zimlo.db"
+pnpm start
+# 另一终端
+cargo run --locked --manifest-path runtime/Cargo.toml -p zimlo-cli -- doctor
 ```
 
-传入 `--database` 时 Rust 只读打开数据库，不执行 Runtime 状态迁移或写入；本机可查询
-`/api/local/snapshot`、`/api/local/sessions/:sessionId/events`，已配对设备也可通过 `/ws`
-完成现有 `auth`/`auth.ok` 握手、收发 XChaCha20-Poly1305 帧，并在数据库变化后收到设备
-作用域的 Snapshot。Node Runtime 仍是产品默认实现。
-
-仅在隔离数据库或已完全停止 Node Bridge 后，才可显式让 Rust 取得单写者所有权：
+显式传入 `--database` 是迁移/诊断兼容入口，默认只读；只有确定没有其他 writer 时才加
+`--write`。任何时候都禁止两个 Runtime 同时写同一个数据库。
 
 ```bash
 cargo run --manifest-path runtime/Cargo.toml -p zimlo-cli -- start --port 4757 \
-  --database "$ZIMLO_HOME/zimlo.db" --write
-cargo run --manifest-path runtime/Cargo.toml -p zimlo-cli -- start --port 4757 --lan \
-  --database "$ZIMLO_HOME/zimlo.db" --write
+  --database "/path/to/isolated/zimlo.db"
+cargo run --manifest-path runtime/Cargo.toml -p zimlo-cli -- start --port 4757 \
+  --database "/path/to/isolated/zimlo.db" --write
 ```
-
-`--write` 会取得 SQLite 独占锁、恢复中断的 command/action 状态，并启用本地配对、设备管理、
-Feed/Timeline 已读与忽略、Task 置顶/归档、通知设置、用户/Agent 资料、LAN 审批总开关，以及本地
-Material 导入、设备加密直传和 Range 读取。Rust 已提供持久 Task Command 队列、幂等入队、CAS 执行租约、
-取消/重试状态机、物料门禁与可注入执行器；WebSocket 已开放 queued 指令撤回，以及 Codex / Claude
-任务创建、追问、消息和失败重试。Claude 执行器直接管理本地 CLI 进程并解析 `stream-json`；Codex
-执行器直接管理 `codex app-server --listen stdio://`，实现 initialize、thread 创建/恢复、turn 执行、
-事件持久化、命令/文件/权限审批和结构化输入。PendingAction、确认短语、设备审批权限和幂等结果均由
-Rust 持久化；Runtime 重启后没有活跃上游 resolver 的旧请求会 fail closed，不能误投决策。退出或重启
-会清理进程状态；崩溃时只有尚未启动进程的 `dispatching` 指令自动重排，已经 `running` 的外部执行会
-标记为结果不确定，避免静默重复提交。Rust 已支持设备授权的 `trust.policy.update`，并仅对项目路径
-边界内可确认的读取、搜索、测试和构建自动放行；复合命令必须每段安全，写入、联网、安装、发布、
-删除、未知动作和路径逃逸仍逐次确认，所有自动放行与询问均写入审计。Agent Profile 更新会返回完整
-Project 并按设备 outbox key 幂等；LAN 总开关只允许本机管理员修改，并同步所有未撤销手机的审批权限。
-Cloud Material 中转及尚未迁移的集成安装/云路径继续返回 `runtime_not_migrated`。严禁 Node 与 Rust
-同时以写模式打开同一个数据库。
 
 启动开发 Bridge：
 
 ```bash
-node apps/cli/dist/index.js start
+pnpm start
 ```
 
 终端出现以下信息就表示启动成功：
 
 ```text
-Zimlo 已启动：http://127.0.0.1:4747
-按 Ctrl-C 停止。
+Zimlo Rust Runtime 已启动：http://127.0.0.1:4747
 ```
 
 保持这个终端窗口运行，然后：
@@ -186,13 +165,10 @@ export ZIMLO_CLOUD_URL="https://zimlo-cloud.<account>.workers.dev"
 
 通知与远程同步共用 Cloudflare 服务，但用途分离：通知只负责唤醒用户，真实状态总是在 App 打开后向 Mac 同步。Cloudflare D1 只保存安装公钥、设备令牌哈希、APNs token、每设备 sandbox/production 环境、路由公钥和投递审计，不保存任务标题、提示词、代码或结果。
 
-## npm CLI
+## 原生 CLI
 
-三个可发布包分别是 `@zimlo/protocol`、`@zimlo/adapters` 和 `@zimlo/cli`。构建后的 `pnpm pack` 会把 workspace 依赖固定为当前版本；发布后用户可安装：
-
-```bash
-npm install --global @zimlo/cli
-```
+macOS Runtime 工件内置 `zimlo` 原生 CLI。`apps/cli` 的 Node/TypeScript 实现保留为迁移对拍基准，
+不再是产品默认启动入口，也不进入 macOS Runtime 包。
 
 CLI 命令：
 
@@ -228,7 +204,7 @@ zimlo open
 zimlo codex-plugin install
 ```
 
-插件统一携带压缩后的 `zimlo-feed` Skill、`feed.post` / `material.publish` MCP 工具和三个最小实时 hooks：`SessionStart`、`PermissionRequest` 与仅匹配 Codex `request_user_input` 的 `PreToolUse`（Claude 对应 `AskUserQuestion`）。普通轮次为 0 hook，`compact` 与 `SessionEnd` 也不再触发。所有 hook 都是确定性本地处理。MCP 启动时会按需自动拉起本地 Bridge，因此 Codex GUI 不要求用户先输入终端命令。安装时使用当前 Node 与 CLI 入口的绝对路径，因此不依赖 Codex GUI 继承终端的 npm PATH。插件安装或升级后必须新建任务，已有任务不会动态获得新 Skill 和工具。
+插件统一携带压缩后的 `zimlo-feed` Skill、`feed.post` / `material.publish` MCP 工具和三个最小实时 hooks：`SessionStart`、`PermissionRequest` 与仅匹配 Codex `request_user_input` 的 `PreToolUse`（Claude 对应 `AskUserQuestion`）。普通轮次为 0 hook，`compact` 与 `SessionEnd` 也不再触发。所有 hook 都是确定性本地处理。MCP 启动时会按需自动拉起本地 Bridge，因此 Codex GUI 不要求用户先输入终端命令。安装时写入当前 Rust `zimlo` 可执行文件的绝对路径，因此不依赖 Codex GUI 继承终端的 PATH。插件安装或升级后必须新建任务，已有任务不会动态获得新 Skill 和工具。
 
 ### Codex CLI 与 Claude Code
 

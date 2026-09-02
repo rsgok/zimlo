@@ -105,8 +105,8 @@ async fn healthz_matches_the_existing_bridge_contract() {
             "protocolVersion": 5,
             "features": {
                 "projectTrustPolicy": true,
-                "pushNotifications": true,
-                "remoteSync": true,
+                "pushNotifications": false,
+                "remoteSync": false,
                 "multiHost": true
             }
         })
@@ -494,6 +494,49 @@ async fn websocket_authenticates_encrypts_and_broadcasts_device_snapshot() {
             assert_eq!(frame.reason, "Replay or counter gap");
         }
         message => panic!("expected policy close, got {message:?}"),
+    }
+
+    let (mut revoked_socket, _) = connect_async(format!("ws://{address}/ws"))
+        .await
+        .expect("reconnect WebSocket");
+    revoked_socket
+        .send(ClientMessage::Text(
+            json!({
+                "type": "auth",
+                "deviceId": "device-ws",
+                "clientNonce": client_nonce_text,
+                "proof": make_proof(&device_key, &format!("ws:{client_nonce_text}"))
+                    .expect("client proof"),
+            })
+            .to_string()
+            .into(),
+        ))
+        .await
+        .expect("send reconnect auth");
+    assert_eq!(
+        next_socket_json(&mut revoked_socket).await["type"],
+        "auth.ok"
+    );
+    let _ = next_socket_json(&mut revoked_socket).await;
+    let writer = rusqlite::Connection::open(&path).expect("revocation writer");
+    writer
+        .execute(
+            "UPDATE devices SET revoked_at = ?1 WHERE id = 'device-ws'",
+            ["2026-09-01T12:40:00.000Z"],
+        )
+        .expect("revoke connected device");
+    drop(writer);
+    let close = tokio::time::timeout(Duration::from_secs(3), revoked_socket.next())
+        .await
+        .expect("revocation close timeout")
+        .expect("revocation close message")
+        .expect("valid revocation close");
+    match close {
+        ClientMessage::Close(Some(frame)) => {
+            assert_eq!(frame.code, CloseCode::Policy);
+            assert_eq!(frame.reason, "Device revoked");
+        }
+        message => panic!("expected revocation close, got {message:?}"),
     }
 
     let _ = shutdown.send(());

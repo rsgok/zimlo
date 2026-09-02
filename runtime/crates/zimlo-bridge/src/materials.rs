@@ -8,14 +8,15 @@ use axum::{
     response::{IntoResponse as _, Response},
 };
 use chrono::Utc;
+use hmac::{Hmac, Mac as _};
 use percent_encoding::{NON_ALPHANUMERIC, percent_decode_str, utf8_percent_encode};
 use serde_json::{Value, json};
 use uuid::Uuid;
-use zimlo_protocol::crypto::{fixed_bytes, from_base64_url, verify_proof};
+use zimlo_protocol::crypto::{fixed_bytes, from_base64_url, random_bytes, verify_proof};
 use zimlo_store::{MaterialRecord, Store, StoreError};
 
 use crate::{
-    BridgeState,
+    BridgeState, CloudService,
     material_validation::{
         MaterialInput, Registration, decrypt_combined, digest_hex, failed_record, parse_range,
         record_from_input, safe_extension, truncate, valid_material_id, valid_path_component,
@@ -29,7 +30,6 @@ const MAX_CLOCK_SKEW: i64 = 5 * 60 * 1_000;
 pub(super) enum RegistrationResult {
     Material(Box<MaterialRecord>),
     Invalid,
-    CloudNotMigrated,
 }
 
 pub(super) async fn receive_blob(
@@ -232,16 +232,14 @@ pub(super) async fn content(
 
 pub(super) async fn register(
     store: &Store,
+    cloud: Option<&CloudService>,
     device_id: &str,
     command: &Value,
 ) -> Result<RegistrationResult, StoreError> {
     let Ok(registration) = serde_json::from_value::<Registration>(command.clone()) else {
         return Ok(RegistrationResult::Invalid);
     };
-    if registration.transport == "cloud" {
-        return Ok(RegistrationResult::CloudNotMigrated);
-    }
-    if registration.transport != "local"
+    if !matches!(registration.transport.as_str(), "local" | "cloud")
         || registration.idempotency_key.is_empty()
         || registration.idempotency_key.chars().count() > 240
         || !(40..=80).contains(&registration.encryption_key.len())
@@ -258,12 +256,25 @@ pub(super) async fn register(
     let Some(root) = store.storage_root() else {
         return Ok(RegistrationResult::Invalid);
     };
-    let staged = staged_path(&root, device_id, &registration.material.id);
-    let encrypted = tokio::task::spawn_blocking(move || fs::read(staged)).await;
-    let plaintext = match encrypted {
-        Ok(Ok(encrypted)) => decrypt_combined(&encrypted, &registration.encryption_key),
-        _ => Err("找不到已上传的物料，请重新选择。".into()),
+    let encrypted = if registration.transport == "cloud" {
+        match cloud {
+            Some(cloud) => cloud
+                .download_material(device_id, &registration.material.id)
+                .await
+                .ok()
+                .flatten(),
+            None => None,
+        }
+    } else {
+        let staged = staged_path(&root, device_id, &registration.material.id);
+        tokio::task::spawn_blocking(move || fs::read(staged))
+            .await
+            .ok()
+            .and_then(Result::ok)
     };
+    let plaintext = encrypted
+        .ok_or_else(|| "找不到已上传的物料，请重新选择。".to_owned())
+        .and_then(|encrypted| decrypt_combined(&encrypted, &registration.encryption_key));
     let plaintext = match plaintext {
         Ok(plaintext) if plaintext.len() as i64 == registration.material.size_bytes => plaintext,
         Ok(_) => {
@@ -281,6 +292,11 @@ pub(super) async fn register(
         Ok(material) => {
             let staged = staged_path(&root, device_id, &material.id);
             let _ = tokio::task::spawn_blocking(move || fs::remove_file(staged)).await;
+            if registration.transport == "cloud"
+                && let Some(cloud) = cloud
+            {
+                let _ = cloud.delete_material(device_id, &material.id).await;
+            }
             Ok(RegistrationResult::Material(Box::new(material)))
         }
         Err(message) => {
@@ -297,6 +313,58 @@ pub(super) async fn register(
             )))
         }
     }
+}
+
+pub(super) async fn publish_remote_copy(
+    store: &Store,
+    cloud: Option<&CloudService>,
+    device_id: &str,
+    material_id: &str,
+) -> bool {
+    let Some(cloud) = cloud else { return false };
+    let Some(device) = store.active_device(device_id).await.ok().flatten() else {
+        return false;
+    };
+    let Some(material) = store.get_material(material_id).await.ok().flatten() else {
+        return false;
+    };
+    if material.status != "ready" {
+        return false;
+    }
+    let Some(path) = material.local_path.map(PathBuf::from) else {
+        return false;
+    };
+    let Ok(plaintext) = tokio::task::spawn_blocking(move || fs::read(path)).await else {
+        return false;
+    };
+    let Ok(plaintext) = plaintext else {
+        return false;
+    };
+    let Ok(device_key) = from_base64_url(&device.key_base64) else {
+        return false;
+    };
+    let Ok(mut derivation) = <Hmac<sha2::Sha256> as hmac::Mac>::new_from_slice(&device_key) else {
+        return false;
+    };
+    derivation.update(format!("material-download:{material_id}").as_bytes());
+    let key = derivation.finalize().into_bytes();
+    let Ok(nonce) = random_bytes::<12>() else {
+        return false;
+    };
+    use aes_gcm::{Aes256Gcm, KeyInit as _, aead::Aead as _};
+    let Ok(cipher) = Aes256Gcm::new_from_slice(&key) else {
+        return false;
+    };
+    let Ok(ciphertext) = cipher.encrypt((&nonce).into(), plaintext.as_slice()) else {
+        return false;
+    };
+    let mut encrypted = Vec::with_capacity(nonce.len() + ciphertext.len());
+    encrypted.extend_from_slice(&nonce);
+    encrypted.extend_from_slice(&ciphertext);
+    cloud
+        .upload_material(device_id, material_id, encrypted)
+        .await
+        .is_ok()
 }
 
 async fn persist_failure(
@@ -334,6 +402,106 @@ async fn persist_ready(
         })
         .await
         .map_err(|error| error.to_string())
+}
+
+pub(super) async fn publish_agent_material(
+    store: &Store,
+    cwd: &str,
+    requested_path: &str,
+    requested_name: Option<&str>,
+) -> Result<MaterialRecord, String> {
+    let workspace = fs::canonicalize(cwd).map_err(|_| "无法读取当前 workspace。".to_owned())?;
+    let candidate = PathBuf::from(requested_path);
+    let candidate = if candidate.is_absolute() {
+        candidate
+    } else {
+        workspace.join(candidate)
+    };
+    let source = fs::canonicalize(candidate).map_err(|_| "找不到要发布的物料。".to_owned())?;
+    if source == workspace || !source.starts_with(&workspace) {
+        return Err("物料必须位于当前可信 workspace 内。".into());
+    }
+    let metadata = fs::metadata(&source).map_err(|error| error.to_string())?;
+    if !metadata.is_file() || metadata.len() == 0 {
+        return Err("物料文件为空或不是普通文件。".into());
+    }
+    let extension = source
+        .extension()
+        .and_then(|value| value.to_str())
+        .unwrap_or("")
+        .to_ascii_lowercase();
+    let (kind, mime_type, limit) = match extension.as_str() {
+        "jpg" | "jpeg" => ("image", "image/jpeg", 8 * 1024 * 1024),
+        "png" => ("image", "image/png", 8 * 1024 * 1024),
+        "webp" => ("image", "image/webp", 8 * 1024 * 1024),
+        "heic" => ("image", "image/heic", 8 * 1024 * 1024),
+        "heif" => ("image", "image/heif", 8 * 1024 * 1024),
+        "mp4" => ("video", "video/mp4", 50 * 1024 * 1024),
+        "mov" => ("video", "video/quicktime", 50 * 1024 * 1024),
+        "m4v" => ("video", "video/x-m4v", 50 * 1024 * 1024),
+        "pdf" => ("pdf", "application/pdf", 20 * 1024 * 1024),
+        "txt" => ("document", "text/plain", 15 * 1024 * 1024),
+        "md" => ("document", "text/markdown", 15 * 1024 * 1024),
+        "csv" => ("document", "text/csv", 15 * 1024 * 1024),
+        "json" => ("document", "application/json", 15 * 1024 * 1024),
+        "doc" => ("document", "application/msword", 15 * 1024 * 1024),
+        "docx" => (
+            "document",
+            "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+            15 * 1024 * 1024,
+        ),
+        "xls" => ("document", "application/vnd.ms-excel", 15 * 1024 * 1024),
+        "xlsx" => (
+            "document",
+            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            15 * 1024 * 1024,
+        ),
+        "ppt" => (
+            "document",
+            "application/vnd.ms-powerpoint",
+            15 * 1024 * 1024,
+        ),
+        "pptx" => (
+            "document",
+            "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+            15 * 1024 * 1024,
+        ),
+        _ => return Err("暂不支持这种物料格式。".into()),
+    };
+    if metadata.len() > limit {
+        return Err("物料超过大小限制。".into());
+    }
+    let data = tokio::fs::read(&source)
+        .await
+        .map_err(|error| error.to_string())?;
+    let name = requested_name
+        .filter(|value| !value.is_empty() && value.chars().count() <= 180)
+        .map(str::to_owned)
+        .or_else(|| {
+            source
+                .file_name()
+                .and_then(|value| value.to_str())
+                .map(str::to_owned)
+        })
+        .ok_or_else(|| "物料文件名无效。".to_owned())?;
+    let input = MaterialInput {
+        id: format!("material_{}", Uuid::now_v7().simple()),
+        kind: kind.into(),
+        name,
+        mime_type: mime_type.into(),
+        size_bytes: data.len() as i64,
+        sha256: digest_hex(&data),
+        width: None,
+        height: None,
+        duration_ms: None,
+        preview_material_id: None,
+        origin: "agent".into(),
+        created_at: now(),
+    };
+    if let Some(message) = validate_descriptor(&input).or_else(|| validate_content(&data, &input)) {
+        return Err(message);
+    }
+    persist_ready(store, input, data).await
 }
 
 fn content_response(headers: &HeaderMap, material: &MaterialRecord, data: Vec<u8>) -> Response {

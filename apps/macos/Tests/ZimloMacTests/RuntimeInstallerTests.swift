@@ -101,16 +101,15 @@ final class RuntimeInstallerTests: XCTestCase {
 
     private func fakeRuntime(version: String) throws -> ManagedRuntime {
         let helper = root.appending(path: "source-\(version)-\(UUID().uuidString).app", directoryHint: .isDirectory)
-        let cli = helper.appending(path: "Contents/Resources/cli", directoryHint: .isDirectory)
-        try FileManager.default.createDirectory(at: cli, withIntermediateDirectories: true)
+        let resources = helper.appending(path: "Contents/Resources", directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(at: resources, withIntermediateDirectories: true)
         return ManagedRuntime(
             version: version,
             architecture: .current,
             protocolVersion: 5,
             helperBundle: helper,
-            node: helper.appending(path: "Contents/MacOS/node"),
-            entrypoint: cli.appending(path: "dist/index.js"),
-            cliDirectory: cli
+            executable: helper.appending(path: "Contents/MacOS/zimlo"),
+            resourcesDirectory: resources
         )
     }
 }

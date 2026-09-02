@@ -34,9 +34,8 @@ struct ManagedRuntime: Equatable, Sendable {
     let architecture: RuntimeArchitecture
     let protocolVersion: Int
     let helperBundle: URL
-    let node: URL
-    let entrypoint: URL
-    let cliDirectory: URL
+    let executable: URL
+    let resourcesDirectory: URL
 }
 
 struct RuntimeConfiguration: Sendable {
@@ -316,9 +315,8 @@ struct RuntimeStore {
             architecture: runtime.architecture,
             protocolVersion: runtime.protocolVersion,
             helperBundle: destination,
-            node: destination.appending(path: "Contents/MacOS/node"),
-            entrypoint: destination.appending(path: "Contents/Resources/cli/dist/index.js"),
-            cliDirectory: destination.appending(path: "Contents/Resources/cli", directoryHint: .isDirectory)
+            executable: destination.appending(path: "Contents/MacOS/zimlo"),
+            resourcesDirectory: destination.appending(path: "Contents/Resources", directoryHint: .isDirectory)
         )
     }
 
@@ -367,18 +365,18 @@ struct RuntimeValidator {
             throw RuntimeInstallerError.invalidRuntime("Runtime 与这台 Mac 不兼容。")
         }
 
-        let node = helperBundle.appending(path: "Contents/MacOS/node")
-        let cliDirectory = helperBundle
-            .appending(path: "Contents/Resources/cli", directoryHint: .isDirectory)
-        let entrypoint = cliDirectory.appending(path: "dist/index.js")
-        guard FileManager.default.isExecutableFile(atPath: node.path),
-              FileManager.default.fileExists(atPath: entrypoint.path) else {
+        let executable = helperBundle.appending(path: "Contents/MacOS/zimlo")
+        let resourcesDirectory = helperBundle
+            .appending(path: "Contents/Resources", directoryHint: .isDirectory)
+        let webIndex = resourcesDirectory.appending(path: "public/index.html")
+        guard FileManager.default.isExecutableFile(atPath: executable.path),
+              FileManager.default.fileExists(atPath: webIndex.path) else {
             throw RuntimeInstallerError.invalidRuntime("Runtime 文件不完整。")
         }
 
         let architectureCheck = RuntimeCommand.run(
             executable: URL(fileURLWithPath: "/usr/bin/lipo"),
-            arguments: [node.path, "-verify_arch", architecture.rawValue]
+            arguments: [executable.path, "-verify_arch", architecture.rawValue]
         )
         guard architectureCheck.status == 0 else {
             throw RuntimeInstallerError.invalidRuntime("Runtime 架构校验失败。")
@@ -411,9 +409,8 @@ struct RuntimeValidator {
             architecture: architecture,
             protocolVersion: protocolVersion,
             helperBundle: helperBundle,
-            node: node,
-            entrypoint: entrypoint,
-            cliDirectory: cliDirectory
+            executable: executable,
+            resourcesDirectory: resourcesDirectory
         )
     }
 }

@@ -1,0 +1,49 @@
+{
+  "generatedAt": "2026-09-01T19:05:55.154Z",
+  "checks": [
+    {
+      "name": "client-command-inventory",
+      "status": "pass",
+      "detail": "34 protocol commands implemented by both runtimes"
+    },
+    {
+      "name": "operator-command-surface",
+      "status": "pass",
+      "detail": "20 top-level and nested operator commands retained by Rust"
+    },
+    {
+      "name": "health-contract",
+      "status": "pass",
+      "detail": "health payloads are byte-semantic equivalents"
+    },
+    {
+      "name": "local-bootstrap",
+      "status": "pass",
+      "detail": "same response fields and 256-bit local device key contract"
+    },
+    {
+      "name": "snapshot-contract",
+      "status": "pass",
+      "detail": "23 top-level fields and feature flags match"
+    },
+    {
+      "name": "mcp-tools",
+      "status": "pass",
+      "detail": "2 tools have equivalent schemas and live feed.post behavior"
+    },
+    {
+      "name": "hook-and-state-flow",
+      "status": "pass",
+      "detail": "stable IDs, event kinds, redaction, Feed and task terminal state match"
+    }
+  ],
+  "commandCount": 34,
+  "toolNames": [
+    "feed.post",
+    "material.publish"
+  ],
+  "summary": {
+    "passed": 7,
+    "failed": 0
+  }
+}

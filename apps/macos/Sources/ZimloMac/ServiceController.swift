@@ -475,9 +475,9 @@ final class ServiceController: ObservableObject {
                 self?.runtimePreparationMessage = message
             }
             let terminationStatus = try await Self.runBundledCommand(
-                executable: runtime.node,
-                arguments: [runtime.entrypoint.path, "stop"],
-                currentDirectory: runtime.cliDirectory
+                executable: runtime.executable,
+                arguments: ["stop"],
+                currentDirectory: runtime.resourcesDirectory
             )
             guard terminationStatus == 0 else {
                 recoveryHalted = true
@@ -719,9 +719,9 @@ final class ServiceController: ObservableObject {
         launchedLogOffset = try log.offset()
 
         let process = Process()
-        process.executableURL = runtime.node
-        process.arguments = DesktopBridgeLaunch.arguments(entrypoint: runtime.entrypoint)
-        process.currentDirectoryURL = runtime.cliDirectory
+        process.executableURL = runtime.executable
+        process.arguments = DesktopBridgeLaunch.arguments
+        process.currentDirectoryURL = runtime.resourcesDirectory
         process.qualityOfService = .userInitiated
         process.standardInput = FileHandle.nullDevice
         process.standardOutput = log

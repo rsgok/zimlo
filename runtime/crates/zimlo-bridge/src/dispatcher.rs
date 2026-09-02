@@ -5,7 +5,8 @@ use zimlo_store::{
 };
 
 use crate::{
-    ActionBroker, action_dispatch, management, materials, pairing::PairingManager, trust_dispatch,
+    ActionBroker, CloudService, action_dispatch, management, materials, pairing::PairingManager,
+    trust_dispatch,
 };
 
 pub(super) enum DispatchResult {
@@ -23,6 +24,7 @@ pub(super) struct DispatchContext<'a> {
     pub can_manage_trust: bool,
     pub writable: bool,
     pub pairing: Option<&'a PairingManager>,
+    pub cloud: Option<&'a CloudService>,
     pub action_broker: &'a ActionBroker,
     pub host_name: &'a str,
 }
@@ -51,6 +53,7 @@ pub(super) async fn dispatch(
         can_manage_trust,
         writable,
         pairing,
+        cloud,
         action_broker,
         host_name,
     } = context;
@@ -76,6 +79,14 @@ pub(super) async fn dispatch(
             Ok(DispatchResult::Message(json!({
                 "type": "devices.list",
                 "devices": redacted_devices(store).await?,
+            })))
+        }
+        "session.events.request" => {
+            let session_id = required_string(command, "sessionId", None)?;
+            Ok(DispatchResult::Message(json!({
+                "type": "session.events",
+                "sessionId": session_id,
+                "events": store.list_events(&session_id, 1_000).await?,
             })))
         }
         "notification.settings.get" => {
@@ -285,7 +296,7 @@ pub(super) async fn dispatch(
             if !writable {
                 return Ok(read_only());
             }
-            match materials::register(store, device_id, command).await? {
+            match materials::register(store, cloud, device_id, command).await? {
                 materials::RegistrationResult::Material(material) => {
                     Ok(DispatchResult::Message(json!({
                         "type": "material.updated",
@@ -293,10 +304,17 @@ pub(super) async fn dispatch(
                     })))
                 }
                 materials::RegistrationResult::Invalid => Ok(DispatchResult::Invalid),
-                materials::RegistrationResult::CloudNotMigrated => Ok(message_error(
-                    "runtime_not_migrated",
-                    "Cloud 物料传输尚未迁移到 Rust Runtime。",
-                )),
+            }
+        }
+        "material.remote.request" => {
+            let material_id = required_string(command, "materialId", None)?;
+            if materials::publish_remote_copy(store, cloud, device_id, &material_id).await {
+                Ok(DispatchResult::Messages(Vec::new()))
+            } else {
+                Ok(message_error(
+                    "material_not_found",
+                    "这个物料已不存在，请刷新动态。",
+                ))
             }
         }
         "task.command.cancel" => {
@@ -323,6 +341,9 @@ pub(super) async fn dispatch(
                             "这台设备不存在或不能撤销。",
                         ));
                     }
+                    if let Some(cloud) = cloud {
+                        let _ = cloud.revoke_device(&target).await;
+                    }
                 }
                 "device.approvals.set" => {
                     let Some(enabled) = command.get("enabled").and_then(Value::as_bool) else {
@@ -343,6 +364,134 @@ pub(super) async fn dispatch(
                 "devices": redacted_devices(store).await?,
             })))
         }
+        "notification.device.register" => {
+            if !writable {
+                return Ok(read_only());
+            }
+            let public_key = required_string(command, "publicKey", Some(2_000))?;
+            let environment =
+                optional_string(command, "environment")?.unwrap_or_else(|| "production".into());
+            if !matches!(environment.as_str(), "development" | "production") {
+                return Ok(DispatchResult::Invalid);
+            }
+            let endpoint = if let Some(token) = optional_string(command, "token")? {
+                match cloud {
+                    Some(cloud) => cloud
+                        .register_push_device(device_id, &token, &public_key, &environment)
+                        .await
+                        .ok()
+                        .flatten(),
+                    None => None,
+                }
+            } else {
+                optional_string(command, "endpoint")?
+            };
+            let Some(endpoint) = endpoint.filter(|value| !value.is_empty() && value.len() <= 2_000)
+            else {
+                return Ok(message_error(
+                    "notification_cloud_unavailable",
+                    "Cloudflare 通知服务尚未连接，设备 token 已保留在手机上，请在服务恢复后重试。",
+                ));
+            };
+            let registration = store
+                .upsert_push_device(device_id, endpoint, public_key, environment, now())
+                .await?;
+            Ok(DispatchResult::Message(json!({
+                "type": "notification.device.updated",
+                "registration": registration,
+            })))
+        }
+        "notification.device.unregister" => {
+            if !writable {
+                return Ok(read_only());
+            }
+            if let Some(cloud) = cloud {
+                let _ = cloud.unregister_push_device(device_id).await;
+            }
+            store.unregister_push_device(device_id, now()).await?;
+            Ok(DispatchResult::Message(json!({
+                "type": "notification.device.updated",
+                "registration": null,
+            })))
+        }
+        "integrations.request" => {
+            if !is_local_admin {
+                return Ok(message_error(
+                    "forbidden",
+                    "仅 Mac 本机管理页可查看本地 Agent 接入状态。",
+                ));
+            }
+            match crate::integrations::statuses().await {
+                Ok(integrations) => Ok(DispatchResult::Message(json!({
+                    "type": "integrations.status",
+                    "integrations": integrations,
+                }))),
+                Err(_) => Ok(message_error(
+                    "integration_status_failed",
+                    "本地 Agent 接入状态暂时不可用。",
+                )),
+            }
+        }
+        "integrations.cli.install" => {
+            if !is_local_admin {
+                return Ok(message_error(
+                    "forbidden",
+                    "仅 Mac 本机管理页可修改本地 Agent 接入配置。",
+                ));
+            }
+            match crate::integrations::install("cli").await {
+                Ok(integrations) => Ok(DispatchResult::Message(json!({
+                    "type": "integrations.status",
+                    "integrations": integrations,
+                }))),
+                Err(_) => Ok(message_error(
+                    "integration_install_failed",
+                    "Agent CLI 接入配置失败。",
+                )),
+            }
+        }
+        "codex.plugin.request" => {
+            if !is_local_admin {
+                return Ok(message_error(
+                    "forbidden",
+                    "仅 Mac 本机管理页可查看 Codex 插件。",
+                ));
+            }
+            match crate::integrations::plugin_status().await {
+                Ok(status) => Ok(DispatchResult::Message(json!({
+                    "type": "codex.plugin.status",
+                    "installed": status["installed"],
+                    "detail": status["detail"],
+                    "pluginPath": status["pluginPath"],
+                    "deepLink": status["deepLink"],
+                }))),
+                Err(_) => Ok(message_error(
+                    "codex_plugin_status_failed",
+                    "Codex 插件状态暂时不可用。",
+                )),
+            }
+        }
+        "codex.plugin.install" => {
+            if !is_local_admin {
+                return Ok(message_error(
+                    "forbidden",
+                    "仅 Mac 本机管理页可安装 Codex 插件。",
+                ));
+            }
+            match crate::integrations::install_plugin().await {
+                Ok(status) => Ok(DispatchResult::Message(json!({
+                    "type": "codex.plugin.status",
+                    "installed": status["installed"],
+                    "detail": status["detail"],
+                    "pluginPath": status["pluginPath"],
+                    "deepLink": status["deepLink"],
+                }))),
+                Err(_) => Ok(message_error(
+                    "codex_plugin_install_failed",
+                    "Codex 插件安装失败。",
+                )),
+            }
+        }
         "pairing.create" => {
             if !is_local_admin {
                 return Ok(message_error("forbidden", "仅 Mac 本机管理页可创建配对。"));
@@ -350,17 +499,25 @@ pub(super) async fn dispatch(
             if !writable {
                 return Ok(read_only());
             }
-            match pairing.and_then(|pairing| pairing.create().ok()) {
-                Some(payload) => Ok(DispatchResult::Message(json!({
-                    "type": "pairing.created",
-                    "pairingId": payload.pairing_id,
-                    "pairUrl": payload.pair_url,
-                    "qrDataUrl": payload.qr_data_url,
-                    "expiresAt": payload.expires_at,
-                }))),
+            match pairing {
+                Some(pairing) => match pairing.create().await.ok() {
+                    Some(payload) => Ok(DispatchResult::Message(json!({
+                        "type": "pairing.created",
+                        "pairingId": payload.pairing_id,
+                        "pairUrl": payload.pair_url,
+                        "qrDataUrl": payload.qr_data_url,
+                        "expiresAt": payload.expires_at,
+                        "transport": payload.transport,
+                        "localPairUrl": payload.local_pair_url,
+                    }))),
+                    None => Ok(message_error(
+                        "pairing_unavailable",
+                        "请以 --lan --write 启动 Rust Runtime 后再创建配对。",
+                    )),
+                },
                 None => Ok(message_error(
                     "pairing_unavailable",
-                    "请以 --lan --write 启动 Rust Runtime 后再创建配对。",
+                    "请启动可写 Rust Runtime 后再创建配对。",
                 )),
             }
         }

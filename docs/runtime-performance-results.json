@@ -1,0 +1,99 @@
+{
+  "generatedAt": "2026-09-01T19:09:31.844Z",
+  "environment": {
+    "platform": "darwin 25.5.0",
+    "cpu": "Apple M5 Pro",
+    "logicalCpuCount": 18,
+    "nodeVersion": "v24.15.0",
+    "rustVersion": "rustc 1.98.0 (88d9e12ae 2026-08-18)",
+    "cloudDisabled": true,
+    "isolatedEmptyHome": true
+  },
+  "methodology": {
+    "coldStartupSamples": 30,
+    "coldStartupDefinition": "process spawn until first successful /healthz response",
+    "memoryDefinition": "RSS after 750 ms with an empty isolated HOME",
+    "httpDefinition": "sequential loopback requests after 20 warmups"
+  },
+  "results": {
+    "node": {
+      "coldStartupMs": {
+        "samples": 30,
+        "min": 151.012,
+        "mean": 156.358,
+        "p50": 154.445,
+        "p95": 178.687,
+        "p99": 182.329,
+        "max": 182.329
+      },
+      "steadyProcess": {
+        "rssBytes": 112263168,
+        "cpuPercent": 2.9
+      },
+      "healthLatencyMs": {
+        "samples": 400,
+        "min": 0.075,
+        "mean": 0.165,
+        "p50": 0.142,
+        "p95": 0.28,
+        "p99": 0.392,
+        "max": 1.444
+      },
+      "snapshotLatencyMs": {
+        "samples": 120,
+        "min": 0.218,
+        "mean": 0.35,
+        "p50": 0.302,
+        "p95": 0.481,
+        "p99": 1.542,
+        "max": 2.673
+      }
+    },
+    "rust": {
+      "coldStartupMs": {
+        "samples": 30,
+        "min": 18.35,
+        "mean": 31.533,
+        "p50": 19.418,
+        "p95": 21.57,
+        "p99": 377.896,
+        "max": 377.896
+      },
+      "steadyProcess": {
+        "rssBytes": 15925248,
+        "cpuPercent": 0.4
+      },
+      "healthLatencyMs": {
+        "samples": 400,
+        "min": 0.055,
+        "mean": 0.117,
+        "p50": 0.098,
+        "p95": 0.186,
+        "p99": 0.329,
+        "max": 2.61
+      },
+      "snapshotLatencyMs": {
+        "samples": 120,
+        "min": 0.153,
+        "mean": 0.179,
+        "p50": 0.175,
+        "p95": 0.223,
+        "p99": 0.287,
+        "max": 0.292
+      }
+    }
+  },
+  "footprint": {
+    "rustBinaryBytes": 16879216,
+    "nodeExecutableBytes": 119944608,
+    "nodeCliDistBytes": 416260,
+    "note": "Node dependency tree is excluded, so Node footprint is a conservative lower bound."
+  },
+  "comparison": {
+    "startupP50Speedup": 7.95,
+    "rssReductionPercent": 85.81,
+    "healthP50Speedup": 1.45,
+    "snapshotP50Speedup": 1.73,
+    "runtimeComponentReductionPercent": 85.98
+  }
+}

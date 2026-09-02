@@ -16,12 +16,13 @@ pnpm macos:build
 
 ```bash
 file apps/macos/.build/Zimlo.app/Contents/MacOS/Zimlo
-file apps/macos/.build/runtime-0.3.0-1/arm64/ZimloBridgeRuntime.app/Contents/MacOS/node
+file apps/macos/.build/runtime-0.3.0-1/arm64/ZimloBridgeRuntime.app/Contents/MacOS/zimlo
 ```
 
 开发脚本使用 ad-hoc 签名，并把 Runtime 开发路径写入开发 App。正式版本首次需要 Bridge 时，从 `runtime-latest.json` 选择 arm64 或 x86_64 工件，校验 HTTPS 来源、版本、协议、SHA-256、CPU 架构和 Developer ID Team 后原子安装到 `~/Library/Application Support/Zimlo/Runtime`；升级保留上一版作为回退。用户仍不需要安装 Node、pnpm 或执行终端命令。
 
-Runtime 是独立签名的 helper app。它单独声明 V8 JIT 所需的最小 Hardened Runtime entitlement，主应用不继承这项权限。发布包包含两个约 46 MB 的按架构下载工件，但任一用户只会下载与当前 Mac 匹配的一份。
+Runtime 是独立签名的原生 Rust helper app，不需要 V8 JIT entitlement。发布包按 arm64 / x86_64
+分别生成工件，任一用户只会下载与当前 Mac 匹配的一份。
 
 ## 正式发布
 
