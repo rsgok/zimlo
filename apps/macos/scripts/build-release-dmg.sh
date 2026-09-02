@@ -4,7 +4,7 @@ set -euo pipefail
 script_dir=${0:A:h}
 macos_root=${script_dir:h}
 repo_root=${macos_root:h:h}
-version=${ZIMLO_VERSION:-0.3.0}
+version=${ZIMLO_VERSION:-0.3.1}
 build_number=${ZIMLO_BUILD_NUMBER:-1}
 release_root="${macos_root}/.build/release-${version}"
 runtime_version=${ZIMLO_RUNTIME_VERSION:-${version}-${build_number}}

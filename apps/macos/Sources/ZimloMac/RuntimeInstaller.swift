@@ -77,7 +77,7 @@ struct RuntimeConfiguration: Sendable {
         let manifestValue = info["ZimloRuntimeManifestURL"] as? String
         let manifestURL = manifestValue.flatMap(URL.init(string:))
             ?? URL(string: "https://cloud.zimlo.app/releases/macos/runtime-latest.json")!
-        let appVersion = info["CFBundleShortVersionString"] as? String ?? "0.3.0"
+        let appVersion = info["CFBundleShortVersionString"] as? String ?? "0.3.1"
         let build = info["CFBundleVersion"] as? String ?? "1"
         let requiredVersion = info["ZimloRequiredRuntimeVersion"] as? String
             ?? "\(appVersion)-\(build)"

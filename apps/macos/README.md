@@ -45,7 +45,7 @@ export ZIMLO_SIGN_IDENTITY="Developer ID Application: Your Name (TEAMID)"
 export ZIMLO_TEAM_ID="TEAMID"
 export SPARKLE_PUBLIC_KEY="..."
 export APPLE_NOTARY_PROFILE="zimlo-notary"
-export ZIMLO_VERSION="0.3.0"
+export ZIMLO_VERSION="0.3.1"
 export ZIMLO_BUILD_NUMBER="1"
 pnpm macos:release
 ```
@@ -55,7 +55,7 @@ pnpm macos:release
 ```bash
 export SPARKLE_KEY_ACCOUNT="zimlo"
 apps/macos/scripts/publish-release.sh \
-  apps/macos/.build/release-0.3.0
+  apps/macos/.build/release-0.3.1
 ```
 
-输出为 `Zimlo-0.3.0-arm64.dmg` 与 `Zimlo-0.3.0-x86_64.dmg`。发布脚本会先上传并验证两种架构的 Runtime 和 DMG，再更新 `appcast-arm64.xml`、`appcast-x86_64.xml` 与架构化 `latest.json`。原来的 `appcast.xml` 会继续包含两个带硬件约束的更新项，确保已有 Universal App 能平滑迁移。Sparkle 验证 EdDSA 与 Apple 代码签名后才安装对应架构更新。
+输出为 `Zimlo-0.3.1-arm64.dmg` 与 `Zimlo-0.3.1-x86_64.dmg`。发布脚本会先上传并验证两种架构的 Runtime 和 DMG，再更新 `appcast-arm64.xml`、`appcast-x86_64.xml` 与架构化 `latest.json`。原来的 `appcast.xml` 会继续包含两个带硬件约束的更新项，确保已有 Universal App 能平滑迁移。Sparkle 验证 EdDSA 与 Apple 代码签名后才安装对应架构更新。
