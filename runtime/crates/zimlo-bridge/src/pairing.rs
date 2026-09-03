@@ -23,6 +23,7 @@ use zimlo_protocol::crypto::{
     CryptoError, create_key_pair, derive_device_key, derive_pair_key, fixed_bytes, from_base64_url,
     make_proof, random_bytes, to_base64_url, verify_proof,
 };
+use zimlo_protocol::host_platform;
 use zimlo_store::{DeviceRecord, Store, StoreError};
 
 use crate::{BridgeState, CloudService, api_error};
@@ -343,7 +344,7 @@ pub(super) async fn local_bootstrap(
     let candidate = match random_bytes::<32>() {
         Ok(key) => DeviceRecord {
             id: format!("local_{}", Uuid::now_v7()),
-            name: "Local Mac browser".into(),
+            name: "Local Zimlo browser".into(),
             key_base64: to_base64_url(&key),
             created_at: now.clone(),
             last_seen_at: now.clone(),
@@ -408,7 +409,7 @@ pub(super) async fn create_pairing(
         return api_error(
             StatusCode::SERVICE_UNAVAILABLE,
             "pairing_unavailable",
-            "请以 --lan --write 启动 Rust Runtime 后再创建配对。",
+            "请以可写模式启动 Rust Runtime 后再创建配对。",
             true,
         );
     };
@@ -548,7 +549,7 @@ fn host_value(host_id: &str, host_name: &str, last_seen_at: &str) -> serde_json:
     json!({
         "id": host_id,
         "name": host_name,
-        "platform": "macos",
+        "platform": host_platform(),
         "lastSeenAt": last_seen_at,
     })
 }

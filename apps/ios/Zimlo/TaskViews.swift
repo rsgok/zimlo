@@ -711,7 +711,7 @@ struct NewTaskView: View {
                         } }
 
                         if session == nil && model.snapshot.workspaces.isEmpty {
-                            Text("先在 Mac 的 Codex 或 Claude Code 中打开一次项目，Zimlo 才能安全地把任务交给它。")
+                            Text("先在运行设备的 Codex 或 Claude Code 中打开一次项目，Zimlo 才能安全地把任务交给它。")
                                 .font(ZFont.footnote).foregroundStyle(ZColor.coralText)
                         }
                     }

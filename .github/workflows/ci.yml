@@ -37,3 +37,36 @@ jobs:
       - run: pnpm check
       - name: Build Rust CLI for both macOS architectures
         run: pnpm runtime:build:macos
+
+  linux-runtime:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10.33.0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24.15.0
+          cache: pnpm
+
+      - name: Install Rust toolchain
+        run: |
+          rustup toolchain install 1.98.0 --profile minimal --component clippy,rustfmt
+          rustup target add --toolchain 1.98.0 x86_64-unknown-linux-musl
+
+      - name: Install static Linux build tools
+        run: sudo apt-get update && sudo apt-get install -y musl-tools
+
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm runtime:check
+      - run: pnpm runtime:build:linux
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: zimlo-linux-x86_64
+          path: dist/linux/*.tar.gz
+          if-no-files-found: error

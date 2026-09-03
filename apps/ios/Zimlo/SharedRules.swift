@@ -217,11 +217,11 @@ enum OutboxFeedbackRules {
 
     static func queuedNotice(commandType: String, sent: Bool) -> String? {
         guard userAuthoredTypes.contains(commandType) else { return nil }
-        guard sent else { return "已保存在手机，连接 Mac 后自动发送" }
+        guard sent else { return "已保存在手机，连接运行设备后自动发送" }
         switch commandType {
-        case "task.create": return "任务已发送，等待 Mac 接收"
-        case "task.follow_up", "session.message": return "回复已发送，等待 Mac 接收"
-        case "action.decide": return "决定已发送，等待 Mac 确认"
+        case "task.create": return "任务已发送，等待运行设备接收"
+        case "task.follow_up", "session.message": return "回复已发送，等待运行设备接收"
+        case "action.decide": return "决定已发送，等待运行设备确认"
         default: return nil
         }
     }
@@ -448,15 +448,15 @@ enum PairingNetworkRules {
             return "无法安全保存配对信息，请安装已签名的 App 后重试。"
         }
         if shouldOfferSettings(error: error, pairingURL: pairingURL) {
-            return "无法访问 Mac 所在的局域网。请确认系统弹窗中已允许 Zimlo 访问本地网络；如果之前点了“不允许”，请打开系统设置，开启“本地网络”后重试。"
+            return "无法访问运行设备所在的局域网。请确认系统弹窗中已允许 Zimlo 访问本地网络；如果之前点了“不允许”，请打开系统设置，开启“本地网络”后重试。"
         }
         if normalized.contains("could not connect")
             || normalized.contains("couldn’t connect")
             || normalized.contains("connection refused") {
-            return "无法连接 Mac。请打开 Mac 上的 Zimlo 并刷新连接码；本地连接还需确认两台设备在同一 Wi-Fi。"
+            return "无法连接运行设备。请打开运行设备上的 Zimlo 并刷新连接码；本地连接还需确认两台设备在同一 Wi-Fi。"
         }
         if normalized.contains("timed out") || normalized.contains("timeout") {
-            return "连接 Mac 超时。请在 Mac 刷新连接码后重试。"
+            return "连接运行设备超时。请在运行设备刷新连接码后重试。"
         }
         return error
     }

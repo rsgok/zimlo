@@ -2,7 +2,7 @@
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
-Zimlo 是 Codex 与 Claude Code 的隐私优先移动状态层。它自动发现 Mac 上已经存在或正在运行的 session，同时只向 Agent 公开 `feed.post` 与 `material.publish` 两个工具；旧版 `feed.skip` / `signal.transition` 仅保留协议兼容。手机默认通过 Cloudflare 与 Mac 完成配对和远程同步；局域网直连只是更快的可选路径。
+Zimlo 是 Codex 与 Claude Code 的隐私优先移动状态层。它自动发现 Mac 或 Linux 服务器上已经存在或正在运行的 session，同时只向 Agent 公开 `feed.post` 与 `material.publish` 两个工具；旧版 `feed.skip` / `signal.transition` 仅保留协议兼容。手机默认通过 Cloudflare 与运行设备完成配对和远程同步；局域网直连只是更快的可选路径。
 
 ## 当前能力
 
@@ -55,11 +55,25 @@ open apps/macos/.build/Zimlo.app
 
 开发包只包含当前 Mac 架构，并内置同架构原生 Rust Runtime；首次启动无需下载。正式发布分别产出 arm64 与 x86_64 的 App、DMG 和 Sparkle 更新流，Runtime 工件不包含 Node 可执行文件或 `node_modules`。发布命令会完成 Developer ID 签名、公证、两份 DMG、两条 Sparkle appcast 与 Cloudflare R2 上传；第一次公开发布仍需提供 Apple Developer 凭据、Sparkle 密钥并在 Cloudflare 账号中启用 R2。普通用户不会接触 `pnpm`、Node.js 或 `zimlo start`。
 
+## Linux 服务器：无界面运行
+
+Linux 不需要移植 macOS App。Zimlo 将同一个 Rust Runtime 打包成无 GUI 的 x86_64/aarch64 服务，由 systemd 用户服务托管；它主动连接 Cloudflare，因此服务器不需要公网 IP，也不需要开放入站端口。
+
+```bash
+tar -xzf zimlo-<version>-linux-<arch>.tar.gz
+cd zimlo-<version>-linux-<arch>
+./install.sh
+zimlo integrations install --target cli
+zimlo pair
+```
+
+最后一条命令直接在 SSH 终端显示二维码。用 iPhone 扫码后，服务器上运行的 Codex 就会进入 Zimlo。完整安装、systemd 与 SSH 管理说明见 [Linux 无界面服务器](docs/LINUX_HEADLESS.md)。
+
 ## 开发者：从源码运行
 
-环境要求：
+从源码开发的环境要求：
 
-- macOS 14+
+- macOS 14+，或 Linux（Runtime 与 Web）
 - Node.js 24+
 - pnpm 10
 - Rust 1.98.0（由根目录 `rust-toolchain.toml` 锁定）
@@ -135,19 +149,19 @@ curl http://127.0.0.1:4747/healthz
 
 响应中的 `features.projectTrustPolicy`、`features.pushNotifications`、`features.remoteSync`、`features.multiHost` 为 `true` 时，客户端才显示相应入口。协议 v4 客户端遇到旧 Bridge 时会明确提示升级，不会进入无限重连。
 
-同一个 iOS/Web 客户端可以配对多台 Mac。每台 Mac 拥有稳定的 `hostId` 和独立端到端加密通道；客户端只在本地合并 Feed、任务和离线快照，回复、审批、附件与 outbox 会按来源 `hostId` 精确回到对应 Mac。设置页的“运行设备”可查看连接状态并继续添加 Mac。
+同一个 iOS/Web 客户端可以配对多台运行设备。每台 Mac 或 Linux 服务器拥有稳定的 `hostId` 和独立端到端加密通道；客户端只在本地合并 Feed、任务和离线快照，回复、审批、附件与 outbox 会按来源 `hostId` 精确回到对应设备。设置页的“运行设备”可查看连接状态并继续添加设备。
 
 ## 手机离开局域网后如何工作
 
-Cloudflare 不是任务数据库，Mac 仍是唯一的任务状态源：
+Cloudflare 不是任务数据库，运行 Zimlo 的 Mac 或 Linux 服务器仍是唯一的任务状态源：
 
-1. Mac 用安装私钥签名并建立到 Durable Object 的长连接；
+1. 运行设备用安装私钥签名并建立到 Durable Object 的长连接；
 2. 手机使用配对时取得的设备令牌连接同一 Durable Object；发现可信本地地址时也可优先走 LAN；
 3. Durable Object 只按安装与连接 ID 转发密文；现有 Bridge 在密文内部再次验证设备身份、加密消息并防重放；
-4. Mac 在线时，快照、审批、回复和审阅实时同步；Mac 离线时，Cloudflare 返回离线状态，手机显示最近缓存，写操作保存在设备 outbox；
-5. Mac 恢复连接后，客户端重新请求最新快照并幂等重放未确认操作。
+4. 运行设备在线时，快照、审批、回复和审阅实时同步；设备离线时，Cloudflare 返回离线状态，手机显示最近缓存，写操作保存在设备 outbox；
+5. 运行设备恢复连接后，客户端重新请求最新快照并幂等重放未确认操作。
 
-因此，手机离开电脑的 Wi-Fi **可以继续使用**，但 Mac 必须开机并运行 Zimlo。Mac 关机时不会把代码、任务正文或可执行操作托管到云端。
+因此，手机离开电脑的 Wi-Fi **可以继续使用**，但运行设备必须在线并运行 Zimlo。设备离线时不会把代码、任务正文或可执行操作托管到云端。
 
 默认线上服务已经部署在 `https://cloud.zimlo.app`，普通用户无需配置服务器。自建或本地开发可覆盖：
 
@@ -167,8 +181,8 @@ export ZIMLO_CLOUD_URL="https://zimlo-cloud.<account>.workers.dev"
 
 ## 原生 CLI
 
-macOS Runtime 工件内置 `zimlo` 原生 CLI。`apps/cli` 的 Node/TypeScript 实现保留为迁移对拍基准，
-不再是产品默认启动入口，也不进入 macOS Runtime 包。
+macOS 与 Linux Runtime 工件都内置 `zimlo` 原生 CLI。`apps/cli` 的 Node/TypeScript 实现保留为迁移对拍基准，
+不再是产品默认启动入口，也不进入 Runtime 包。
 
 CLI 命令：
 
@@ -178,6 +192,8 @@ zimlo status [--json]
 zimlo stop
 zimlo logs [--follow] [--desktop|--cli]
 zimlo doctor
+zimlo pair [--json]
+zimlo service install|status|uninstall   # Linux
 zimlo codex-plugin install|status|uninstall
 zimlo hooks diff|install|status|uninstall
 zimlo mcp --provider codex|claude

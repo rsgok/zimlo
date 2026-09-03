@@ -22,6 +22,7 @@ pnpm runtime:check
 pnpm runtime:parity
 pnpm runtime:benchmark
 pnpm runtime:build:macos
+pnpm runtime:build:linux   # 在 Linux 上运行
 ```
 
 核心仓库可直接运行 `pnpm check`。发布或大范围重构使用 `pnpm check:all`，它会额外验证
@@ -68,6 +69,11 @@ cargo run --manifest-path runtime/Cargo.toml -p zimlo-cli -- start --port 4757 -
 ```
 
 `--write` 会取得 SQLite 独占锁并执行中断状态恢复；不要让 Node 与 Rust 同时写同一个数据库。
+
+Linux CI 会在 `ubuntu-24.04` 上再次执行 `pnpm runtime:check`，构建无界面安装包，并上传
+`zimlo-<version>-linux-x86_64.tar.gz`。本地 Linux 验收还应在隔离用户或虚拟机中运行
+`./install.sh`，确认 `zimlo service status`、`zimlo pair`、`zimlo integrations install --target cli`
+和 SSH 退出后的 linger 行为。
 构建 Node 包后，`pnpm runtime:smoke:write` 会构建 Rust debug binary、自动创建临时 Node 数据库，
 经真实 TCP 配对和加密 WebSocket 交给 Rust 独占写入，并使用 Node WebCrypto 生成 AES-GCM 物料
 交由 Rust 解密落盘；smoke 还会撤回 Node fixture 中的 queued Task Command、核验双加密回执，调用

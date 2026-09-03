@@ -2613,6 +2613,7 @@ dependencies = [
  "clap",
  "dirs",
  "nix",
+ "qrcode",
  "reqwest",
  "serde",
  "serde_json",

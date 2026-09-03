@@ -31,7 +31,7 @@ struct DeviceCredentials: Codable, Hashable {
         remoteAccessToken = try container.decodeIfPresent(String.self, forKey: .remoteAccessToken)
         host = try container.decodeIfPresent(ZimloHost.self, forKey: .host) ?? ZimloHost(
             id: "legacy_\(deviceId)",
-            name: bridgeURL.host ?? "Mac",
+            name: bridgeURL.host ?? "Zimlo Host",
             platform: "macos",
             lastSeenAt: ""
         )

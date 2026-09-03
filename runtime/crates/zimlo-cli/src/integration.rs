@@ -534,12 +534,14 @@ fn shell_quote(value: &str) -> String {
 }
 
 fn bundled_plugin_root(executable: &Path) -> Option<PathBuf> {
-    let bundled = executable
-        .parent()?
-        .parent()?
-        .join("Resources/plugin/zimlo");
-    if bundled.join(".codex-plugin/plugin.json").is_file() {
-        return Some(bundled);
+    let prefix = executable.parent()?.parent()?;
+    for bundled in [
+        prefix.join("Resources/plugin/zimlo"),
+        prefix.join("share/zimlo/plugin/zimlo"),
+    ] {
+        if bundled.join(".codex-plugin/plugin.json").is_file() {
+            return Some(bundled);
+        }
     }
     let development = std::env::current_dir().ok()?.join("apps/cli/plugin/zimlo");
     development

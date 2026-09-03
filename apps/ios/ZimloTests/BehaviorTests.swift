@@ -190,13 +190,13 @@ final class BridgeErrorPresentationRulesTests: XCTestCase {
         XCTAssertEqual(BridgeErrorPresentationRules.aggregate(
             current: nil,
             connected: false,
-            channelErrors: ["Mac 当前离线"]
-        ), "Mac 当前离线")
+            channelErrors: ["运行设备当前离线"]
+        ), "运行设备当前离线")
         XCTAssertEqual(BridgeErrorPresentationRules.aggregate(
-            current: "无法安全保存这台 Mac 的连接信息",
+            current: "无法安全保存这台运行设备的连接信息",
             connected: false,
             channelErrors: []
-        ), "无法安全保存这台 Mac 的连接信息")
+        ), "无法安全保存这台运行设备的连接信息")
     }
 }
 
@@ -342,10 +342,10 @@ final class OutboxFeedbackRulesTests: XCTestCase {
     }
 
     func testUserAuthoredCommandsUseHumanFacingCopy() {
-        XCTAssertEqual(OutboxFeedbackRules.queuedNotice(commandType: "task.create", sent: true), "任务已发送，等待 Mac 接收")
-        XCTAssertEqual(OutboxFeedbackRules.queuedNotice(commandType: "task.follow_up", sent: true), "回复已发送，等待 Mac 接收")
-        XCTAssertEqual(OutboxFeedbackRules.queuedNotice(commandType: "action.decide", sent: true), "决定已发送，等待 Mac 确认")
-        XCTAssertEqual(OutboxFeedbackRules.queuedNotice(commandType: "task.create", sent: false), "已保存在手机，连接 Mac 后自动发送")
+        XCTAssertEqual(OutboxFeedbackRules.queuedNotice(commandType: "task.create", sent: true), "任务已发送，等待运行设备接收")
+        XCTAssertEqual(OutboxFeedbackRules.queuedNotice(commandType: "task.follow_up", sent: true), "回复已发送，等待运行设备接收")
+        XCTAssertEqual(OutboxFeedbackRules.queuedNotice(commandType: "action.decide", sent: true), "决定已发送，等待运行设备确认")
+        XCTAssertEqual(OutboxFeedbackRules.queuedNotice(commandType: "task.create", sent: false), "已保存在手机，连接运行设备后自动发送")
     }
 }
 

@@ -186,12 +186,12 @@ final class HostBridgeClient: ObservableObject {
     /// small encrypted control messages; uploads use HTTPS so back-pressure,
     /// retries and Cloudflare limits cannot stall approvals or live task updates.
     func uploadMaterial(_ prepared: PreparedMobileMaterial) async throws -> String {
-        guard let credentials else { throw MaterialError.message("请先连接 Mac") }
+        guard let credentials else { throw MaterialError.message("请先连接运行设备") }
         let remote = usingRemoteRelay
         let baseURL: URL
         if remote {
             guard let relay = credentials.remoteRelayURL, credentials.remoteAccessToken != nil else {
-                throw MaterialError.message("远程物料中转尚不可用，请连接 Mac 后重试")
+                throw MaterialError.message("远程物料中转尚不可用，请连接运行设备后重试")
             }
             baseURL = relay
         } else {
@@ -224,10 +224,10 @@ final class HostBridgeClient: ObservableObject {
             let status = (response as? HTTPURLResponse)?.statusCode
             if status == 413 { throw MaterialError.message("文件超过上传限制") }
             if remote, status == 404 {
-                throw MaterialError.message("云端物料服务尚未启用，请连接 Mac 本地重试")
+                throw MaterialError.message("云端物料服务尚未启用，请连接运行设备本地重试")
             }
             if status == 401 || status == 403 {
-                throw MaterialError.message("物料上传认证已失效，请重新连接 Mac")
+                throw MaterialError.message("物料上传认证已失效，请重新连接运行设备")
             }
             if let payload = try? JSONDecoder().decode(MaterialUploadErrorPayload.self, from: data),
                !payload.message.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
@@ -242,7 +242,7 @@ final class HostBridgeClient: ObservableObject {
         if let cached = MaterialCache.url(for: material) { return cached }
         guard let credentials,
               let deviceKey = ZimloCrypto.fromBase64URL(credentials.deviceKey) else {
-            throw MaterialError.message("连接到 Mac 后即可查看这个物料")
+            throw MaterialError.message("连接到运行设备后即可查看这个物料")
         }
         if usingRemoteRelay {
             return try await downloadRemoteMaterial(material, credentials: credentials, deviceKey: deviceKey)
@@ -275,7 +275,7 @@ final class HostBridgeClient: ObservableObject {
         guard let relayURL = credentials.remoteRelayURL,
               let accessToken = credentials.remoteAccessToken,
               send(ClientCommand(type: "material.remote.request", ["materialId": .string(material.id)])) else {
-            throw MaterialError.message("请先重新连接 Mac，再打开这个物料")
+            throw MaterialError.message("请先重新连接运行设备，再打开这个物料")
         }
         var components = URLComponents(url: relayURL, resolvingAgainstBaseURL: false)
         components?.path = "/v1/materials/\(material.id)"
@@ -299,7 +299,7 @@ final class HostBridgeClient: ObservableObject {
             }
             guard http.statusCode == 200 else {
                 if http.statusCode == 401 || http.statusCode == 403 {
-                    throw MaterialError.message("连接凭据已失效，请在设置中重新连接 Mac")
+                    throw MaterialError.message("连接凭据已失效，请在设置中重新连接运行设备")
                 }
                 throw MaterialError.message("物料下载失败（HTTP \(http.statusCode)）")
             }
@@ -320,7 +320,7 @@ final class HostBridgeClient: ObservableObject {
             Task { _ = try? await URLSession.shared.data(for: deleteRequest) }
             return localURL
         }
-        throw MaterialError.message("Mac 暂时没有回传这个物料，请确认 Zimlo 正在运行后重试")
+        throw MaterialError.message("运行设备暂时没有回传这个物料，请确认 Zimlo 正在运行后重试")
     }
 
     private func connect(remote: Bool, expectedGeneration: UInt64? = nil) {
@@ -460,7 +460,7 @@ final class HostBridgeClient: ObservableObject {
         guard isCurrent(socket: failedSocket, generation: generation) else { return }
         connected = false
         connectionMode = "offline"
-        error = remote ? "Mac 当前离线；已显示手机缓存，操作会在重连后发送" : failure.localizedDescription
+        error = remote ? "运行设备当前离线；已显示手机缓存，操作会在重连后发送" : failure.localizedDescription
         if failedSocket.closeCode == .policyViolation {
             connectionGeneration &+= 1
             connectionTask?.cancel()
@@ -744,7 +744,7 @@ final class BridgeClient: ObservableObject {
                 self.pairingRequired = false
                 self.refreshState()
             } catch {
-                self.error = "无法安全保存这台 Mac 的连接信息"
+                self.error = "无法安全保存这台运行设备的连接信息"
                 channel.stop()
             }
         }
@@ -775,12 +775,12 @@ final class BridgeClient: ObservableObject {
     }
 
     func uploadMaterial(_ prepared: PreparedMobileMaterial, hostId: String? = nil) async throws -> String {
-        guard let channel = channel(hostId: hostId) else { throw MaterialError.message("目标 Mac 当前不可用") }
+        guard let channel = channel(hostId: hostId) else { throw MaterialError.message("目标运行设备当前不可用") }
         return try await channel.uploadMaterial(prepared)
     }
 
     func downloadMaterial(_ material: Material) async throws -> URL {
-        guard let channel = channel(hostId: material.hostId) else { throw MaterialError.message("来源 Mac 当前不可用") }
+        guard let channel = channel(hostId: material.hostId) else { throw MaterialError.message("来源运行设备当前不可用") }
         return try await channel.downloadMaterial(material)
     }
 
@@ -865,9 +865,9 @@ private enum PairingError: LocalizedError {
     var errorDescription: String? {
         switch self {
         case .invalidLink: "这不是有效的 Zimlo 配对链接"
-        case .expired: "配对链接已过期、已使用或校验失败，请在 Mac 上重新生成"
+        case .expired: "配对链接已过期、已使用或校验失败，请在运行设备上重新生成"
         case .invalidResponse: "Bridge 返回了无法识别的响应"
-        case .incompatibleVersion: "Mac 上的 Zimlo Bridge 版本不兼容，请先升级"
+        case .incompatibleVersion: "运行设备上的 Zimlo Bridge 版本不兼容，请先升级"
         }
     }
 }

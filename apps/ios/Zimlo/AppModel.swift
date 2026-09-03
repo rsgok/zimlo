@@ -311,9 +311,9 @@ final class AppModel: ObservableObject {
             _ = bridge.sendToAll(ClientCommand(type: "snapshot.request", [
                 "afterSequence": .number(Double(snapshot.sequence)),
             ]))
-            showNotice("正在向 Mac 请求最新任务列表")
+            showNotice("正在向运行设备请求最新任务列表")
         } else {
-            showNotice("尚未连接 Mac，恢复连接后会自动继续")
+            showNotice("尚未连接运行设备，恢复连接后会自动继续")
             bridge.retryNow()
         }
     }
@@ -635,7 +635,7 @@ final class AppModel: ObservableObject {
         outbox[index].lastError = nil
         persistOutbox()
         _ = bridge.send(routed(entry.command))
-        showNotice(bridge.connected ? "已重新发送，等待 Bridge 确认" : "尚未连接 Mac，将在重连后自动发送")
+        showNotice(bridge.connected ? "已重新发送，等待 Bridge 确认" : "尚未连接运行设备，将在重连后自动发送")
     }
 
     func removeOutboxEntry(_ entry: OutboxEntry) {
@@ -683,7 +683,7 @@ final class AppModel: ObservableObject {
     func forgetDevice() {
         guard !isForgettingDevice else { return }
         guard bridge.connected else {
-            showNotice("请先重连 Mac，再解除配对并撤销该设备的通知权限。")
+            showNotice("请先重连运行设备，再解除配对并撤销该手机的通知权限。")
             return
         }
         isForgettingDevice = true
@@ -712,7 +712,7 @@ final class AppModel: ObservableObject {
             }
             guard let self, !Task.isCancelled else { return }
             self.isForgettingDevice = false
-            self.showNotice("未能确认通知设备已撤销，请保持 Mac 在线后重试。")
+            self.showNotice("未能确认通知设备已撤销，请保持运行设备在线后重试。")
         }
     }
 
@@ -772,7 +772,7 @@ final class AppModel: ObservableObject {
             selectedProject = nil
         }
         scheduleSnapshotSave(after: .zero)
-        showNotice("已移除这台 Mac")
+        showNotice("已移除这台运行设备")
     }
 
     func send(_ command: ClientCommand) -> Bool {

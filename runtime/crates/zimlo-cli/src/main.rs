@@ -7,6 +7,7 @@ use std::{
 };
 
 use clap::{Parser, Subcommand};
+use qrcode::{QrCode, render::unicode};
 use serde_json::json;
 use tokio::sync::watch;
 use uuid::Uuid;
@@ -16,6 +17,7 @@ use zimlo_store::{Store, StoreMode};
 mod integration;
 mod mcp;
 mod paths;
+mod service_install;
 mod service_state;
 
 use paths::ZimloPaths;
@@ -92,6 +94,17 @@ enum Command {
         #[command(subcommand)]
         command: DevicesCommand,
     },
+    /// Create a short-lived pairing code for an iPhone from a terminal.
+    Pair {
+        /// Print the pairing payload as JSON instead of a terminal QR code.
+        #[arg(long)]
+        json: bool,
+    },
+    /// Install or inspect the Linux systemd user service.
+    Service {
+        #[command(subcommand)]
+        command: ServiceCommand,
+    },
     /// Open the local management page after checking the Runtime protocol.
     Open,
     /// Run the stdio MCP server used by Codex or Claude.
@@ -150,6 +163,16 @@ enum DevicesCommand {
     Revoke { device_id: String },
 }
 
+#[derive(Debug, Subcommand)]
+enum ServiceCommand {
+    /// Install, enable and start the Linux systemd user service.
+    Install,
+    /// Show the Linux systemd user service state.
+    Status,
+    /// Stop, disable and remove the Linux systemd user service.
+    Uninstall,
+}
+
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn Error>> {
     match Cli::parse().command {
@@ -172,6 +195,8 @@ async fn main() -> Result<(), Box<dyn Error>> {
         Command::Integrations { command } => integrations(command).await,
         Command::CodexPlugin { command } => codex_plugin(command).await,
         Command::Devices { command } => devices(command).await,
+        Command::Pair { json } => pair(json).await,
+        Command::Service { command } => service(command).await,
         Command::Open => open_management().await,
         Command::Mcp { provider } => {
             validate_provider(&provider)?;
@@ -534,7 +559,44 @@ async fn stop() -> Result<(), Box<dyn Error>> {
     Ok(())
 }
 
+async fn service(command: ServiceCommand) -> Result<(), Box<dyn Error>> {
+    match command {
+        ServiceCommand::Install => {
+            service_install::ensure_supported()?;
+            let paths = ZimloPaths::discover()?;
+            if service_state::descriptor(&paths)
+                .is_some_and(|descriptor| service_state::process_alive(descriptor.pid))
+            {
+                service_state::stop(&paths).await?;
+            }
+            let path = service_install::install().await?;
+            println!(
+                "Zimlo 已作为 systemd user service 安装并启动：{}",
+                path.display()
+            );
+        }
+        ServiceCommand::Status => service_install::status().await?,
+        ServiceCommand::Uninstall => {
+            let path = service_install::uninstall().await?;
+            println!("Zimlo systemd user service 已移除：{}", path.display());
+        }
+    }
+    Ok(())
+}
+
 fn logs(follow: bool, desktop: bool) -> Result<(), Box<dyn Error>> {
+    if !desktop && service_install::is_installed() {
+        let mut command = ProcessCommand::new("journalctl");
+        command.args(["--user-unit=zimlo.service", "-n", "200", "--no-pager"]);
+        if follow {
+            command.arg("-f");
+        }
+        let status = command.status()?;
+        if !status.success() {
+            return Err("读取 Zimlo systemd journal 失败。".into());
+        }
+        return Ok(());
+    }
     let paths = ZimloPaths::discover()?;
     let path = if desktop {
         dirs::home_dir().map(|home| home.join("Library/Logs/Zimlo/service.log"))
@@ -583,14 +645,14 @@ async fn doctor() -> Result<(), Box<dyn Error>> {
     let paths = ZimloPaths::discover()?;
     let executable = std::env::current_exe()?;
     let mut blocking_failure = false;
-    let macos = std::env::consts::OS == "macos";
+    let supported_os = matches!(std::env::consts::OS, "macos" | "linux");
     print_doctor_check(
-        macos,
-        "macOS",
+        supported_os,
+        "操作系统",
         std::env::consts::OS,
-        Some("请在 macOS 上运行 Zimlo。"),
+        Some("当前仅支持 macOS 与 Linux。"),
     );
-    blocking_failure |= !macos;
+    blocking_failure |= !supported_os;
     let executable_ready = executable.is_file();
     print_doctor_check(
         executable_ready,
@@ -702,7 +764,7 @@ async fn devices(command: DevicesCommand) -> Result<(), Box<dyn Error>> {
     match command {
         DevicesCommand::List => {
             if !paths.database.is_file() {
-                println!("暂无已配对设备。运行 zimlo open 打开管理页，用手机扫码配对。");
+                println!("暂无已配对设备。运行 zimlo pair 生成手机配对码。");
                 return Ok(());
             }
             let store = Store::open(&paths.database, StoreMode::ReadOnly).await?;
@@ -755,7 +817,7 @@ fn print_devices(devices: &[zimlo_store::DeviceRecord]) {
         .filter(|device| !device.is_local_admin)
         .collect::<Vec<_>>();
     if paired.is_empty() {
-        println!("暂无已配对设备。运行 zimlo open 打开管理页，用手机扫码配对。");
+        println!("暂无已配对设备。运行 zimlo pair 生成手机配对码。");
         return;
     }
     println!("{:<10}{:<38}{:<20}最近活跃", "状态", "ID", "名称");
@@ -772,6 +834,47 @@ fn print_devices(devices: &[zimlo_store::DeviceRecord]) {
             device.last_seen_at
         );
     }
+}
+
+async fn pair(machine_readable: bool) -> Result<(), Box<dyn Error>> {
+    let paths = ZimloPaths::discover()?;
+    mcp::ensure_bridge_running(&paths)
+        .await
+        .map_err(std::io::Error::other)?;
+    let descriptor = service_state::descriptor(&paths)
+        .ok_or("Zimlo Bridge 已启动但缺少服务描述文件，请运行 zimlo status 检查。")?;
+    let response = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(65))
+        .build()?
+        .post(format!(
+            "http://127.0.0.1:{}/api/local/pairing",
+            descriptor.port
+        ))
+        .send()
+        .await?;
+    let status = response.status();
+    let payload: serde_json::Value = response.json().await?;
+    if !status.is_success() {
+        return Err(payload["message"]
+            .as_str()
+            .unwrap_or("无法创建配对码，请运行 zimlo doctor 检查 Runtime 和云连接。")
+            .to_owned()
+            .into());
+    }
+    if machine_readable {
+        println!("{}", serde_json::to_string_pretty(&payload)?);
+        return Ok(());
+    }
+    let pair_url = payload["pairUrl"]
+        .as_str()
+        .ok_or("Bridge 返回的配对码格式无效。")?;
+    let qr = QrCode::new(pair_url.as_bytes())?
+        .render::<unicode::Dense1x2>()
+        .build();
+    println!("用 iPhone 上的 Zimlo 扫描下面的二维码（2 分钟内有效）：\n");
+    println!("{qr}\n");
+    println!("也可以复制这个连接码：\n{pair_url}");
+    Ok(())
 }
 
 async fn revoke_running_device(port: u16, device_id: &str) -> Result<(), Box<dyn Error>> {
@@ -815,7 +918,30 @@ async fn open_management() -> Result<(), Box<dyn Error>> {
         .into());
     }
     let url = format!("http://127.0.0.1:{}", descriptor.port);
-    let status = ProcessCommand::new("/usr/bin/open").arg(&url).status()?;
+    if cfg!(target_os = "linux")
+        && std::env::var_os("DISPLAY").is_none()
+        && std::env::var_os("WAYLAND_DISPLAY").is_none()
+    {
+        println!("Zimlo 管理页：{url}");
+        println!(
+            "这是无界面服务器。需要本机管理页时，请通过 SSH 转发端口 {}。",
+            descriptor.port
+        );
+        return Ok(());
+    }
+    let opener = if cfg!(target_os = "macos") {
+        "/usr/bin/open"
+    } else {
+        "xdg-open"
+    };
+    let status = match ProcessCommand::new(opener).arg(&url).status() {
+        Ok(status) => status,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            println!("Zimlo 管理页：{url}");
+            return Ok(());
+        }
+        Err(error) => return Err(error.into()),
+    };
     if !status.success() {
         return Err(format!("无法打开 {url}").into());
     }
@@ -890,7 +1016,11 @@ fn host_name() -> String {
         .ok()
         .map(|value| value.trim().chars().take(120).collect::<String>())
         .filter(|value| !value.is_empty())
-        .unwrap_or_else(|| "Mac".into())
+        .unwrap_or_else(|| match std::env::consts::OS {
+            "macos" => "Mac".into(),
+            "linux" => "Linux Server".into(),
+            _ => "Zimlo Host".into(),
+        })
 }
 
 fn web_root() -> Option<PathBuf> {
@@ -902,15 +1032,20 @@ fn web_root() -> Option<PathBuf> {
         return Some(current);
     }
     let executable = std::env::current_exe().ok()?;
-    let bundled = executable.parent()?.parent()?.join("Resources/public");
-    bundled.join("index.html").is_file().then_some(bundled)
+    let prefix = executable.parent()?.parent()?;
+    [
+        prefix.join("Resources/public"),
+        prefix.join("share/zimlo/public"),
+    ]
+    .into_iter()
+    .find(|candidate| candidate.join("index.html").is_file())
 }
 
 #[cfg(test)]
 mod tests {
     use clap::{CommandFactory as _, Parser as _};
 
-    use super::{Cli, CodexPluginCommand, Command, DevicesCommand};
+    use super::{Cli, CodexPluginCommand, Command, DevicesCommand, ServiceCommand};
 
     #[test]
     fn clap_contract_is_valid() {
@@ -1002,6 +1137,20 @@ mod tests {
                 .expect("open")
                 .command,
             Command::Open
+        ));
+        assert!(matches!(
+            Cli::try_parse_from(["zimlo", "pair", "--json"])
+                .expect("pair")
+                .command,
+            Command::Pair { json: true }
+        ));
+        assert!(matches!(
+            Cli::try_parse_from(["zimlo", "service", "install"])
+                .expect("service install")
+                .command,
+            Command::Service {
+                command: ServiceCommand::Install
+            }
         ));
         assert!(matches!(
             Cli::try_parse_from(["zimlo", "codex-plugin", "uninstall"])

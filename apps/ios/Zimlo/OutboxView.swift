@@ -14,7 +14,7 @@ struct OutboxView: View {
                     VStack(spacing: 10) {
                         Image(systemName: "checkmark.circle").font(.largeTitle).foregroundStyle(ZColor.sageText)
                         Text("没有待同步操作").font(ZFont.title3)
-                        Text("离线时的回复、审批和设置变更会先保存在这里，连接 Mac 后自动发送。")
+                        Text("离线时的回复、审批和设置变更会先保存在这里，连接运行设备后自动发送。")
                             .font(ZFont.footnote).foregroundStyle(ZColor.muted)
                             .multilineTextAlignment(.center)
                     }
@@ -50,7 +50,7 @@ private struct OutboxRow: View {
 
     private var stateLabel: String {
         if entry.lastError != nil { return "发送失败" }
-        return model.bridge.connected ? "等待 Mac 确认" : "排队中（离线）"
+        return model.bridge.connected ? "等待运行设备确认" : "排队中（离线）"
     }
 
     private var stateColor: Color {

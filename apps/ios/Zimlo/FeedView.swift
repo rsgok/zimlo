@@ -489,7 +489,7 @@ private struct CommandCard: View {
             }.foregroundStyle(ZColor.muted)
             Spacer()
             Text(command.text).font(ZFont.title).lineSpacing(0).lineLimit(4).minimumScaleFactor(0.8)
-            Text(command.state == "failed" ? (command.error ?? "任务没有成功发送") : "已保存任务，正在等待 Mac 上的执行引擎接收。")
+            Text(command.state == "failed" ? (command.error ?? "任务没有成功发送") : "已保存任务，正在等待运行设备上的执行引擎接收。")
                 .font(ZFont.callout).foregroundStyle(ZColor.ink.opacity(0.68))
             Spacer()
             if command.state == "failed", !command.id.hasPrefix("local:") {

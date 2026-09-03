@@ -813,7 +813,7 @@ struct ConnectionRecoveryView: View {
                         Label("当前未连接", systemImage: "wifi.exclamationmark")
                             .font(ZFont.title3)
                             .foregroundStyle(ZColor.coralText)
-                        Text("先尝试使用现有配对重连；如果 Mac 重装过、设备已撤销或仍然失败，请生成新的连接码重新配对。")
+                        Text("先尝试使用现有配对重连；如果运行设备重装过、手机已撤销或仍然失败，请生成新的连接码重新配对。")
                             .font(ZFont.subheadline)
                             .foregroundStyle(ZColor.muted)
                             .lineSpacing(3)
@@ -828,7 +828,7 @@ struct ConnectionRecoveryView: View {
                     VStack(alignment: .leading, spacing: 0) {
                         recoveryStep(
                             number: "1",
-                            title: "打开 Mac 上的 Zimlo",
+                            title: "打开运行设备上的 Zimlo",
                             detail: "确认 Dock 或菜单栏中的 Zimlo 正在运行。"
                         )
                         Divider().overlay(ZColor.line).padding(.leading, 52)
@@ -853,7 +853,7 @@ struct ConnectionRecoveryView: View {
             }
             .scrollIndicators(.hidden)
             .background(ZColor.paper)
-            .navigationTitle("重新连接 Mac")
+            .navigationTitle("重新连接运行设备")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
@@ -973,7 +973,7 @@ struct SettingsView: View {
             }
         }
         .confirmationDialog(
-            "移除 \(hostPendingRemoval?.host.name ?? "这台 Mac")？",
+            "移除 \(hostPendingRemoval?.host.name ?? "这台运行设备")？",
             isPresented: Binding(
                 get: { hostPendingRemoval != nil },
                 set: { if !$0 { hostPendingRemoval = nil } }
@@ -986,7 +986,7 @@ struct SettingsView: View {
             }
             Button("取消", role: .cancel) { hostPendingRemoval = nil }
         } message: {
-            Text("只会移除这台 Mac，其他设备和聚合 Feed 不受影响。")
+            Text("只会移除这台运行设备，其他设备和聚合 Feed 不受影响。")
         }
     }
 
@@ -1017,7 +1017,7 @@ struct SettingsView: View {
                         Text("Zimlo").font(ZFont.title3)
                         HStack(spacing: 7) {
                             Circle().fill(model.bridge.connected ? ZColor.sage : ZColor.coralText).frame(width: 7, height: 7)
-                            Text(model.bridge.connected ? "已连接 Mac" : "未连接")
+                            Text(model.bridge.connected ? "已连接运行设备" : "未连接")
                         }
                         .font(ZFont.caption2)
                         .foregroundStyle(ZColor.muted)
@@ -1162,7 +1162,7 @@ struct SettingsView: View {
             if !model.bridge.hosts.isEmpty { Divider().overlay(ZColor.line) }
             Button { presentedSheet = .pairing } label: {
                 HStack(spacing: 11) {
-                    settingsLabel(model.bridge.hosts.isEmpty ? "连接 Mac" : "连接另一台 Mac", systemImage: "plus.circle.fill")
+                    settingsLabel(model.bridge.hosts.isEmpty ? "连接运行设备" : "连接另一台运行设备", systemImage: "plus.circle.fill")
                     Spacer()
                     Image(systemName: "chevron.right")
                         .font(ZFont.caption2)
@@ -1217,7 +1217,7 @@ struct SettingsView: View {
             Button("解除并清除本机数据", role: .destructive) { model.forgetDevice() }
             Button("取消", role: .cancel) {}
         } message: {
-            Text("需要保持 Mac 在线。Zimlo 会先撤销通知注册，再清除本机数据。")
+            Text("需要保持运行设备在线。Zimlo 会先撤销通知注册，再清除本机数据。")
         }
     }
 
@@ -1240,7 +1240,7 @@ struct SettingsView: View {
 
     private var accessibleConnectionLabel: String {
         guard model.bridge.connected else { return "未连接" }
-        return connectionModeLabel.map { "已连接 Mac · \($0)" } ?? "已连接 Mac"
+        return connectionModeLabel.map { "已连接运行设备 · \($0)" } ?? "已连接运行设备"
     }
 
     private func settingsSection<Content: View>(_ title: String, @ViewBuilder content: () -> Content) -> some View {

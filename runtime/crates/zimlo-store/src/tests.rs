@@ -135,6 +135,7 @@ async fn builds_the_complete_node_compatible_snapshot() {
 
     assert_eq!(snapshot["host"]["id"], "host_snapshot_fixture");
     assert_eq!(snapshot["host"]["name"], "Snapshot Fixture Mac");
+    assert_eq!(snapshot["host"]["platform"], std::env::consts::OS);
     assert_eq!(snapshot["userProfile"]["avatarId"], "user-07");
     assert_eq!(snapshot["projects"][0]["hostId"], "host_snapshot_fixture");
     assert_eq!(snapshot["projects"][0]["sessionCount"], 1);
@@ -177,6 +178,7 @@ async fn builds_the_complete_node_compatible_snapshot() {
     assert_eq!(snapshot["cards"], serde_json::json!([]));
 
     snapshot["host"]["lastSeenAt"] = serde_json::json!("NORMALIZED");
+    snapshot["host"]["platform"] = serde_json::json!("macos");
     let contract: serde_json::Value = serde_json::from_str(include_str!(concat!(
         env!("CARGO_MANIFEST_DIR"),
         "/../../../packages/protocol/test-vectors/snapshot-compat.json"

@@ -329,7 +329,7 @@ struct RootView: View {
                 : "手机操作同步失败，点按处理"
         }
         if model.bridge.connected {
-            return model.waitingOutboxCount > 0 ? "手机操作正在等待 Mac 确认" : "已与 Mac 同步"
+            return model.waitingOutboxCount > 0 ? "手机操作正在等待运行设备确认" : "已与运行设备同步"
         }
         if let savedAt = model.snapshotSavedAt {
             return "当前离线 · 数据更新于 \(relative(savedAt))"
@@ -345,10 +345,10 @@ struct RootView: View {
     private func userFacingBridgeError(_ error: String) -> String {
         let normalized = error.lowercased()
         if normalized.contains("could not connect") || normalized.contains("connection refused") {
-            return "无法连接 Mac，点按查看重连步骤"
+            return "无法连接运行设备，点按查看重连步骤"
         }
         if normalized.contains("timed out") || normalized.contains("timeout") {
-            return "连接 Mac 超时，点按查看重连步骤"
+            return "连接运行设备超时，点按查看重连步骤"
         }
         return error
     }
