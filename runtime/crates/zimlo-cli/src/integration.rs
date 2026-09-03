@@ -134,11 +134,13 @@ pub async fn plugin_status(executable: &Path) -> Value {
     };
     let plugin = home.join("plugins/zimlo");
     let manifest = plugin.join(".codex-plugin/plugin.json");
-    let installed_manifest = read_object(&manifest).unwrap_or_default();
-    let bundled_manifest = bundled_plugin_root(executable)
-        .and_then(|root| read_object(&root.join(".codex-plugin/plugin.json")).ok())
-        .unwrap_or_default();
-    let mcp = read_object(&plugin.join(".mcp.json")).unwrap_or_default();
+    let installed_manifest = Value::Object(read_object(&manifest).unwrap_or_default());
+    let bundled_manifest = Value::Object(
+        bundled_plugin_root(executable)
+            .and_then(|root| read_object(&root.join(".codex-plugin/plugin.json")).ok())
+            .unwrap_or_default(),
+    );
+    let mcp = Value::Object(read_object(&plugin.join(".mcp.json")).unwrap_or_default());
     let command = mcp["mcpServers"]["zimlo"]["command"].as_str();
     let args = mcp["mcpServers"]["zimlo"]["args"].as_array();
     let commands_current = command == Some(executable.to_string_lossy().as_ref())
@@ -146,8 +148,9 @@ pub async fn plugin_status(executable: &Path) -> Value {
             args.iter().filter_map(Value::as_str).collect::<Vec<_>>()
                 == ["mcp", "--provider", "codex"]
         });
-    let marketplace =
-        read_object(&home.join(".agents/plugins/marketplace.json")).unwrap_or_default();
+    let marketplace = Value::Object(
+        read_object(&home.join(".agents/plugins/marketplace.json")).unwrap_or_default(),
+    );
     let marketplace_present = marketplace["plugins"].as_array().is_some_and(|plugins| {
         plugins.iter().any(|item| {
             item["name"] == "zimlo"
@@ -408,19 +411,29 @@ fn hook_ready(provider: &str, executable: &Path) -> bool {
     let Ok(config) = read_object(&path) else {
         return false;
     };
+    hook_config_ready(&config, provider, executable)
+}
+
+fn hook_config_ready(config: &Map<String, Value>, provider: &str, executable: &Path) -> bool {
+    let Some(hooks) = config.get("hooks").and_then(Value::as_object) else {
+        return false;
+    };
     EVENTS.iter().all(|event| {
-        config["hooks"][event].as_array().is_some_and(|groups| {
-            groups.iter().any(|group| {
-                group["hooks"].as_array().is_some_and(|handlers| {
-                    handlers.iter().any(|handler| {
-                        handler["command"].as_str().is_some_and(|command| {
-                            command.contains(executable.to_string_lossy().as_ref())
-                                && command.contains(&format!("hook --provider {provider}"))
+        hooks
+            .get(*event)
+            .and_then(Value::as_array)
+            .is_some_and(|groups| {
+                groups.iter().any(|group| {
+                    group["hooks"].as_array().is_some_and(|handlers| {
+                        handlers.iter().any(|handler| {
+                            handler["command"].as_str().is_some_and(|command| {
+                                command.contains(executable.to_string_lossy().as_ref())
+                                    && command.contains(&format!("hook --provider {provider}"))
+                            })
                         })
                     })
                 })
             })
-        })
     })
 }
 
@@ -431,7 +444,14 @@ fn claude_mcp_ready(executable: &Path) -> bool {
     let Ok(value) = read_object(&home.join(".claude.json")) else {
         return false;
     };
-    value["mcpServers"]["zimlo"]["command"].as_str() == Some(executable.to_string_lossy().as_ref())
+    value
+        .get("mcpServers")
+        .and_then(Value::as_object)
+        .and_then(|servers| servers.get("zimlo"))
+        .and_then(Value::as_object)
+        .and_then(|server| server.get("command"))
+        .and_then(Value::as_str)
+        == Some(executable.to_string_lossy().as_ref())
 }
 
 fn write_hook_config(provider: &str, executable: &Path, uninstall: bool) -> Result<bool, String> {
@@ -671,7 +691,9 @@ fn display(error: impl std::fmt::Display) -> String {
 mod tests {
     use std::path::Path;
 
-    use super::{merged_hooks, shell_quote};
+    use serde_json::Map;
+
+    use super::{hook_config_ready, merged_hooks, shell_quote};
 
     #[test]
     fn hook_merge_preserves_unrelated_entries_and_is_idempotent() {
@@ -692,5 +714,14 @@ mod tests {
     #[test]
     fn shell_quote_handles_single_quotes() {
         assert_eq!(shell_quote("/tmp/a'b"), "'/tmp/a'\"'\"'b'");
+    }
+
+    #[test]
+    fn missing_hook_config_is_not_ready() {
+        assert!(!hook_config_ready(
+            &Map::new(),
+            "codex",
+            Path::new("/opt/zimlo")
+        ));
     }
 }

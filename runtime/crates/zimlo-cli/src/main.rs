@@ -570,6 +570,7 @@ async fn service(command: ServiceCommand) -> Result<(), Box<dyn Error>> {
                 service_state::stop(&paths).await?;
             }
             let path = service_install::install().await?;
+            wait_for_installed_service().await?;
             println!(
                 "Zimlo 已作为 systemd user service 安装并启动：{}",
                 path.display()
@@ -582,6 +583,22 @@ async fn service(command: ServiceCommand) -> Result<(), Box<dyn Error>> {
         }
     }
     Ok(())
+}
+
+async fn wait_for_installed_service() -> Result<(), Box<dyn Error>> {
+    for _ in 0..40 {
+        if let Some(health) = fetch_health(4747).await
+            && health["ok"] == true
+            && health["protocolVersion"] == zimlo_protocol::ZIMLO_PROTOCOL_VERSION
+        {
+            return Ok(());
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(250)).await;
+    }
+    Err(
+        "systemd service 已启动，但 Zimlo Bridge 未在 10 秒内就绪。请运行 zimlo logs 查看日志。"
+            .into(),
+    )
 }
 
 fn logs(follow: bool, desktop: bool) -> Result<(), Box<dyn Error>> {
