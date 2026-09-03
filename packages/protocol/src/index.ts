@@ -83,13 +83,13 @@ export const SessionStatusSchema = z.enum([
 ]);
 export type SessionStatus = z.infer<typeof SessionStatusSchema>;
 
-// A Host is one Mac running Zimlo Bridge.  It is intentionally separate from
-// a paired client device: one user can view many Hosts from the same iPhone,
-// while every command still has a single, explicit execution destination.
+// A Host is one computer or server running Zimlo Bridge. It is intentionally
+// separate from a paired client device: one user can view many Hosts from the
+// same iPhone, while every command still has a single, explicit destination.
 export const HostSchema = z.object({
   id: z.string().min(8).max(160),
   name: z.string().min(1).max(120),
-  platform: z.literal("macos"),
+  platform: z.enum(["macos", "linux", "windows", "unknown"]),
   lastSeenAt: z.string(),
 });
 export type Host = z.infer<typeof HostSchema>;

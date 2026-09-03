@@ -724,7 +724,13 @@ fn stable_event_id(path: &Path, offset: u64, index: usize, line: &str) -> String
 }
 
 async fn scan_agent_processes() -> Result<Vec<ProcessSnapshot>, io::Error> {
-    let output = Command::new("/bin/ps")
+    let executable = if cfg!(target_os = "macos") {
+        "/bin/ps"
+    } else {
+        "ps"
+    };
+    let output = Command::new(executable)
+        .env("LC_ALL", "C")
         .args(["-axo", "pid=,ppid=,lstart=,tty=,command="])
         .output()
         .await?;
@@ -765,7 +771,7 @@ async fn scan_agent_processes() -> Result<Vec<ProcessSnapshot>, io::Error> {
         let tty = captures
             .get(4)
             .map(|value| value.as_str())
-            .filter(|value| *value != "??")
+            .filter(|value| !matches!(*value, "?" | "??"))
             .map(str::to_owned);
         let provider_session_id = resumed_session_id(provider, command);
         let session_bearing = provider == Provider::Claude
@@ -781,7 +787,7 @@ async fn scan_agent_processes() -> Result<Vec<ProcessSnapshot>, io::Error> {
     }
     let mut result = Vec::with_capacity(base.len());
     for (pid, provider, started_at, tty, provider_session_id, session_bearing) in base {
-        let (cwd, transcript_paths) = lsof_details(pid).await;
+        let (cwd, transcript_paths) = process_details(pid).await;
         result.push(ProcessSnapshot {
             pid,
             provider,
@@ -821,7 +827,8 @@ fn resumed_session_id(provider: Provider, command: &str) -> Option<String> {
         .map(|value| value.as_str().into())
 }
 
-async fn lsof_details(pid: i64) -> (Option<String>, Vec<PathBuf>) {
+#[cfg(target_os = "macos")]
+async fn process_details(pid: i64) -> (Option<String>, Vec<PathBuf>) {
     let Ok(output) = Command::new("/usr/sbin/lsof")
         .args(["-p", &pid.to_string(), "-Fn"])
         .output()
@@ -847,13 +854,47 @@ async fn lsof_details(pid: i64) -> (Option<String>, Vec<PathBuf>) {
         if descriptor == "cwd" {
             cwd = Some(path.into());
         }
-        if path.ends_with(".jsonl")
-            && (path.contains("/.codex/sessions/") || path.contains("/.claude/projects/"))
-        {
+        if provider_transcript_path(Path::new(path)) {
             transcript_paths.push(PathBuf::from(path));
         }
     }
     (cwd, transcript_paths)
+}
+
+#[cfg(target_os = "linux")]
+async fn process_details(pid: i64) -> (Option<String>, Vec<PathBuf>) {
+    let process_root = PathBuf::from(format!("/proc/{pid}"));
+    let cwd = tokio::fs::read_link(process_root.join("cwd"))
+        .await
+        .ok()
+        .map(|path| path.to_string_lossy().into_owned());
+    let mut transcript_paths = HashSet::new();
+    if let Ok(mut entries) = tokio::fs::read_dir(process_root.join("fd")).await {
+        while let Ok(Some(entry)) = entries.next_entry().await {
+            let Ok(path) = tokio::fs::read_link(entry.path()).await else {
+                continue;
+            };
+            if provider_transcript_path(&path) {
+                transcript_paths.insert(path);
+            }
+        }
+    }
+    let mut transcript_paths = transcript_paths.into_iter().collect::<Vec<_>>();
+    transcript_paths.sort();
+    (cwd, transcript_paths)
+}
+
+#[cfg(not(any(target_os = "macos", target_os = "linux")))]
+async fn process_details(_pid: i64) -> (Option<String>, Vec<PathBuf>) {
+    (None, Vec::new())
+}
+
+fn provider_transcript_path(path: &Path) -> bool {
+    if path.extension().and_then(OsStr::to_str) != Some("jsonl") {
+        return false;
+    }
+    let path = path.to_string_lossy();
+    path.contains("/.codex/sessions/") || path.contains("/.claude/projects/")
 }
 
 fn empty_capabilities() -> Value {
@@ -1043,8 +1084,8 @@ mod tests {
     use zimlo_store::{Store, StoreMode};
 
     use super::{
-        DiscoveryService, Provider, provider_session_id_from_path, stable_event_id,
-        stable_session_id,
+        DiscoveryService, Provider, provider_session_id_from_path, provider_transcript_path,
+        stable_event_id, stable_session_id,
     };
 
     #[test]
@@ -1072,6 +1113,22 @@ mod tests {
             provider_session_id_from_path(Provider::Claude, Path::new("/tmp/chat.jsonl")),
             "claude-chat"
         );
+    }
+
+    #[test]
+    fn recognizes_only_agent_jsonl_transcripts() {
+        assert!(provider_transcript_path(Path::new(
+            "/home/kai/.codex/sessions/2026/09/rollout.jsonl"
+        )));
+        assert!(provider_transcript_path(Path::new(
+            "/home/kai/.claude/projects/demo/session.jsonl"
+        )));
+        assert!(!provider_transcript_path(Path::new(
+            "/home/kai/.codex/sessions/2026/09/notes.txt"
+        )));
+        assert!(!provider_transcript_path(Path::new(
+            "/home/kai/project/events.jsonl"
+        )));
     }
 
     #[tokio::test]

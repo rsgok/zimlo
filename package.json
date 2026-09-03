@@ -14,6 +14,7 @@
     "runtime:fmt": "cargo fmt --manifest-path runtime/Cargo.toml --all --check",
     "runtime:lint": "cargo clippy --manifest-path runtime/Cargo.toml --workspace --all-targets -- -D warnings",
     "runtime:build:macos": "cargo build --release --locked --manifest-path runtime/Cargo.toml -p zimlo-cli --target aarch64-apple-darwin && cargo build --release --locked --manifest-path runtime/Cargo.toml -p zimlo-cli --target x86_64-apple-darwin",
+    "runtime:build:linux": "bash scripts/build-linux-runtime.sh",
     "runtime:smoke:write": "cargo build --locked --manifest-path runtime/Cargo.toml -p zimlo-cli && node scripts/smoke-rust-write.mjs",
     "runtime:parity": "pnpm --filter @zimlo/cli build && cargo build --release --locked --manifest-path runtime/Cargo.toml -p zimlo-cli && node scripts/verify-runtime-parity.mjs",
     "runtime:benchmark": "pnpm --filter @zimlo/cli build && cargo build --release --locked --manifest-path runtime/Cargo.toml -p zimlo-cli && node scripts/benchmark-runtimes.mjs",

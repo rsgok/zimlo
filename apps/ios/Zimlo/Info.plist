@@ -28,9 +28,9 @@
 		<true/>
 	</dict>
 	<key>NSCameraUsageDescription</key>
-	<string>扫描 Mac 上生成的 Zimlo 配对二维码。</string>
+	<string>扫描运行设备上生成的 Zimlo 配对二维码。</string>
 	<key>NSLocalNetworkUsageDescription</key>
-	<string>用于在同一 Wi-Fi 中发现并连接你的 Mac；任务与指令始终端到端加密。</string>
+	<string>用于在同一 Wi-Fi 中发现并连接你的运行设备；任务与指令始终端到端加密。</string>
 	<key>NSMicrophoneUsageDescription</key>
 	<string>使用语音快速布置任务和追加指令。</string>
 	<key>NSSpeechRecognitionUsageDescription</key>

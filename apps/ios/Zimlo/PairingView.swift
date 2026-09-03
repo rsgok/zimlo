@@ -40,10 +40,10 @@ struct PairingView: View {
                         .accessibilityHidden(true)
 
                     VStack(spacing: 7) {
-                        Text("连接你的 Mac")
+                        Text("连接运行设备")
                             .font(ZFont.title)
                             .fixedSize(horizontal: false, vertical: true)
-                        Text("扫码最快；也可以在 Mac 复制连接码后粘贴。模拟器请复制本地码，密钥只保存在你的设备上。")
+                        Text("扫描 Mac 或 Linux 服务器显示的二维码；也可以复制连接码后粘贴。密钥只保存在你的设备上。")
                             .font(ZFont.subheadline)
                             .foregroundStyle(ZColor.muted)
                             .multilineTextAlignment(.center)
@@ -59,7 +59,7 @@ struct PairingView: View {
                     }
                     .buttonStyle(PairingButtonStyle())
                     .disabled(connecting)
-                    .accessibilityHint("打开相机，扫描 Mac 上显示的二维码")
+                    .accessibilityHint("打开相机，扫描运行设备上显示的二维码")
 
                     Label("首次连接若出现“本地网络”系统弹窗，请点“允许”", systemImage: "wifi")
                         .font(ZFont.footnote.weight(.semibold))
@@ -85,7 +85,7 @@ struct PairingView: View {
                     }
 
                     HStack(spacing: 9) {
-                        TextField("粘贴 Mac 上复制的连接码", text: $link)
+                        TextField("粘贴运行设备上的连接码", text: $link)
                             .focused($linkFocused)
                             .textInputAutocapitalization(.never)
                             .textContentType(.URL)
@@ -110,7 +110,7 @@ struct PairingView: View {
                         }
                         .buttonStyle(.plain)
                         .accessibilityLabel("粘贴连接码")
-                        .accessibilityHint("读取剪贴板中由 Mac Zimlo 复制的连接码")
+                        .accessibilityHint("读取剪贴板中的 Zimlo 连接码")
                     }
 
                     if let inputIssue {
@@ -198,7 +198,7 @@ struct PairingView: View {
     private func connect(_ value: String) {
         guard !connecting else { return }
         guard let url = PairingLinkRules.validatedURL(value) else {
-            inputIssue = "连接码无效。请回到 Mac 刷新二维码后重新复制。"
+            inputIssue = "连接码无效。请回到运行设备刷新二维码后重新复制。"
             return
         }
         linkFocused = false
@@ -216,12 +216,12 @@ struct PairingView: View {
 
     private func pastePairingLink() {
         guard let value = UIPasteboard.general.string, !value.isEmpty else {
-            inputIssue = "剪贴板里没有连接码。请先在 Mac 点击“复制连接码”。"
+            inputIssue = "剪贴板里没有连接码。请先在运行设备复制连接码。"
             return
         }
         link = value
         if PairingLinkRules.validatedURL(value) == nil {
-            inputIssue = "剪贴板里的内容不是有效连接码，请在 Mac 重新复制。"
+            inputIssue = "剪贴板里的内容不是有效连接码，请在运行设备重新复制。"
         }
     }
 
@@ -289,7 +289,7 @@ private final class ScannerController: UIViewController {
         view.backgroundColor = .black
 
         let label = UILabel()
-        label.text = "扫描 Mac 上的 Zimlo 配对二维码\n出现“本地网络”弹窗时请点“允许”"
+        label.text = "扫描运行设备上的 Zimlo 配对二维码\n出现“本地网络”弹窗时请点“允许”"
         label.textColor = UIColor(ZColor.ink)
         label.font = .boldSystemFont(ofSize: 16)
         label.textAlignment = .center

@@ -15,6 +15,15 @@ const USER_AVATARS: [&str; 24] = [
     "user-17", "user-18", "user-19", "user-20", "user-21", "user-22", "user-23", "user-24",
 ];
 
+fn host_platform() -> &'static str {
+    match std::env::consts::OS {
+        "macos" => "macos",
+        "linux" => "linux",
+        "windows" => "windows",
+        _ => "unknown",
+    }
+}
+
 static ACTIVE_PROCESS_TITLE: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r"^(?:Codex|Claude) · 活跃进程 \d+$").expect("active process title regex")
 });
@@ -134,7 +143,7 @@ pub(super) fn build(
         "host": {
             "id": host_id,
             "name": options.host_name,
-            "platform": "macos",
+            "platform": host_platform(),
             "lastSeenAt": options.now,
         },
         "userProfile": user_profile(connection)?,

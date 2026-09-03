@@ -638,7 +638,7 @@ async fn ensure_local_admin(store: &Store) -> Result<DeviceRecord, StoreError> {
     store
         .ensure_local_admin(DeviceRecord {
             id: format!("local_{}", uuid::Uuid::now_v7()),
-            name: "Local Mac browser".into(),
+            name: "Local Zimlo browser".into(),
             key_base64: to_base64_url(&key),
             created_at: now.clone(),
             last_seen_at: now,
