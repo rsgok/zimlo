@@ -47,6 +47,8 @@ struct ServiceDescriptor: Decodable, Equatable {
     let socketPath: String
     /// 自动拉起实例为 autostart.log；手动 `zimlo start` 输出在终端，为 null。
     let logPath: String?
+    var hostId: String? = nil
+    var instanceId: String? = nil
 
     static func decode(_ data: Data) -> ServiceDescriptor? {
         try? JSONDecoder().decode(Self.self, from: data)

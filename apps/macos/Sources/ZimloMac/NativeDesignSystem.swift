@@ -22,28 +22,12 @@ struct NativeSegmentedTabs<Value: Hashable>: View {
     let title: (Value) -> String
 
     var body: some View {
-        HStack(spacing: 3) {
-            ForEach(options, id: \.self) { option in
-                Button {
-                    selection = option
-                } label: {
-                    Text(title(option))
-                        .font(.system(size: 11, weight: .semibold))
-                        .foregroundStyle(selection == option ? NativeTheme.paper : NativeTheme.ink.opacity(0.72))
-                        .padding(.horizontal, 13)
-                        .frame(minHeight: 26)
-                        .background(selection == option ? NativeTheme.acid : Color.clear)
-                        .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
-                        .contentShape(Rectangle())
-                }
-                .buttonStyle(.plain)
-                .accessibilityLabel(title(option))
-                .accessibilityAddTraits(selection == option ? .isSelected : [])
-            }
+        Picker("筛选", selection: $selection) {
+            ForEach(options, id: \.self) { option in Text(title(option)).tag(option) }
         }
-        .padding(3)
-        .background(NativeTheme.control)
-        .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+        .pickerStyle(.segmented)
+        .labelsHidden()
+        .fixedSize()
     }
 }
 

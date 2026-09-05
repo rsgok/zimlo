@@ -8,6 +8,7 @@ import { DatabaseSync } from "node:sqlite";
 import { fileURLToPath } from "node:url";
 import WebSocket from "../apps/cli/node_modules/ws/wrapper.mjs";
 import { ZimloStore } from "../apps/cli/dist/store.js";
+import { SnapshotReplica } from "../packages/protocol/dist/snapshotReplica.js";
 import {
   createKeyPair,
   decryptFrame,
@@ -122,8 +123,26 @@ async function startRuntime() {
       const baseUrl = `http://127.0.0.1:${port}`;
       try {
         const response = await fetch(`${baseUrl}/healthz`);
-        if (response.ok) return baseUrl;
-      } catch {}
+        if (response.ok) {
+          const descriptor = JSON.parse(readFileSync(join(temporaryRoot, "run/service.json"), "utf8"));
+          assert.equal(descriptor.pid, runtime.pid);
+          assert.equal(descriptor.port, Number(port));
+          assert.ok(descriptor.hostId);
+          assert.ok(descriptor.instanceId);
+          assert.equal(response.headers.get("x-zimlo-host-id"), descriptor.hostId);
+          assert.equal(response.headers.get("x-zimlo-instance-id"), descriptor.instanceId);
+          const wrongInstance = await fetch(`${baseUrl}/api/local/commands`, {
+            method: "POST",
+            headers: { "content-type": "application/json", "x-zimlo-instance-id": "retired-instance" },
+            body: JSON.stringify({ type: "devices.request" }),
+          });
+          assert.equal(wrongInstance.status, 409);
+          assert.equal((await wrongInstance.json()).code, "local_identity_mismatch");
+          return baseUrl;
+        }
+      } catch (error) {
+        if (error?.code === "ERR_ASSERTION") throw error;
+      }
     }
     if (runtime.exitCode !== null) throw new Error(`Rust Runtime exited early:\n${output}`);
     await new Promise((resolveDelay) => setTimeout(resolveDelay, 25));
@@ -256,6 +275,12 @@ async function verifyWriteFlow(baseUrl, credentials) {
   const bridge = await connect(baseUrl, credentials);
   const snapshot = await bridge.next((message) => message.type === "session.snapshot");
   assert.equal(snapshot.snapshot.sessions.some((session) => session.id === "session-snapshot"), true);
+
+  bridge.send({ type: "history.search", requestId: "encrypted-history", query: "Snapshot 已兼容", kind: "result", limit: 30 });
+  const history = await bridge.next((message) => message.type === "history.page" && message.page.requestId === "encrypted-history");
+  assert.equal(history.page.hostId, snapshot.snapshot.host.id);
+  assert.equal(history.page.items.length, 1);
+  assert.equal(history.page.items[0].title, "Snapshot 已兼容");
 
   const trustCommand = {
     type: "trust.policy.update",
@@ -466,9 +491,36 @@ async function verifyWriteFlow(baseUrl, credentials) {
   assert.equal(codexSession.status, "idle");
 
   bridge.send({ type: "snapshot.request", afterSequence: 0 });
-  const persisted = await bridge.next((message) => message.type === "session.snapshot");
+  // Change notifications may leave older snapshots in the test inbox. Await
+  // the authoritative state, rather than interpreting an old broadcast as the
+  // reply to this request. SQLite is independently checked after shutdown.
+  const persisted = await bridge.next((message) => message.type === "session.snapshot"
+    && message.snapshot.taskPreferences.some((item) => item.sessionId === "session-snapshot" && item.pinnedAt === null));
   const preference = persisted.snapshot.taskPreferences.find((item) => item.sessionId === "session-snapshot");
   assert.equal(preference.pinnedAt, null);
+}
+
+async function verifyDeltaFlow(baseUrl, credentials) {
+  const bridge = await connect(baseUrl, credentials);
+  const first = await bridge.next((message) => message.type === "session.snapshot");
+  const replica = new SnapshotReplica(first.snapshot.host.id);
+  assert.equal(replica.receive(first).negotiateDelta, true);
+  bridge.send({ type: "snapshot.request", acceptDelta: true });
+  const baseline = await bridge.next((message) => message.type === "session.snapshot");
+  assert.ok(replica.receive(baseline));
+  for (const pinned of [true, false]) {
+    bridge.send({ type: "task.pin", sessionId: "session-snapshot", pinned, idempotencyKey: `delta-pin-${pinned}` });
+    let found = false;
+    for (let attempt = 0; attempt < 20 && !found; attempt += 1) {
+      const message = await bridge.next((item) => ["session.snapshot", "snapshot.delta"].includes(item.type));
+      const applied = replica.receive(message);
+      assert.ok(applied, "The client must accept every ordered server update");
+      const preference = applied.message.snapshot.taskPreferences.find((item) => item.sessionId === "session-snapshot");
+      found = Boolean(preference?.pinnedAt) === pinned;
+      if (found) assert.equal(message.type, "snapshot.delta", "Small mutations should use the negotiated delta transport");
+    }
+    assert.equal(found, true);
+  }
 }
 
 function verifyNodeReopen() {
@@ -546,6 +598,8 @@ try {
   const credentials = await pair(baseUrl);
   await verifyWriteFlow(baseUrl, credentials);
   socket.close();
+  await verifyDeltaFlow(baseUrl, credentials);
+  socket.close();
   const runtimeExited = new Promise((resolveExit) => runtime.once("exit", resolveExit));
   runtime.kill("SIGTERM");
   await runtimeExited;
@@ -564,6 +618,8 @@ try {
     approvalRoundTrip: true,
     restartRecovery: true,
     nodeReopen: true,
+    encryptedHistory: true,
+    negotiatedDelta: true,
   }));
 } finally {
   socket?.close();

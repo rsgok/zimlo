@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import Image from "next/image";
 
 type ScreenKind = "feed" | "profile" | "artifacts" | "create" | "tasks" | "reliable";
 
@@ -89,31 +90,36 @@ function PhoneShell({ children, label, className = "" }: { children: React.React
   );
 }
 
+const campaignLayouts = ["Cover", "Poster", "Social"] as const;
+
 function FeedScreen({ compact = false }: { compact?: boolean }) {
+  const [layout, setLayout] = useState<(typeof campaignLayouts)[number]>("Cover");
   return (
     <div className={`ios-feed-screen${compact ? " ios-feed-screen--compact" : ""}`}>
-      <div className="ios-feed-media" aria-hidden="true">
-        <div className="ios-feed-orb" />
-        <div className="ios-feed-grid" />
-        <span className="ios-video-pill">▶ 01:24</span>
-        <div className="ios-feed-artifact-stack"><i>PNG</i><i>PDF</i><i>ZIP</i></div>
-      </div>
       <div className="ios-feed-top">
         <span className="ios-agent-avatar">Z</span>
-        <div><strong>Zimlo Agent</strong><small>Codex · MacBook Pro · now</small></div>
+        <div><strong>Fieldwork launch</strong><small>Codex · MacBook Pro · just now</small></div>
       </div>
-      <div className="ios-feed-actions" aria-hidden="true">
-        <span><i>✓</i><small>Proof</small></span>
-        <span><i>↗</i><small>Task</small></span>
-        <span><i>···</i></span>
+      <div className="ios-campaign-card">
+        <a className={`ios-campaign-art ios-campaign-art--${layout.toLowerCase()}`} href="/examples/fieldwork-campaign.png" target="_blank" rel="noreferrer" aria-label={`Open ${layout.toLowerCase()} source image`}>
+          <Image src="/examples/fieldwork-campaign.png" alt="An orange tent above an alpine lake at sunrise, a sample campaign image" fill sizes="(max-width: 600px) 300px, 370px" unoptimized priority={!compact} />
+          <span className="ios-campaign-brand">FIELDWORK® <i>↗</i></span>
+          <strong>{layout === "Poster" ? <>LESS SCROLL.<br />MORE SKY.</> : layout === "Social" ? <>TAKE THE<br />LONG WAY.</> : <>MAKE ROOM<br />FOR OUTSIDE.</>}</strong>
+          <small>SUMMER CAMPAIGN / {layout.toUpperCase()}</small>
+        </a>
+        <div className="ios-campaign-gallery" role="group" aria-label="Preview campaign layouts">
+          {campaignLayouts.map((item, index) => <button type="button" key={item} aria-pressed={item === layout} onClick={() => setLayout(item)}>
+            <span className={`ios-campaign-thumb ios-campaign-thumb--${item.toLowerCase()}`} aria-hidden="true" />
+            <span><b>0{index + 1}</b>{item}</span>
+          </button>)}
+        </div>
+        <div className="ios-campaign-summary">
+          <span>RESULT · CREATIVE</span>
+          <h3>Your launch visuals.<br />Ready to review.</h3>
+          <p>One campaign, three layouts. Preview the work without going back to your desk.</p>
+          <a className="ios-campaign-open" href="/examples/fieldwork-campaign.png" target="_blank" rel="noreferrer">Open source image <span aria-hidden="true">↗</span></a>
+        </div>
       </div>
-      <div className="ios-feed-copy">
-        <span>RESULT · LAUNCH</span>
-        <h3>The iOS launch set is ready.</h3>
-        <p>4 images, a 1:24 walkthrough, and the signed source package are attached.</p>
-        <div><b>NEXT</b><strong>Review the artifacts</strong><i>→</i></div>
-      </div>
-      <div className="ios-swipe-hint"><i /> SWIPE UP FOR THE NEXT SIGNAL</div>
       <BottomNav />
     </div>
   );

@@ -1,3 +1,4 @@
+import ZimloCore
 import CryptoKit
 import Combine
 import Foundation
@@ -239,7 +240,7 @@ final class HostBridgeClient: ObservableObject {
     }
 
     func downloadMaterial(_ material: Material) async throws -> URL {
-        if let cached = MaterialCache.url(for: material) { return cached }
+        if let cached = await DownloadedMaterialCache.shared.url(host: material.hostId ?? credentials?.host.id ?? "", id: material.id, sha256: material.sha256, name: material.name) { return cached }
         guard let credentials,
               let deviceKey = ZimloCrypto.fromBase64URL(credentials.deviceKey) else {
             throw MaterialError.message("连接到运行设备后即可查看这个物料")
@@ -264,7 +265,7 @@ final class HostBridgeClient: ObservableObject {
         }
         let digest = SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
         guard digest == material.sha256 else { throw MaterialError.message("物料完整性校验失败") }
-        return try MaterialCache.save(data: data, id: material.id, name: material.name)
+        return try await DownloadedMaterialCache.shared.save(data, host: material.hostId ?? credentials.host.id, id: material.id, sha256: material.sha256, name: material.name)
     }
 
     private func downloadRemoteMaterial(
@@ -312,7 +313,7 @@ final class HostBridgeClient: ObservableObject {
             let plaintext = try AES.GCM.open(sealedBox, using: SymmetricKey(data: Data(keyCode)))
             let digest = SHA256.hash(data: plaintext).map { String(format: "%02x", $0) }.joined()
             guard digest == material.sha256 else { throw MaterialError.message("物料完整性校验失败") }
-            let localURL = try MaterialCache.save(data: plaintext, id: material.id, name: material.name)
+            let localURL = try await DownloadedMaterialCache.shared.save(plaintext, host: material.hostId ?? credentials.host.id, id: material.id, sha256: material.sha256, name: material.name)
 
             var deleteRequest = URLRequest(url: url)
             deleteRequest.httpMethod = "DELETE"
@@ -426,6 +427,7 @@ final class HostBridgeClient: ObservableObject {
         generation: UInt64
     ) async {
         guard isCurrent(socket: socket, generation: generation) else { return }
+        var replica = SnapshotReplica()
         do {
             while !Task.isCancelled {
                 let message = try await socket.receive()
@@ -441,9 +443,15 @@ final class HostBridgeClient: ObservableObject {
                 )
                 guard isCurrent(socket: socket, generation: generation) else { return }
                 receiveCounter += 1
-                let envelope = try JSONDecoder().decode(ServerEnvelope.self, from: plaintext)
-                guard isCurrent(socket: socket, generation: generation) else { return }
-                onMessage?(envelope)
+                switch replica.receive(plaintext, hostID: credentials.host.id) {
+                case .resync:
+                    _ = send(ClientCommand(type: "snapshot.request", ["acceptDelta": .bool(true)]))
+                case .message(let data, let negotiateDelta):
+                    let envelope = try JSONDecoder().decode(ServerEnvelope.self, from: data)
+                    guard isCurrent(socket: socket, generation: generation) else { return }
+                    onMessage?(envelope)
+                    if negotiateDelta { _ = send(ClientCommand(type: "snapshot.request", ["acceptDelta": .bool(true)])) }
+                }
             }
         } catch {
             guard isCurrent(socket: socket, generation: generation) else { return }

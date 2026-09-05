@@ -8,7 +8,7 @@ import { ProviderBadge, ProviderIcon } from "./ProviderBadge";
 import { conciseTaskInput, sessionLocation } from "./sessionPresentation";
 import { AgentAvatar, UserAvatar } from "./UserAvatar";
 import { useModalFocus } from "./useModalFocus";
-import { initialMaterialURL, materialURL } from "../lib/materialAccess";
+import { initialMaterialURL, materialURL, releaseMaterialURL } from "../lib/materialAccess";
 
 interface SessionDetailProps {
   session: Session;
@@ -443,7 +443,7 @@ function TimelineMaterialLink({ material, send }: { material: Material; send: (c
   useEffect(() => {
     let active = true;
     void materialURL(material, send).then((value) => { if (active) setURL(value); }).catch(() => {});
-    return () => { active = false; };
+    return () => { active = false; releaseMaterialURL(material); };
   }, [material, send]);
   return <a href={url} target="_blank" rel="noreferrer">
     <span>{material.kind === "image" ? "IMG" : material.kind === "video" ? "VIDEO" : material.kind === "pdf" ? "PDF" : "FILE"}</span>

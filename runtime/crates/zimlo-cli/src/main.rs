@@ -293,10 +293,12 @@ async fn integrations(command: IntegrationsCommand) -> Result<(), Box<dyn Error>
                 integration::install_cli(&executable).await?;
             }
             "cli" => integration::install_cli(&executable).await?,
+            "codex_cli" => integration::install_selected_cli(&executable, Some("codex")).await?,
+            "claude_cli" => integration::install_selected_cli(&executable, Some("claude")).await?,
             "codex_gui" => {
                 let _ = integration::install_plugin(&executable).await?;
             }
-            _ => return Err("target 仅支持 all、codex_gui、cli。".into()),
+            _ => return Err("target 仅支持 all、codex_gui、codex_cli、claude_cli、cli。".into()),
         },
     }
     Ok(())
@@ -362,7 +364,11 @@ async fn start(
     } else {
         address.ip()
     };
-    let descriptor = service_state::write_descriptor(&paths, address.port())?;
+    let descriptor = service_state::write_descriptor(
+        &paths,
+        address.port(),
+        store.get_metadata("host_identity_v1").await?,
+    )?;
     println!(
         "Zimlo Rust Runtime 已启动：http://{display_ip}:{}",
         address.port()
@@ -448,6 +454,10 @@ async fn start(
                     cloud,
                 },
                 broker.clone(),
+                zimlo_bridge::LocalServiceIdentity {
+                    host_id: descriptor.host_id.clone().unwrap_or_default(),
+                    instance_id: descriptor.instance_id.clone().unwrap_or_default(),
+                },
                 wait_for_stop(bridge_stop),
             )
             .await;

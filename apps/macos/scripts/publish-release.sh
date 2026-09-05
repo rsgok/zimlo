@@ -16,6 +16,7 @@ if [[ ! "${release_name}" =~ '^release-([0-9]+\.[0-9]+\.[0-9]+([.-][0-9A-Za-z.-]
   exit 64
 fi
 version=${match[1]}
+node "${repo_root}/scripts/release-provenance.mjs" check "${release_dir}/verified-source.json"
 
 runtime_dir="${release_dir}/runtime"
 runtime_manifest_path="${runtime_dir}/runtime-latest.json"

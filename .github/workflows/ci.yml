@@ -35,6 +35,12 @@ jobs:
 
       - run: pnpm install --frozen-lockfile
       - run: pnpm check
+      - name: Test shared native rules
+        run: pnpm core:swift:test
+      - name: Test native Mac workflows
+        run: pnpm macos:test
+      - name: Verify large-data performance budgets
+        run: pnpm performance:check
       - name: Build Rust CLI for both macOS architectures
         run: pnpm runtime:build:macos
 
@@ -70,3 +76,23 @@ jobs:
           name: zimlo-linux-x86_64
           path: dist/linux/*.tar.gz
           if-no-files-found: error
+
+  ios:
+    runs-on: macos-15
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - name: Test iPhone workflows
+        run: bash scripts/test-ios.sh
+
+  sites:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24.15.0
+      - run: npm --prefix landing-page ci
+      - run: npm --prefix work-report ci
+      - run: node scripts/check-sites.mjs

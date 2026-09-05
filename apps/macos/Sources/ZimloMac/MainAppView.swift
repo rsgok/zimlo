@@ -1,4 +1,5 @@
 import SwiftUI
+import ZimloCore
 
 struct MainAppView: View {
     let route: LocalBridgeRoute
@@ -9,12 +10,14 @@ struct MainAppView: View {
     @State private var path: [NativeRoute] = []
     @State private var composer: NativeComposerContext?
     @State private var feedLatestRequest = 0
+    @State private var outboxOpen = false
+    @State private var settingsPane: NativeSettingsPane = .general
 
     init(route: LocalBridgeRoute, service: ServiceController) {
         self.route = route
         self.service = service
         _store = StateObject(wrappedValue: NativeAppStore(
-            client: .live(baseURL: route.baseURL)
+            client: .live(baseURL: route.baseURL), metrics: .shared
         ))
     }
 
@@ -46,7 +49,8 @@ struct MainAppView: View {
                 NativeComposerOverlay(
                     context: composer,
                     store: store,
-                    onDismiss: { self.composer = nil }
+                    onDismiss: { self.composer = nil },
+                    onSetup: openConnections
                 )
                 .transition(.opacity.combined(with: .scale(scale: 0.985)))
                 .zIndex(4)
@@ -58,9 +62,23 @@ struct MainAppView: View {
                     .zIndex(6)
             }
         }
+        .toolbar {
+            ToolbarItem(placement: .primaryAction) {
+                Button { outboxOpen = true } label: {
+                    Label("发送队列 (\(store.outbox.entries.count))", systemImage: "tray.and.arrow.up")
+                }
+            }
+        }
+        .sheet(isPresented: $outboxOpen) {
+            NativeOutboxView(store: store) { entry in
+                outboxOpen = false
+                composer = NativeComposerContext(sessionID: entry.sessionID, editingEntry: entry)
+            }
+        }
         .frame(minWidth: 920, minHeight: 640)
         .preferredColorScheme(.dark)
         .task { await store.run() }
+        .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in Task { await store.refresh() } }
         .onChange(of: section) { _, current in
             let isNotificationTaskRoute = current == .tasks && path.contains { route in
                 if case .task = route { return true }
@@ -77,6 +95,7 @@ struct MainAppView: View {
                 return nil
             }.last)
         }
+        .onReceive(NotificationCenter.default.publisher(for: .zimloComposeTask)) { _ in composer = NativeComposerContext() }
         .onReceive(NotificationCenter.default.publisher(for: .zimloOpenTask)) { notification in
             guard let sessionID = notification.object as? String else { return }
             section = .tasks
@@ -98,7 +117,7 @@ struct MainAppView: View {
     @ViewBuilder
     private var detailRoot: some View {
         if section == .settings {
-            NativeSettingsView(store: store, service: service)
+            NativeSettingsView(store: store, service: service, initialPane: settingsPane).id(settingsPane)
         } else {
             switch store.loadState {
             case .loaded:
@@ -113,14 +132,21 @@ struct MainAppView: View {
     private var sectionRoot: some View {
         switch section {
         case .feed:
-            NativeFeedView(store: store, scrollToLatestRequest: feedLatestRequest)
+            NativeFeedView(store: store, scrollToLatestRequest: feedLatestRequest, onSetup: openConnections)
         case .tasks:
-            NativeTasksView(store: store)
+            NativeTasksView(onSetup: openConnections, store: store)
         case .agents:
             NativeAgentsView(store: store)
         case .settings:
             EmptyView()
         }
+    }
+
+    private func openConnections() {
+        composer = nil
+        path.removeAll()
+        settingsPane = .connections
+        section = .settings
     }
 
     private func selectSection(_ nextSection: NativeSection) {

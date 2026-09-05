@@ -51,6 +51,12 @@ jobs:
           targets: aarch64-apple-darwin,x86_64-apple-darwin
 
       - run: pnpm install --frozen-lockfile
+      - name: Verify source before signing
+        run: |
+          pnpm check
+          pnpm core:swift:test
+          pnpm macos:test
+          node scripts/release-provenance.mjs record
 
       - name: Validate release configuration
         shell: bash
@@ -139,3 +145,11 @@ jobs:
       - name: Remove temporary signing keychain
         if: always()
         run: security delete-keychain "$RUNNER_TEMP/zimlo-signing.keychain-db" || true
+
+      - name: Preserve verified source identity
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: verified-source
+          path: dist/verified-source.json
+          if-no-files-found: ignore

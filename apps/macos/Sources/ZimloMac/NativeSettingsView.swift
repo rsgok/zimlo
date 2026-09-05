@@ -1,5 +1,6 @@
 import ServiceManagement
 import SwiftUI
+import ZimloCore
 
 enum NativeSettingsPane: String, CaseIterable, Identifiable {
     case general
@@ -25,9 +26,16 @@ struct NativeSettingsView: View {
     @ObservedObject var service: ServiceController
     @ObservedObject private var notifications = MacNotificationManager.shared
     @State private var showingDevices = false
+    @State private var showingMetrics = false
     @State private var launchAtLogin = SMAppService.mainApp.status == .enabled
     @State private var launchAtLoginMessage: String?
     @State private var pane: NativeSettingsPane = .general
+
+    init(store: NativeAppStore, service: ServiceController, initialPane: NativeSettingsPane = .general) {
+        self.store = store
+        self.service = service
+        _pane = State(initialValue: initialPane)
+    }
 
     var body: some View {
         ScrollView {
@@ -52,6 +60,7 @@ struct NativeSettingsView: View {
             async let notificationStatus: Void = notifications.refreshAuthorization()
             _ = await (status, devices, notificationStatus)
         }
+        .sheet(isPresented: $showingMetrics) { ExperienceDiagnosticsView().frame(width: 600, height: 600) }
         .sheet(isPresented: $showingDevices) {
             NativeDevicesSheet(store: store)
         }
@@ -71,6 +80,14 @@ struct NativeSettingsView: View {
         switch pane {
         case .general:
             VStack(spacing: 16) {
+                SetupChecklistView(steps: SetupChecklist.steps(connected: store.loadState == .loaded && service.isReady,
+                    agentReady: service.status?.integrations.contains(where: \.isReady) == true,
+                    hasProject: !store.snapshot.projects.isEmpty, paired: !store.devices.isEmpty,
+                    hasReceipt: ExperienceMetrics.shared.hasConfirmedOperation)) { step in
+                    if step == "receipt" { NotificationCenter.default.post(name: .zimloComposeTask, object: nil) }
+                    else { pane = .connections }
+                }.padding(18).frame(maxWidth: .infinity, alignment: .leading).nativeCard(cornerRadius: 16)
+                Button("使用与性能", systemImage: "chart.bar") { showingMetrics = true }
                 generalCard
                 serviceCard
             }
@@ -103,9 +120,9 @@ struct NativeSettingsView: View {
             Text("常规").font(.system(size: 14, weight: .bold, design: .rounded))
             HStack(spacing: 18) {
                 VStack(alignment: .leading, spacing: 3) {
-                    Text("登录时自动启动").font(.system(size: 11.5, weight: .bold))
+                    Text("登录时自动启动").font(.body.weight(.semibold))
                     Text(launchAtLoginMessage ?? "登录 Mac 后自动启动 Zimlo 和本地 Bridge。")
-                        .font(.system(size: 9.5, weight: .medium))
+                        .font(.callout)
                         .foregroundStyle(launchAtLoginMessage == nil ? NativeTheme.muted : NativeTheme.coral)
                 }
                 Spacer(minLength: 0)
@@ -133,7 +150,7 @@ struct NativeSettingsView: View {
             VStack(alignment: .leading, spacing: 4) {
                 Text("本地 Bridge").font(.system(size: 16, weight: .bold, design: .rounded))
                 Text(service.state.label).font(.system(size: 12, weight: .bold)).foregroundStyle(serviceColor)
-                Text(service.menuDetail).font(.system(size: 10.5, weight: .medium)).foregroundStyle(NativeTheme.muted)
+                Text(service.menuDetail).font(.callout).foregroundStyle(NativeTheme.muted)
             }
             Spacer()
             if service.state != .ready {
@@ -155,7 +172,7 @@ struct NativeSettingsView: View {
                     Circle().fill(integration.isReady ? NativeTheme.sage : NativeTheme.amber).frame(width: 7, height: 7)
                     VStack(alignment: .leading, spacing: 2) {
                         Text(integration.label).font(.system(size: 11, weight: .bold))
-                        Text(integration.detail).font(.system(size: 9.5, weight: .medium)).foregroundStyle(NativeTheme.muted).lineLimit(2)
+                        Text(integration.detail).font(.callout).foregroundStyle(NativeTheme.muted).lineLimit(2)
                     }
                     Spacer()
                 }
@@ -164,8 +181,10 @@ struct NativeSettingsView: View {
                 Text(issue.message).font(.system(size: 10, weight: .medium)).foregroundStyle(NativeTheme.coral)
             }
             Spacer(minLength: 0)
-            Button(service.integrationBusy ? "正在检查…" : "修复本机接入") {
-                Task { await service.installIntegration("all") }
+            Menu(service.integrationBusy ? "正在检查…" : "接入或修复 Agent") {
+                Button("Codex App") { Task { await service.installIntegration("codex_gui") } }
+                Button("Codex CLI") { Task { await service.installIntegration("codex_cli") } }
+                Button("Claude Code") { Task { await service.installIntegration("claude_cli") } }
             }
             .buttonStyle(.bordered)
             .disabled(service.integrationBusy)
@@ -316,10 +335,10 @@ struct NativeSettingsView: View {
                     .background(Color.white)
                     .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
                 Text("打开 iPhone Zimlo，使用 App 内扫码（不要用系统相机）")
-                    .font(.system(size: 9.5, weight: .medium)).foregroundStyle(NativeTheme.muted)
+                    .font(.callout).foregroundStyle(NativeTheme.muted)
             } else {
                 Text("手机与 Mac 通过加密通道同步任务。生成二维码后，两分钟内完成扫描。")
-                    .font(.system(size: 10.5, weight: .medium)).foregroundStyle(NativeTheme.ink.opacity(0.66)).lineSpacing(3)
+                    .font(.callout).foregroundStyle(NativeTheme.ink.opacity(0.66)).lineSpacing(3)
             }
             if let issue = service.pairingIssue {
                 Text(issue.message).font(.system(size: 10, weight: .medium)).foregroundStyle(NativeTheme.coral)
@@ -360,9 +379,9 @@ struct NativeSettingsView: View {
             Text("权限边界").font(.system(size: 14, weight: .bold, design: .rounded))
             HStack(spacing: 18) {
                 VStack(alignment: .leading, spacing: 3) {
-                    Text("允许局域网审批").font(.system(size: 11.5, weight: .bold))
+                    Text("允许局域网审批").font(.body.weight(.semibold))
                     Text("仅对已配对、已授权的设备生效；高风险操作仍会再次确认。")
-                        .font(.system(size: 9.5, weight: .medium)).foregroundStyle(NativeTheme.muted)
+                        .font(.callout).foregroundStyle(NativeTheme.muted)
                 }
                 Spacer(minLength: 0)
                 Toggle("允许局域网审批", isOn: Binding(
@@ -446,8 +465,8 @@ private struct NativeNotificationToggleRow: View {
     var body: some View {
         HStack(spacing: 16) {
             VStack(alignment: .leading, spacing: 2) {
-                Text(title).font(.system(size: 11.5, weight: .bold))
-                Text(detail).font(.system(size: 9.5, weight: .medium)).foregroundStyle(NativeTheme.muted)
+                Text(title).font(.body.weight(.semibold))
+                Text(detail).font(.callout).foregroundStyle(NativeTheme.muted)
             }
             Spacer(minLength: 0)
             Toggle(title, isOn: $isOn)
@@ -496,7 +515,7 @@ private struct NativeDevicesSheet: View {
                                 Text(device.name)
                                     .font(.system(size: 13, weight: .bold))
                                 Text("最近连接：\(device.lastSeenAt.zimloDate.formatted(.relative(presentation: .named)))")
-                                    .font(.system(size: 10.5, weight: .medium))
+                                    .font(.callout)
                                     .foregroundStyle(NativeTheme.muted)
                             }
                             Spacer()

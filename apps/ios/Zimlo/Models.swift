@@ -1,4 +1,5 @@
 import Foundation
+import ZimloCore
 
 enum Provider: String, Codable, CaseIterable, Identifiable {
     case codex
@@ -566,6 +567,8 @@ struct Snapshot: Codable, Hashable {
 
 struct ServerEnvelope: Codable {
     var type: String
+    var page: HistoryPage? = nil
+    var requestId: String? = nil
     var snapshot: Snapshot?
     var userProfile: UserProfile?
     var project: Project?

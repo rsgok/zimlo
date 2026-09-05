@@ -17,7 +17,7 @@ use crate::{
     ws_frame::{Incoming, SecureFrame, close_socket, incoming},
 };
 
-const SNAPSHOT_POLL_INTERVAL: Duration = Duration::from_millis(250);
+const SNAPSHOT_POLL_INTERVAL: Duration = Duration::from_secs(2);
 
 struct MessageContext<'a> {
     store: &'a Store,
@@ -51,6 +51,7 @@ struct SecureConnection {
     server_tx_key: [u8; 32],
     receive_counter: u64,
     send_counter: u64,
+    delivery: crate::snapshot_sync::SnapshotDelivery,
 }
 
 impl SecureConnection {
@@ -61,6 +62,7 @@ impl SecureConnection {
             server_tx_key: keys.server_tx,
             receive_counter: 0,
             send_counter: 0,
+            delivery: Default::default(),
         }
     }
 
@@ -89,10 +91,6 @@ pub(super) async fn serve(
         }
     };
 
-    if let Err(error) = send_snapshot(&mut socket, &mut connection, &store, &host_name).await {
-        close_for_store_error(&mut socket, error).await;
-        return;
-    }
     let mut data_version = match store.data_version().await {
         Ok(version) => version,
         Err(error) => {
@@ -102,6 +100,11 @@ pub(super) async fn serve(
         }
     };
 
+    let mut changes = store.subscribe_changes();
+    if let Err(error) = send_snapshot(&mut socket, &mut connection, &store, &host_name).await {
+        close_for_store_error(&mut socket, error).await;
+        return;
+    }
     let mut poll = interval(SNAPSHOT_POLL_INTERVAL);
     poll.set_missed_tick_behavior(MissedTickBehavior::Skip);
     poll.tick().await;
@@ -133,7 +136,7 @@ pub(super) async fn serve(
                     Incoming::Ignore => {}
                 }
             }
-            _ = poll.tick() => {
+            _ = async { tokio::select! { _ = poll.tick() => {}, _ = changes.changed() => {} } } => {
                 match store.active_device(&connection.device.id).await {
                     Ok(Some(device)) => connection.device = device,
                     Ok(None) => {
@@ -308,6 +311,13 @@ async fn handle_secure_message(
         close_socket(socket, close_code::POLICY, "Replay or counter gap").await;
         return false;
     }
+    match store.active_device(&connection.device.id).await {
+        Ok(Some(device)) => connection.device = device,
+        _ => {
+            close_socket(socket, close_code::POLICY, "Device revoked or unavailable").await;
+            return false;
+        }
+    }
     let command = match decrypt_frame::<Value>(
         &connection.client_tx_key,
         frame.counter,
@@ -326,6 +336,9 @@ async fn handle_secure_message(
     match command_type {
         "snapshot.request" if dispatcher::valid_snapshot_request(&command) => {
             connection.receive_counter += 1;
+            connection
+                .delivery
+                .reset(command["acceptDelta"].as_bool().unwrap_or(false));
             if let Err(error) = send_snapshot(socket, connection, store, host_name).await {
                 close_for_store_error(socket, error).await;
                 return false;
@@ -466,13 +479,10 @@ async fn send_snapshot(
             &connection.device.id,
         ))
         .await?;
-    send_secure(
-        socket,
-        connection,
-        &json!({ "type": "session.snapshot", "snapshot": snapshot }),
-    )
-    .await
-    .map_err(|_| StoreError::ActorStopped)
+    let message = connection.delivery.message(snapshot);
+    send_secure(socket, connection, &message)
+        .await
+        .map_err(|_| StoreError::ActorStopped)
 }
 
 async fn send_secure<T: Serialize>(

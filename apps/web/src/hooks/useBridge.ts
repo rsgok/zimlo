@@ -1,5 +1,6 @@
+import { SnapshotReplica } from "@zimlo/protocol";
 import { useCallback, useEffect, useRef, useState } from "react";
-import { EMPTY_FEATURE_CAPABILITIES, type ClientCommand, type Host, type IntegrationStatus, type ServerMessage, type Snapshot, type UnifiedEvent } from "@zimlo/protocol";
+import { EMPTY_FEATURE_CAPABILITIES, type ClientCommand, type Host, type IntegrationStatus, type HistoryPage, type ServerMessage, type Snapshot, type UnifiedEvent } from "@zimlo/protocol";
 import {
   createKeyPair,
   decryptFrame,
@@ -95,6 +96,8 @@ export interface CodexPluginInfo {
 }
 
 interface BridgeState {
+  historyPage: HistoryPage | null;
+  historyError: { requestId: string; message: string } | null;
   snapshot: Snapshot;
   events: Record<string, UnifiedEvent[]>;
   devices: DeviceInfo[];
@@ -239,6 +242,7 @@ export function useBridge() {
   const snapshotPersistRef = useRef<{ timer: number | null; latest: Snapshot | null }>({ timer: null, latest: null });
   const snapshotRef = useRef<Snapshot>(EMPTY_SNAPSHOT);
   const [state, setState] = useState<BridgeState>({
+    historyPage: null, historyError: null,
     snapshot: EMPTY_SNAPSHOT,
     events: {},
     devices: [],
@@ -436,6 +440,10 @@ export function useBridge() {
           return mergeHostSnapshots([...snapshotsByHost.values()]);
         };
         switch (message.type) {
+          case "history.page":
+            return message.page.hostId === host.id ? { ...current, historyPage: message.page, historyError: null } : current;
+          case "history.error":
+            return { ...current, historyError: { requestId: message.requestId, message: message.message } };
           case "session.snapshot":
             snapshotsByHost.set(host.id, { host: message.snapshot.host ?? host, snapshot: normalizeSnapshot(message.snapshot) });
             return { ...current, snapshot: mergeHostSnapshots([...snapshotsByHost.values()]), error: null, snapshotSavedAt: new Date().toISOString() };
@@ -568,6 +576,7 @@ export function useBridge() {
       const deviceKey = fromBase64Url(credentials.deviceKey);
       const aad = `zimlo-ws-v1:${credentials.deviceId}`;
 
+      const replica = new SnapshotReplica(credentials.host.id);
       const hostSend = (command: ClientCommand) => {
         if (!socket || socket.readyState !== WebSocket.OPEN || !clientTx) {
           return false;
@@ -613,7 +622,10 @@ export function useBridge() {
           if (value.counter !== receiveCounter) throw new Error("检测到消息重放或丢帧，连接已中止。");
           const message = decryptFrame<ServerMessage>(serverTx, value.counter, value.ciphertext, aad);
           receiveCounter += 1;
-          applyMessage(message, credentials.host);
+          const received = replica.receive(message);
+          if (!received) { hostSend({ type: "snapshot.request", acceptDelta: true }); return; }
+          applyMessage(received.message as ServerMessage, credentials.host);
+          if (received.negotiateDelta) hostSend({ type: "snapshot.request", acceptDelta: true });
         } catch (error) {
           setState((current) => ({ ...current, error: error instanceof Error ? error.message : String(error) }));
           socket?.close();

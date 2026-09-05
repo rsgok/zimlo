@@ -1,0 +1,276 @@
+[
+  {
+    "name": "ordered changes and removals",
+    "full": {
+      "type": "session.snapshot",
+      "revision": "1",
+      "syncCapabilities": {
+        "delta": true,
+        "history": true
+      },
+      "snapshot": {
+        "host": {
+          "id": "mac"
+        },
+        "sequence": 1,
+        "actions": [
+          {
+            "actionId": "a",
+            "state": "pending"
+          },
+          {
+            "actionId": "b",
+            "state": "pending"
+          }
+        ],
+        "seenPostIds": []
+      }
+    },
+    "patch": {
+      "type": "snapshot.delta",
+      "hostId": "mac",
+      "baseRevision": "1",
+      "revision": "2",
+      "replace": {
+        "sequence": 2,
+        "seenPostIds": [
+          "p"
+        ]
+      },
+      "collections": {
+        "actions": {
+          "key": "actionId",
+          "upsert": [
+            {
+              "actionId": "b",
+              "state": "resolved"
+            },
+            {
+              "actionId": "c",
+              "state": "pending"
+            }
+          ],
+          "remove": [
+            "a"
+          ],
+          "order": [
+            "b",
+            "c"
+          ]
+        }
+      },
+      "removedFields": []
+    },
+    "expected": {
+      "host": {
+        "id": "mac"
+      },
+      "sequence": 2,
+      "actions": [
+        {
+          "actionId": "b",
+          "state": "resolved"
+        },
+        {
+          "actionId": "c",
+          "state": "pending"
+        }
+      ],
+      "seenPostIds": [
+        "p"
+      ]
+    }
+  },
+  {
+    "name": "gap",
+    "full": {
+      "type": "session.snapshot",
+      "revision": "1",
+      "syncCapabilities": {
+        "delta": true,
+        "history": true
+      },
+      "snapshot": {
+        "host": {
+          "id": "mac"
+        },
+        "sequence": 1,
+        "actions": [
+          {
+            "actionId": "a",
+            "state": "pending"
+          },
+          {
+            "actionId": "b",
+            "state": "pending"
+          }
+        ],
+        "seenPostIds": []
+      }
+    },
+    "patch": {
+      "type": "snapshot.delta",
+      "hostId": "mac",
+      "baseRevision": "8",
+      "revision": "2",
+      "replace": {
+        "sequence": 2,
+        "seenPostIds": [
+          "p"
+        ]
+      },
+      "collections": {
+        "actions": {
+          "key": "actionId",
+          "upsert": [
+            {
+              "actionId": "b",
+              "state": "resolved"
+            },
+            {
+              "actionId": "c",
+              "state": "pending"
+            }
+          ],
+          "remove": [
+            "a"
+          ],
+          "order": [
+            "b",
+            "c"
+          ]
+        }
+      },
+      "removedFields": []
+    },
+    "expected": null
+  },
+  {
+    "name": "wrong host",
+    "full": {
+      "type": "session.snapshot",
+      "revision": "1",
+      "syncCapabilities": {
+        "delta": true,
+        "history": true
+      },
+      "snapshot": {
+        "host": {
+          "id": "mac"
+        },
+        "sequence": 1,
+        "actions": [
+          {
+            "actionId": "a",
+            "state": "pending"
+          },
+          {
+            "actionId": "b",
+            "state": "pending"
+          }
+        ],
+        "seenPostIds": []
+      }
+    },
+    "patch": {
+      "type": "snapshot.delta",
+      "hostId": "linux",
+      "baseRevision": "1",
+      "revision": "2",
+      "replace": {
+        "sequence": 2,
+        "seenPostIds": [
+          "p"
+        ]
+      },
+      "collections": {
+        "actions": {
+          "key": "actionId",
+          "upsert": [
+            {
+              "actionId": "b",
+              "state": "resolved"
+            },
+            {
+              "actionId": "c",
+              "state": "pending"
+            }
+          ],
+          "remove": [
+            "a"
+          ],
+          "order": [
+            "b",
+            "c"
+          ]
+        }
+      },
+      "removedFields": []
+    },
+    "expected": null
+  },
+  {
+    "name": "duplicate order",
+    "full": {
+      "type": "session.snapshot",
+      "revision": "1",
+      "syncCapabilities": {
+        "delta": true,
+        "history": true
+      },
+      "snapshot": {
+        "host": {
+          "id": "mac"
+        },
+        "sequence": 1,
+        "actions": [
+          {
+            "actionId": "a",
+            "state": "pending"
+          },
+          {
+            "actionId": "b",
+            "state": "pending"
+          }
+        ],
+        "seenPostIds": []
+      }
+    },
+    "patch": {
+      "type": "snapshot.delta",
+      "hostId": "mac",
+      "baseRevision": "1",
+      "revision": "2",
+      "replace": {
+        "sequence": 2,
+        "seenPostIds": [
+          "p"
+        ]
+      },
+      "collections": {
+        "actions": {
+          "key": "actionId",
+          "upsert": [
+            {
+              "actionId": "b",
+              "state": "resolved"
+            },
+            {
+              "actionId": "c",
+              "state": "pending"
+            }
+          ],
+          "remove": [
+            "a"
+          ],
+          "order": [
+            "b",
+            "b"
+          ]
+        }
+      },
+      "removedFields": []
+    },
+    "expected": null
+  }
+]

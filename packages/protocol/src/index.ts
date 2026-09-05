@@ -1,3 +1,4 @@
+import { HistorySearchSchema, type HistoryPage } from "./history.js";
 import { z } from "zod";
 import {
   CardBlockSchema,
@@ -575,7 +576,8 @@ export const SnapshotSchema = z.object({
 export type Snapshot = z.infer<typeof SnapshotSchema>;
 
 const ClientCommandPayloadSchema = z.discriminatedUnion("type", [
-  z.object({ type: z.literal("snapshot.request"), afterSequence: z.number().int().optional() }),
+  HistorySearchSchema,
+  z.object({ type: z.literal("snapshot.request"), afterSequence: z.number().int().optional(), acceptDelta: z.boolean().optional() }),
   z.object({
     type: z.literal("action.decide"),
     actionId: z.string(),
@@ -700,6 +702,8 @@ export const ClientCommandSchema = ClientCommandPayloadSchema.and(z.object({
 export type ClientCommand = z.infer<typeof ClientCommandSchema>;
 
 export type ServerMessage =
+  | { type: "history.page"; page: HistoryPage }
+  | { type: "history.error"; requestId: string; message: string }
   | { type: "session.snapshot"; snapshot: Snapshot }
   | { type: "user.profile.updated"; userProfile: UserProfile }
   | { type: "project.updated"; project: Project }
@@ -762,3 +766,7 @@ export const EMPTY_CAPABILITIES: SessionCapabilities = {
 };
 
 export * from "./policy.js";
+
+export { SnapshotReplica } from "./snapshotReplica.js";
+
+export type { HistoryPage, HistoryEntry } from "./history.js";

@@ -40,6 +40,8 @@ fi
 mkdir -p "${release_root}" "${runtime_artifact_root}"
 
 cd "${repo_root}"
+node scripts/release-provenance.mjs check
+cp dist/verified-source.json "${release_root}/verified-source.json"
 pnpm build
 
 submit_notary() {

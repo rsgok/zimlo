@@ -36,6 +36,10 @@ pub struct ServiceDescriptor {
     pub started_at: String,
     pub socket_path: String,
     pub log_path: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub host_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub instance_id: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -122,7 +126,11 @@ pub fn mark_manual_stop(paths: &ZimloPaths) -> io::Result<()> {
     write_private(&paths.manual_stop, format!("{}\n", now()).as_bytes())
 }
 
-pub fn write_descriptor(paths: &ZimloPaths, port: u16) -> io::Result<ServiceDescriptor> {
+pub fn write_descriptor(
+    paths: &ZimloPaths,
+    port: u16,
+    host_id: Option<String>,
+) -> io::Result<ServiceDescriptor> {
     let descriptor = ServiceDescriptor {
         pid: std::process::id(),
         port,
@@ -132,6 +140,8 @@ pub fn write_descriptor(paths: &ZimloPaths, port: u16) -> io::Result<ServiceDesc
         socket_path: paths.socket.display().to_string(),
         log_path: (std::env::var("ZIMLO_AUTOSTARTED").ok().as_deref() == Some("1"))
             .then(|| paths.autostart_log.display().to_string()),
+        host_id,
+        instance_id: Some(Uuid::now_v7().to_string()),
     };
     write_json_atomic(&paths.service, &descriptor)?;
     write_json_atomic(
@@ -293,7 +303,9 @@ mod tests {
     fn writes_node_compatible_descriptor_and_manual_stop_marker() {
         let directory = tempfile::tempdir().expect("temporary directory");
         let paths = paths(directory.path());
-        let written = write_descriptor(&paths, 4747).expect("descriptor");
+        let written = write_descriptor(&paths, 4747, Some("host-test".into())).expect("descriptor");
+        assert_eq!(written.host_id.as_deref(), Some("host-test"));
+        assert!(written.instance_id.is_some());
         assert_eq!(descriptor(&paths), Some(written));
         mark_manual_stop(&paths).expect("manual stop");
         assert!(paths.manual_stop.exists());

@@ -237,6 +237,7 @@ final class WindowCoordinator: NSObject, NSWindowDelegate {
 }
 
 extension Notification.Name {
+    static let zimloComposeTask = Notification.Name("app.zimlo.compose-task")
     static let zimloOpenTask = Notification.Name("app.zimlo.open-task")
     static let zimloOpenSettings = Notification.Name("app.zimlo.open-settings")
 }

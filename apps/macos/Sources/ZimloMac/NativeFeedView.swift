@@ -4,21 +4,9 @@ struct NativeFeedView: View {
     @ObservedObject var store: NativeAppStore
     let scrollToLatestRequest: Int
 
-    private var posts: [FeedPost] {
-        let dismissed = Set(store.snapshot.dismissedFeedItemIds)
-        let seen = Set(store.snapshot.seenPostIds)
-        return store.snapshot.posts
-            .filter { !dismissed.contains($0.id) }
-            .sorted { left, right in
-                let leftAction = left.sessionId.flatMap(store.snapshot.pendingAction(for:)) != nil
-                let rightAction = right.sessionId.flatMap(store.snapshot.pendingAction(for:)) != nil
-                if leftAction != rightAction { return leftAction }
-                let leftUnread = !seen.contains(left.id)
-                let rightUnread = !seen.contains(right.id)
-                if leftUnread != rightUnread { return leftUnread }
-                return left.createdAt > right.createdAt
-            }
-    }
+    var onSetup: () -> Void = {}
+    @State private var sequence = NativeFeedSequence()
+    @State private var visibleID: String?
 
     var body: some View {
         GeometryReader { geometry in
@@ -26,26 +14,33 @@ struct NativeFeedView: View {
                 ScrollViewReader { proxy in
                     ScrollView {
                         LazyVStack(alignment: .leading, spacing: 0) {
-                            if posts.isEmpty {
-                                ContentUnavailableView("All Caught Up", systemImage: "checkmark.circle.fill")
+                            if sequence.entries.isEmpty {
+                                ContentUnavailableView {
+                                    Label(store.snapshot.workspaces.isEmpty ? "先接入一个项目" : "暂时没有需要你处理的事", systemImage: "checkmark.circle.fill")
+                                } description: {
+                                    Text(store.snapshot.workspaces.isEmpty ? "在 Codex 或 Claude Code 中打开项目并开始任务，Zimlo 会自动发现。" : "Agent 的结果和需要你决定的操作会出现在这里。")
+                                } actions: {
+                                    if store.snapshot.workspaces.isEmpty { Button("检查 Agent 接入", action: onSetup) }
+                                }
                                     .frame(maxWidth: .infinity)
                                     .frame(height: geometry.size.height)
                                     .foregroundStyle(NativeTheme.muted)
                                     .id(NativeFeedScrollAnchor.latest)
                             } else {
-                                ForEach(posts) { post in
-                                    NativeFeedCard(
-                                        store: store,
-                                        post: post,
-                                        minimumHeight: NativeFeedLayout.cardMinimumHeight(
-                                            scrollViewportHeight: geometry.size.height
-                                        )
-                                    )
+                                ForEach(sequence.entries) { entry in
+                                    Group {
+                                        switch entry {
+                                        case .post(let post):
+                                            NativeFeedCard(store: store, post: post, minimumHeight: NativeFeedLayout.cardMinimumHeight(scrollViewportHeight: geometry.size.height))
+                                        case .action(let action):
+                                            NativeFeedActionPage(store: store, action: action)
+                                        case .command(let command):
+                                            NativeFeedCommandPage(store: store, command: command)
+                                        }
+                                    }
                                     .padding(.vertical, NativeFeedLayout.edgeInset)
-                                    // The scroll target occupies exactly one viewport;
-                                    // the shorter card is centered inside that page.
-                                    .frame(height: geometry.size.height, alignment: .center)
-                                    .id(post.id)
+                                    .frame(minHeight: geometry.size.height, alignment: .center)
+                                    .id(entry.id)
                                 }
                             }
                         }
@@ -54,13 +49,44 @@ struct NativeFeedView: View {
                         .frame(maxWidth: NativeFeedLayout.maximumCardWidth, alignment: .leading)
                         .frame(maxWidth: .infinity, alignment: .center)
                     }
+                    .scrollPosition(id: $visibleID)
                     .scrollIndicators(.hidden)
+                    .onChange(of: store.feedSnapshot, initial: true) { _, snapshot in
+                        let previous = visibleID
+                        let oldIDs = sequence.entries.map(\.id)
+                        sequence.reconcile(snapshot)
+                        guard oldIDs != sequence.entries.map(\.id) else { return }
+                        if let previous, sequence.entries.contains(where: { $0.id == previous }) {
+                            visibleID = previous
+                            proxy.scrollTo(previous, anchor: .top)
+                        } else { visibleID = sequence.entries.first?.id }
+                    }
+                    .onChange(of: visibleID) { old, new in
+                        if old != nil, old != new { sequence.clearFresh() }
+                    }
+                    .task(id: visibleID) {
+                        guard let id = visibleID,
+                              let entry = sequence.entries.first(where: { $0.id == id }),
+                              case .post(let post) = entry else { return }
+                        try? await Task.sleep(for: .seconds(1))
+                        guard !Task.isCancelled, visibleID == id else { return }
+                        await store.markFeedSeen(post.id)
+                    }
+                    .overlay(alignment: .top) {
+                        if !sequence.fresh.isEmpty {
+                            Button("有新内容 · \(sequence.fresh.count)") {
+                                if let id = sequence.fresh.first { proxy.scrollTo(id, anchor: .top); visibleID = id }
+                                sequence.clearFresh()
+                            }
+                            .buttonStyle(.borderedProminent).padding(.top, 8)
+                        }
+                    }
                     // Snap each trackpad or wheel gesture with the chosen card centered
                     // in the viewport instead of pinning its top edge to the window.
                     .nativeFeedScrollTargetBehavior()
                     .onChange(of: scrollToLatestRequest) { _, _ in
                         withAnimation(.snappy(duration: 0.24)) {
-                            if let latestID = posts.first?.id {
+                            if let latestID = sequence.entries.first?.id {
                                 proxy.scrollTo(latestID, anchor: .center)
                             } else {
                                 proxy.scrollTo(NativeFeedScrollAnchor.latest, anchor: .top)
@@ -189,12 +215,6 @@ private struct NativeFeedCard: View {
             dragOffset = 0
             isArchiving = false
         }
-        .task(id: post.id) {
-            guard isUnread else { return }
-            try? await Task.sleep(for: .milliseconds(900))
-            guard !Task.isCancelled else { return }
-            await store.markFeedSeen(post.id)
-        }
         .contextMenu {
             Button("归档", systemImage: "archivebox") {
                 archive()
@@ -239,7 +259,7 @@ private struct NativeFeedCard: View {
         withAnimation(.easeIn(duration: 0.18)) { dragOffset = -1_100 }
         Task {
             try? await Task.sleep(for: .milliseconds(180))
-            if !(await store.dismissFeedItem(post.id, dismissed: true)) {
+            if !(await store.dismissFeedItem("post:" + post.id, dismissed: true)) {
                 isArchiving = false
                 withAnimation(.spring(response: 0.34, dampingFraction: 0.82)) { dragOffset = 0 }
             }

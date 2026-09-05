@@ -32,6 +32,23 @@ jobs:
 
     steps:
       - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10.33.0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24.15.0
+          cache: pnpm
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy,rustfmt
+      - run: pnpm install --frozen-lockfile
+      - name: Verify source before signing
+        run: |
+          pnpm check
+          pnpm core:swift:test
+          pnpm ios:test
+          node scripts/release-provenance.mjs record
 
       - name: Validate TestFlight configuration
         shell: bash
@@ -113,10 +130,12 @@ jobs:
             DEVELOPMENT_TEAM="$APPLE_TEAM_ID" \
             MARKETING_VERSION="$ZIMLO_VERSION" \
             CURRENT_PROJECT_VERSION="$ZIMLO_BUILD_NUMBER" \
+            ZIMLO_SOURCE_REVISION="$GITHUB_SHA" \
             clean archive
 
       - name: Upload build to TestFlight
         run: |
+          node scripts/release-provenance.mjs check
           xcodebuild \
             -exportArchive \
             -archivePath "$RUNNER_TEMP/Zimlo.xcarchive" \
@@ -130,3 +149,11 @@ jobs:
       - name: Remove temporary signing keychain
         if: always()
         run: security delete-keychain "$RUNNER_TEMP/zimlo-ios-signing.keychain-db" || true
+
+      - name: Preserve verified source identity
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: verified-source
+          path: dist/verified-source.json
+          if-no-files-found: ignore

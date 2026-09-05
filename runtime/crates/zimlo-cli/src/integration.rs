@@ -52,8 +52,16 @@ pub async fn statuses(executable: &Path) -> Vec<Value> {
 }
 
 pub async fn install_cli(executable: &Path) -> Result<(), String> {
+    install_selected_cli(executable, None).await
+}
+
+pub async fn install_selected_cli(
+    executable: &Path,
+    requested: Option<&str>,
+) -> Result<(), String> {
     let providers = ["codex", "claude"]
         .into_iter()
+        .filter(|provider| requested.is_none_or(|target| target == *provider))
         .filter_map(|provider| resolve_command(provider).map(|command| (provider, command)))
         .collect::<Vec<_>>();
     if providers.is_empty() {

@@ -1,4 +1,5 @@
 import SwiftUI
+import ZimloCore
 
 private enum NativeTaskFilter: String, CaseIterable, Identifiable {
     case all
@@ -24,9 +25,11 @@ enum NativeTaskLayout {
 }
 
 struct NativeTasksView: View {
+    var onSetup: () -> Void = {}
     @ObservedObject var store: NativeAppStore
     @State private var filter: NativeTaskFilter = .all
     @State private var query = ""
+    @State private var showingHistory = false
 
     private var sessions: [AgentSession] {
         let normalized = query.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
@@ -94,6 +97,7 @@ struct NativeTasksView: View {
                 )
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
                 .foregroundStyle(NativeTheme.muted)
+                if store.snapshot.workspaces.isEmpty { Button("检查 Agent 接入", action: onSetup).padding(.bottom, 28) }
             } else {
                 List(sessions) { session in
                     NativeTaskRow(store: store, session: session)
@@ -110,15 +114,12 @@ struct NativeTasksView: View {
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(NativeTheme.paper)
-        .navigationTitle("Tasks")
+        .navigationTitle("任务")
+        .sheet(isPresented: $showingHistory) { NativeHistoryView(store: store) }
         .toolbar {
-            ToolbarItem(placement: .principal) {
-                HStack(spacing: 12) {
-                    taskFilter
-                    NativeToolbarSearchField(text: $query, prompt: "搜索任务或项目")
-                }
-                .fixedSize()
-            }
+            ToolbarItem(placement: .principal) { taskFilter }
+            ToolbarItem { NativeToolbarSearchField(text: $query, prompt: "搜索任务或项目") }
+            ToolbarItem { Button("历史成果", systemImage: "clock.arrow.circlepath") { showingHistory = true } }
         }
     }
 
@@ -198,9 +199,6 @@ struct NativeTaskProfileView: View {
     let session: AgentSession
     let onReply: () -> Void
 
-    @State private var highRiskDecision: Decision?
-    @State private var confirmation = ""
-    @State private var inputAnswer = ""
 
     private var project: Project? { store.snapshot.project(for: session) }
     private var task: TaskRecord? { store.snapshot.task(for: session.id) }
@@ -210,7 +208,7 @@ struct NativeTaskProfileView: View {
         store.snapshot.posts.filter { $0.sessionId == session.id }.sorted { $0.createdAt > $1.createdAt }
     }
     private var commands: [TaskCommand] {
-        store.snapshot.commands.filter { $0.sessionId == session.id }.sorted { $0.createdAt > $1.createdAt }
+        store.displayedCommands.filter { $0.sessionId == session.id }.sorted { $0.createdAt > $1.createdAt }
     }
     private var action: PendingAction? { store.snapshot.pendingAction(for: session.id) }
     private var preference: TaskPreference? { store.snapshot.preference(for: session.id) }
@@ -219,7 +217,9 @@ struct NativeTaskProfileView: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 22) {
                 taskHeader
-                if let action { NativeActionCard(store: store, action: action, inputAnswer: $inputAnswer, highRiskDecision: $highRiskDecision) }
+                ForEach(store.snapshot.actions.filter { $0.sessionId == session.id && $0.state == "pending" }) { action in
+                    NativeActionCard(store: store, action: action)
+                }
                 timeline
             }
             .padding(.horizontal, 30)
@@ -243,19 +243,6 @@ struct NativeTaskProfileView: View {
             }
         }
         .task(id: session.id) { await store.loadEvents(sessionID: session.id) }
-        .sheet(item: $highRiskDecision) { decision in
-            NativeHighRiskConfirmation(
-                action: action,
-                decision: decision,
-                confirmation: $confirmation,
-                onConfirm: {
-                    guard let action else { return }
-                    Task { await store.decide(action: action, decision: decision) }
-                    highRiskDecision = nil
-                    confirmation = ""
-                }
-            )
-        }
     }
 
     private var taskHeader: some View {
@@ -384,11 +371,13 @@ private struct NativeTaskFact: View {
     }
 }
 
-private struct NativeActionCard: View {
+struct NativeActionCard: View {
     @ObservedObject var store: NativeAppStore
     let action: PendingAction
-    @Binding var inputAnswer: String
-    @Binding var highRiskDecision: Decision?
+    @State private var inputAnswer = ""
+    @State private var highRiskDecision: Decision?
+    @State private var confirmation = ""
+    @State private var submittingInput = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 13) {
@@ -406,7 +395,6 @@ private struct NativeActionCard: View {
                 Text(action.detail)
                     .font(.system(size: 12, weight: .medium))
                     .foregroundStyle(NativeTheme.ink.opacity(0.72))
-                    .lineLimit(5)
             }
             if action.kind == "input" {
                 HStack(spacing: 8) {
@@ -419,12 +407,16 @@ private struct NativeActionCard: View {
                     Button("提交") {
                         let decision = Decision(id: "submit-input", label: "提交回复", scope: "input", value: .null, risk: "low")
                         let answer = inputAnswer.trimmingCharacters(in: .whitespacesAndNewlines)
-                        Task { await store.decide(action: action, decision: decision, input: ["answer": answer]) }
-                        inputAnswer = ""
+                        submittingInput = true
+                        Task {
+                            let sent = await store.decide(action: action, decision: decision, input: ["answer": answer])
+                            if sent && inputAnswer.trimmingCharacters(in: .whitespacesAndNewlines) == answer { inputAnswer = "" }
+                            submittingInput = false
+                        }
                     }
                     .buttonStyle(.borderedProminent)
                     .tint(NativeTheme.acid)
-                    .disabled(inputAnswer.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                    .disabled(submittingInput || inputAnswer.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
                 }
             } else {
                 HStack(spacing: 8) {
@@ -440,10 +432,21 @@ private struct NativeActionCard: View {
         .background(NativeTheme.coral.opacity(0.07))
         .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
         .overlay(RoundedRectangle(cornerRadius: 16, style: .continuous).stroke(NativeTheme.coral.opacity(0.19), lineWidth: 1))
+        .disabled(action.expiresAt.zimloDate <= Date())
+        .sheet(item: $highRiskDecision) { decision in
+            NativeHighRiskConfirmation(action: action, decision: decision, confirmation: $confirmation) {
+                guard store.snapshot.actions.contains(where: { $0.id == action.id && $0.state == "pending" }),
+                      action.expiresAt.zimloDate > Date() else { highRiskDecision = nil; return }
+                Task { await store.decide(action: action, decision: decision) }
+                highRiskDecision = nil
+                confirmation = ""
+            }
+        }
     }
 
     private func handle(_ decision: Decision) {
         if decision.confirmationPhrase != nil {
+            confirmation = ""
             highRiskDecision = decision
         } else {
             Task { await store.decide(action: action, decision: decision) }

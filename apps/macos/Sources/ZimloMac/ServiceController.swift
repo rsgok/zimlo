@@ -166,8 +166,7 @@ final class ServiceController: ObservableObject {
         .appending(path: "Library/Logs/Zimlo", directoryHint: .isDirectory)
     static let logURL = logDirectory.appending(path: "service.log")
     /// 与 apps/cli 的 ZIMLO_PATHS.root 一致（mac App 不设置 ZIMLO_HOME）。
-    static let serviceDirectory = FileManager.default.homeDirectoryForCurrentUser
-        .appending(path: ".zimlo", directoryHint: .isDirectory)
+    static let serviceDirectory = LocalServiceIdentity.descriptorURL.deletingLastPathComponent().deletingLastPathComponent()
     static let runDirectory = serviceDirectory.appending(path: "run", directoryHint: .isDirectory)
     static let manualStopURL = runDirectory.appending(path: "manual-stop")
     static let serviceDescriptorURL = runDirectory.appending(path: "service.json")
@@ -191,7 +190,8 @@ final class ServiceController: ObservableObject {
     private var recoveryHalted = false
     /// 本次启动前 service.log 的末尾位置，用于只检索本次启动写入的日志段落。
     private var launchedLogOffset: UInt64 = 0
-    private let baseURL = URL(string: "http://127.0.0.1:4747")!
+    private var baseURL: URL { LocalBridgeRoute.resolve(descriptor: try? LocalServiceIdentity.load()).baseURL }
+    private var identityIssue: String?
     private let session: URLSession
     private let runtimeInstaller: RuntimeInstaller
 
@@ -234,7 +234,7 @@ final class ServiceController: ObservableObject {
         if status.pairedDeviceCount == 0 {
             return "后台服务已经就绪。手机尚未连接，可稍后从菜单栏继续配对。"
         }
-        if !status.integrations.allSatisfy(\.isReady) {
+        if !status.integrations.contains(where: \.isReady) {
             return "手机已经连接。仍有 Agent 接入待完成，可稍后从菜单栏继续设置。"
         }
         return "它会继续在菜单栏运行。下一次 Agent 需要你时，打开手机就能处理。"
@@ -273,7 +273,9 @@ final class ServiceController: ObservableObject {
             // 端口上有进程但不是协议匹配的 Zimlo 服务：终止型，不自动重启
             recoveryHalted = true
             haltMonitoring()
-            if let owner = await describePortOwner() {
+            if let identityIssue {
+                state = .unavailable(identityIssue)
+            } else if let owner = await describePortOwner() {
                 state = .unavailable("端口 \(Self.port) 被 \(owner) 占用，且不是兼容的 Zimlo 服务。请退出该进程后，在菜单栏选择“重试”。")
             } else {
                 state = .unavailable("端口 \(Self.port) 被其他进程占用，且不是兼容的 Zimlo 服务。请释放端口后，在菜单栏选择“重试”。")
@@ -357,15 +359,21 @@ final class ServiceController: ObservableObject {
             var request = URLRequest(url: baseURL.appending(path: "healthz"))
             request.timeoutInterval = 2
             let (data, response) = try await session.data(for: request)
-            guard (response as? HTTPURLResponse)?.statusCode == 200,
+            guard let http = response as? HTTPURLResponse, http.statusCode == 200,
                   let health = try? JSONDecoder().decode(HealthResponse.self, from: data),
                   HealthCheck.isCompatible(protocolVersion: health.protocolVersion) else {
                 return .incompatible
             }
-            return .compatible
-        } catch {
-            return .unreachable
-        }
+            do {
+                try LocalServiceIdentity.verify(http, descriptor: LocalServiceIdentity.load())
+                identityIssue = nil
+                return .compatible
+            } catch {
+                identityIssue = error.localizedDescription
+                status = nil
+                return .incompatible
+            }
+        } catch { return .unreachable }
     }
 
     /// 用户显式动作（菜单"启动服务"/"重试"）：先清除手动停止标记（与
@@ -508,7 +516,7 @@ final class ServiceController: ObservableObject {
             let url = baseURL.appending(path: "api/local/status")
             var request = URLRequest(url: url)
             request.timeoutInterval = 5
-            let (data, response) = try await session.data(for: request)
+            let (data, response) = try await LocalServiceConnection().data(for: request, using: session)
             guard (response as? HTTPURLResponse)?.statusCode == 200 else {
                 recordStatusFailure()
                 return false
@@ -527,6 +535,10 @@ final class ServiceController: ObservableObject {
             guard decoded.ready else { return false }
             markHealthy()
             return true
+        } catch let error as LocalServiceIdentityError {
+            status = nil
+            state = .unavailable(error.localizedDescription)
+            return false
         } catch is CancellationError {
             return false
         } catch {
@@ -578,7 +590,7 @@ final class ServiceController: ObservableObject {
             var request = URLRequest(url: baseURL.appending(path: "api/local/pairing"))
             request.httpMethod = "POST"
             request.timeoutInterval = 15
-            let (data, response) = try await session.data(for: request)
+            let (data, response) = try await LocalServiceConnection().data(for: request, using: session)
             guard (response as? HTTPURLResponse)?.statusCode == 200 else {
                 pairingIssue = BridgeErrorDecoder.decode(data, fallback: "暂时无法创建配对二维码。")
                 return
@@ -614,7 +626,7 @@ final class ServiceController: ObservableObject {
             var request = URLRequest(url: baseURL.appending(path: "api/local/pairing/\(safeID)"))
             request.httpMethod = "DELETE"
             request.timeoutInterval = 10
-            let (data, response) = try await session.data(for: request)
+            let (data, response) = try await LocalServiceConnection().data(for: request, using: session)
             guard (response as? HTTPURLResponse)?.statusCode == 200 else {
                 pairingIssue = BridgeErrorDecoder.decode(data, fallback: "暂时无法取消这个连接码。")
                 return
@@ -643,7 +655,7 @@ final class ServiceController: ObservableObject {
             request.timeoutInterval = 20
             request.setValue("application/json", forHTTPHeaderField: "content-type")
             request.httpBody = try JSONEncoder().encode(["target": target])
-            let (data, response) = try await session.data(for: request)
+            let (data, response) = try await LocalServiceConnection().data(for: request, using: session)
             guard (response as? HTTPURLResponse)?.statusCode == 200 else {
                 integrationIssue = BridgeErrorDecoder.decode(data, fallback: "接入失败，请稍后重试。")
                 return
@@ -875,7 +887,7 @@ final class ServiceController: ObservableObject {
                 case .incompatible:
                     self.recoveryHalted = true
                     self.haltMonitoring()
-                    self.state = .unavailable("端口 \(Self.port) 上的服务协议不匹配。请停止旧服务后重新检查。")
+                    self.state = .unavailable(self.identityIssue ?? "端口 \(Self.port) 上的服务协议不匹配。请停止旧服务后重新检查。")
                     return
                 case .unreachable:
                     self.consecutiveHealthFailures += 1

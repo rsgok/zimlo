@@ -31,14 +31,15 @@ pub(super) struct DispatchContext<'a> {
 
 pub(super) fn valid_snapshot_request(command: &Value) -> bool {
     const MAX_SAFE_INTEGER: i64 = 9_007_199_254_740_991;
-    command.get("afterSequence").is_none_or(|value| {
-        value
-            .as_i64()
-            .is_some_and(|number| (-MAX_SAFE_INTEGER..=MAX_SAFE_INTEGER).contains(&number))
-            || value
-                .as_u64()
-                .is_some_and(|number| number <= MAX_SAFE_INTEGER as u64)
-    })
+    command.get("acceptDelta").is_none_or(Value::is_boolean)
+        && command.get("afterSequence").is_none_or(|value| {
+            value
+                .as_i64()
+                .is_some_and(|number| (-MAX_SAFE_INTEGER..=MAX_SAFE_INTEGER).contains(&number))
+                || value
+                    .as_u64()
+                    .is_some_and(|number| number <= MAX_SAFE_INTEGER as u64)
+        })
 }
 
 pub(super) async fn dispatch(
@@ -61,6 +62,17 @@ pub(super) async fn dispatch(
         return Ok(DispatchResult::Invalid);
     };
     match command_type {
+        "history.search" => {
+            let query =
+                serde_json::from_value(command.clone()).map_err(|_| StoreError::InvalidMutation)?;
+            let message = match store.search_history(query).await {
+                Ok(page) => json!({"type":"history.page", "page":page}),
+                Err(_) => {
+                    json!({"type":"history.error", "requestId":command["requestId"], "message":"历史检索失败，请重置筛选条件后重试。"})
+                }
+            };
+            Ok(DispatchResult::Message(message))
+        }
         "action.decide" => {
             action_dispatch::decide(
                 action_broker,

@@ -78,7 +78,10 @@ pub(super) fn execute(connection: &Connection, command: MaterialCommand) -> bool
     }
 }
 
-fn get(connection: &Connection, material_id: &str) -> Result<Option<MaterialRecord>, StoreError> {
+pub(super) fn get(
+    connection: &Connection,
+    material_id: &str,
+) -> Result<Option<MaterialRecord>, StoreError> {
     connection
         .query_row(
             "SELECT * FROM materials WHERE id = ?1",

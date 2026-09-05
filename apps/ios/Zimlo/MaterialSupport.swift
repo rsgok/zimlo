@@ -5,6 +5,7 @@ import Foundation
 import PDFKit
 import QuickLook
 import SwiftUI
+import ZimloCore
 import UIKit
 import UniformTypeIdentifiers
 
@@ -136,8 +137,8 @@ struct MaterialThumbnail: View {
 
     var body: some View {
         Group {
-            if material.kind == "image", let url, let image = UIImage(contentsOfFile: url.path) {
-                Image(uiImage: image).resizable().scaledToFill()
+            if material.kind == "image", let url {
+                DownsampledImage(url: url, maxPixel: 180).scaledToFill()
             } else if material.kind == "video" {
                 Image(systemName: "play.fill").font(.title3)
             } else {
@@ -195,8 +196,8 @@ struct FeedMaterialCard: View {
             if content.type == "image_album" {
                 TabView {
                     ForEach(materials) { material in
-                        if let url = urls[material.id], let image = UIImage(contentsOfFile: url.path) {
-                            Image(uiImage: image).resizable().scaledToFit().tag(material.id)
+                        if let url = urls[material.id] {
+                            DownsampledImage(url: url).scaledToFit().tag(material.id).accessibilityLabel(material.name)
                         } else { unavailable }
                     }
                 }
@@ -339,6 +340,7 @@ private struct InlinePDFReader: UIViewRepresentable {
 private struct InlineFeedVideoPlayer: View {
     let url: URL
     @State private var player = AVPlayer()
+    @Environment(\.scenePhase) private var scenePhase
 
     var body: some View {
         VideoPlayer(player: player)
@@ -347,6 +349,7 @@ private struct InlineFeedVideoPlayer: View {
                 player.isMuted = true
                 player.play()
             }
+            .onChange(of: scenePhase) { _, phase in if phase != .active { player.pause() } }
             .onDisappear {
                 player.pause()
                 player.replaceCurrentItem(with: nil)

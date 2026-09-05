@@ -4,7 +4,7 @@ import type { ClientCommand, FeedPost, Material, Project, Session } from "@zimlo
 import { FormattedText } from "./FormattedText";
 import { AgentAvatar } from "./UserAvatar";
 import { relativeTime, useNow } from "../lib/nowTicker";
-import { initialMaterialURL, materialURL } from "../lib/materialAccess";
+import { initialMaterialURL, materialURL, releaseMaterialURL } from "../lib/materialAccess";
 import "../card-system.generated.css";
 
 interface FeedPostViewProps {
@@ -163,7 +163,7 @@ function useResolvedMaterialURL(material: Material, send: (command: ClientComman
     void materialURL(material, send).then((value) => {
       if (active) setURL(value);
     }).catch(() => {});
-    return () => { active = false; };
+    return () => { active = false; releaseMaterialURL(material); };
   }, [material, send]);
   return url;
 }
@@ -181,7 +181,7 @@ function ResolvedVideo({ material, poster, send }: { material: Material; poster?
     if (!poster) { setResolvedPoster(undefined); return; }
     let active = true;
     void materialURL(poster, send).then((value) => { if (active) setResolvedPoster(value); }).catch(() => {});
-    return () => { active = false; };
+    return () => { active = false; releaseMaterialURL(poster); };
   }, [poster, send]);
   return <InlineFeedVideo src={src} poster={resolvedPoster} name={material.name} />;
 }
