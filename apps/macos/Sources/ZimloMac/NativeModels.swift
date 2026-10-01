@@ -1,6 +1,7 @@
 import Foundation
+import ZimloCore
 
-enum Provider: String, Codable, CaseIterable, Identifiable {
+enum Provider: String, Codable, CaseIterable, Identifiable, Sendable {
     case codex
     case claude
 
@@ -8,7 +9,7 @@ enum Provider: String, Codable, CaseIterable, Identifiable {
     var label: String { self == .codex ? "Codex" : "Claude Code" }
 }
 
-enum JSONValue: Codable, Hashable {
+enum JSONValue: Codable, Hashable, Sendable {
     case string(String)
     case number(Double)
     case bool(Bool)
@@ -79,19 +80,19 @@ enum TimelineEventPresentation {
     }
 }
 
-struct UserProfile: Codable, Hashable {
+struct UserProfile: Codable, Hashable, Sendable {
     var avatarId: String
     var updatedAt: String
 }
 
-struct ZimloHost: Codable, Hashable, Identifiable {
+struct ZimloHost: Codable, Hashable, Sendable, Identifiable {
     var id: String
     var name: String
     var platform: String
     var lastSeenAt: String
 }
 
-struct AgentProfile: Codable, Hashable {
+struct AgentProfile: Codable, Hashable, Sendable {
     var displayName: String
     var avatar: String
     var bio: String
@@ -99,7 +100,7 @@ struct AgentProfile: Codable, Hashable {
     var updatedAt: String
 }
 
-struct Project: Codable, Hashable, Identifiable {
+struct Project: Codable, Hashable, Sendable, Identifiable {
     var id: String
     var hostId: String?
     var name: String
@@ -113,7 +114,7 @@ struct Project: Codable, Hashable, Identifiable {
     var lastUsedAt: String
 }
 
-struct SessionCapabilities: Codable, Hashable {
+struct SessionCapabilities: Codable, Hashable, Sendable {
     var discovered: Bool
     var liveObserved: Bool
     var replyable: Bool
@@ -124,7 +125,7 @@ struct SessionCapabilities: Codable, Hashable {
     var diffAvailable: Bool
 }
 
-struct AgentSession: Codable, Hashable, Identifiable {
+struct AgentSession: Codable, Hashable, Sendable, Identifiable {
     var id: String
     var hostId: String?
     var projectId: String?
@@ -150,7 +151,7 @@ struct AgentSession: Codable, Hashable, Identifiable {
     }
 }
 
-struct FeedContent: Codable, Hashable {
+struct FeedContent: Codable, Hashable, Sendable {
     var type: String
     var materialIds: [String]?
     var materialId: String?
@@ -183,7 +184,7 @@ enum NativeFeedMaterialPresentation: Equatable {
     }
 }
 
-struct FeedPost: Codable, Hashable, Identifiable {
+struct FeedPost: Codable, Hashable, Sendable, Identifiable {
     var id: String
     var hostId: String?
     var projectId: String?
@@ -204,7 +205,7 @@ struct FeedPost: Codable, Hashable, Identifiable {
     var createdAt: String
 }
 
-struct CardPresentation: Codable, Hashable {
+struct CardPresentation: Codable, Hashable, Sendable {
     var system: String
     var theme: String
     var layout: String
@@ -213,13 +214,13 @@ struct CardPresentation: Codable, Hashable {
     var mediaPlacement: String
 }
 
-struct CardComparisonItem: Codable, Hashable {
+struct CardComparisonItem: Codable, Hashable, Sendable {
     var label: String
     var value: String
     var detail: String?
 }
 
-struct CardBlock: Codable, Hashable, Identifiable {
+struct CardBlock: Codable, Hashable, Sendable, Identifiable {
     var type: String
     var label: String?
     var detail: String?
@@ -237,7 +238,7 @@ struct CardBlock: Codable, Hashable, Identifiable {
     }
 }
 
-struct Material: Codable, Hashable, Identifiable {
+struct Material: Codable, Hashable, Sendable, Identifiable {
     var id: String
     var hostId: String?
     var kind: String
@@ -255,7 +256,7 @@ struct Material: Codable, Hashable, Identifiable {
     var error: String?
 }
 
-struct Decision: Codable, Hashable, Identifiable {
+struct Decision: Codable, Hashable, Sendable, Identifiable {
     var id: String
     var label: String
     var scope: String
@@ -264,7 +265,7 @@ struct Decision: Codable, Hashable, Identifiable {
     var risk: String
 }
 
-struct ApprovalContext: Codable, Hashable {
+struct ApprovalContext: Codable, Hashable, Sendable {
     var category: String
     var projectId: String?
     var cwd: String?
@@ -274,7 +275,7 @@ struct ApprovalContext: Codable, Hashable {
     var reason: String
 }
 
-struct PendingAction: Codable, Hashable, Identifiable {
+struct PendingAction: Codable, Hashable, Sendable, Identifiable {
     var actionId: String
     var hostId: String?
     var sessionId: String
@@ -291,7 +292,7 @@ struct PendingAction: Codable, Hashable, Identifiable {
     var id: String { actionId }
 }
 
-struct TaskRecord: Codable, Hashable, Identifiable {
+struct TaskRecord: Codable, Hashable, Sendable, Identifiable {
     var id: String
     var hostId: String?
     var runId: String
@@ -302,7 +303,7 @@ struct TaskRecord: Codable, Hashable, Identifiable {
     var updatedAt: String
 }
 
-struct TaskCommand: Codable, Hashable, Identifiable {
+struct TaskCommand: Codable, Hashable, Sendable, Identifiable {
     var id: String
     var hostId: String?
     var idempotencyKey: String
@@ -319,7 +320,7 @@ struct TaskCommand: Codable, Hashable, Identifiable {
     var error: String?
 }
 
-struct TrustedWorkspace: Codable, Hashable, Identifiable {
+struct TrustedWorkspace: Codable, Hashable, Sendable, Identifiable {
     var id: String
     var hostId: String?
     var label: String
@@ -328,7 +329,7 @@ struct TrustedWorkspace: Codable, Hashable, Identifiable {
     var lastUsedAt: String
 }
 
-struct TaskPreference: Codable, Hashable, Identifiable {
+struct TaskPreference: Codable, Hashable, Sendable, Identifiable {
     var hostId: String?
     var sessionId: String
     var pinnedAt: String?
@@ -336,7 +337,7 @@ struct TaskPreference: Codable, Hashable, Identifiable {
     var id: String { sessionId }
 }
 
-struct UnifiedEvent: Codable, Hashable, Identifiable {
+struct UnifiedEvent: Codable, Hashable, Sendable, Identifiable {
     var id: String
     var sequence: Int
     var provider: Provider
@@ -351,7 +352,7 @@ struct UnifiedEvent: Codable, Hashable, Identifiable {
     var provenance: String
 }
 
-struct ProjectTrustPolicy: Codable, Hashable, Identifiable {
+struct ProjectTrustPolicy: Codable, Hashable, Sendable, Identifiable {
     var hostId: String?
     var projectId: String
     var preset: String
@@ -361,7 +362,7 @@ struct ProjectTrustPolicy: Codable, Hashable, Identifiable {
     var id: String { projectId }
 }
 
-struct NotificationSettings: Codable, Hashable {
+struct NotificationSettings: Codable, Hashable, Sendable {
     var enabled: Bool
     var approvals: Bool
     var results: Bool
@@ -407,14 +408,14 @@ struct NotificationSettings: Codable, Hashable {
     }
 }
 
-struct FeatureCapabilities: Codable, Hashable {
+struct FeatureCapabilities: Codable, Hashable, Sendable {
     var projectTrustPolicy: Bool
     var pushNotifications: Bool
     var remoteSync: Bool
     var multiHost: Bool?
 }
 
-struct NativeSnapshot: Codable, Hashable {
+struct NativeSnapshot: Codable, Hashable, Sendable {
     var host: ZimloHost?
     var userProfile: UserProfile
     var projects: [Project]
@@ -512,7 +513,7 @@ struct NativeSnapshot: Codable, Hashable {
     }
 }
 
-struct ClientCommand: Codable, Hashable {
+struct ClientCommand: Codable, Hashable, Sendable {
     var values: [String: JSONValue]
 
     init(type: String, _ values: [String: JSONValue] = [:]) {
@@ -534,14 +535,16 @@ struct ClientCommand: Codable, Hashable {
 
 struct ServerEnvelope: Codable {
     var type: String
+    var page: HistoryPage? = nil
     var snapshot: NativeSnapshot?
     var events: [UnifiedEvent]?
     var message: String?
     var code: String?
     var devices: [NativeDevice]?
+    var ok: Bool? = nil
 }
 
-struct NativeDevice: Codable, Hashable, Identifiable {
+struct NativeDevice: Codable, Hashable, Sendable, Identifiable {
     var id: String
     var name: String
     var createdAt: String

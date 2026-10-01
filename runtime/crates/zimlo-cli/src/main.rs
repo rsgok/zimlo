@@ -14,6 +14,7 @@ use uuid::Uuid;
 use zimlo_protocol::ZIMLO_VERSION;
 use zimlo_store::{Store, StoreMode};
 
+mod hook_surface;
 mod integration;
 mod mcp;
 mod paths;
@@ -84,7 +85,7 @@ enum Command {
         #[command(subcommand)]
         command: IntegrationsCommand,
     },
-    /// Manage the Codex GUI plugin source.
+    /// Manage the shared Codex desktop and CLI plugin source.
     CodexPlugin {
         #[command(subcommand)]
         command: CodexPluginCommand,
@@ -191,7 +192,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
             desktop,
         } => logs(follow, desktop),
         Command::Doctor => doctor().await,
-        Command::Hooks { command } => hooks(command),
+        Command::Hooks { command } => hooks(command).await,
         Command::Integrations { command } => integrations(command).await,
         Command::CodexPlugin { command } => codex_plugin(command).await,
         Command::Devices { command } => devices(command).await,
@@ -225,7 +226,7 @@ fn validate_provider(provider: &str) -> Result<(), Box<dyn Error>> {
     }
 }
 
-fn hooks(command: HooksCommand) -> Result<(), Box<dyn Error>> {
+async fn hooks(command: HooksCommand) -> Result<(), Box<dyn Error>> {
     let executable = std::env::current_exe()?;
     match command {
         HooksCommand::Diff { json } => {
@@ -263,11 +264,11 @@ fn hooks(command: HooksCommand) -> Result<(), Box<dyn Error>> {
             }
         }
         HooksCommand::Install => {
-            integration::install_hooks(&executable, false)?;
+            integration::install_hooks(&executable, false).await?;
             println!("Zimlo hooks 已原子合并；用户原配置已保留。");
         }
         HooksCommand::Uninstall => {
-            integration::install_hooks(&executable, true)?;
+            integration::install_hooks(&executable, true).await?;
             println!("仅 Zimlo 自己的 hook 项已移除；用户原配置已保留。");
         }
     }
@@ -293,10 +294,12 @@ async fn integrations(command: IntegrationsCommand) -> Result<(), Box<dyn Error>
                 integration::install_cli(&executable).await?;
             }
             "cli" => integration::install_cli(&executable).await?,
+            "codex_cli" => integration::install_selected_cli(&executable, Some("codex")).await?,
+            "claude_cli" => integration::install_selected_cli(&executable, Some("claude")).await?,
             "codex_gui" => {
                 let _ = integration::install_plugin(&executable).await?;
             }
-            _ => return Err("target 仅支持 all、codex_gui、cli。".into()),
+            _ => return Err("target 仅支持 all、codex_gui、codex_cli、claude_cli、cli。".into()),
         },
     }
     Ok(())
@@ -362,7 +365,11 @@ async fn start(
     } else {
         address.ip()
     };
-    let descriptor = service_state::write_descriptor(&paths, address.port())?;
+    let descriptor = service_state::write_descriptor(
+        &paths,
+        address.port(),
+        store.get_metadata("host_identity_v1").await?,
+    )?;
     println!(
         "Zimlo Rust Runtime 已启动：http://{display_ip}:{}",
         address.port()
@@ -448,6 +455,10 @@ async fn start(
                     cloud,
                 },
                 broker.clone(),
+                zimlo_bridge::LocalServiceIdentity {
+                    host_id: descriptor.host_id.clone().unwrap_or_default(),
+                    instance_id: descriptor.instance_id.clone().unwrap_or_default(),
+                },
                 wait_for_stop(bridge_stop),
             )
             .await;

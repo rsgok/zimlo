@@ -29,6 +29,8 @@ mod codex_stream;
 mod discovery;
 mod dispatcher;
 mod integrations;
+mod local_identity;
+mod local_snapshot;
 mod local_socket;
 mod management;
 mod material_validation;
@@ -36,6 +38,7 @@ mod materials;
 mod native_executor;
 mod pairing;
 mod push_service;
+mod snapshot_sync;
 mod task_commands;
 mod task_enqueue;
 mod task_runner;
@@ -50,6 +53,7 @@ pub use claude_executor::ClaudeTaskExecutor;
 pub use cloud::{CloudError, CloudRelay, CloudService, DEFAULT_CLOUD_URL, DeviceCloudCredentials};
 pub use codex_executor::CodexTaskExecutor;
 pub use discovery::DiscoveryService;
+pub use local_identity::{LocalServiceIdentity, serve_runtime_with_broker, with_local_identity};
 pub use local_socket::run_until_shutdown as run_local_control_until_shutdown;
 pub use native_executor::NativeTaskExecutor;
 pub use push_service::PushService;
@@ -168,7 +172,7 @@ fn routes(state: BridgeState) -> Router {
             "/api/local/sessions/{session_id}/events",
             get(session_events),
         )
-        .route("/api/local/snapshot", get(local_snapshot))
+        .route("/api/local/snapshot", get(local_snapshot::get))
         .route("/api/local/commands", post(local_commands))
         .route("/api/local/status", get(local_status))
         .route("/api/local/integrations", post(local_integrations))
@@ -259,21 +263,6 @@ pub async fn serve_runtime(
     shutdown: impl Future<Output = ()> + Send + 'static,
 ) -> io::Result<()> {
     serve_router(listener, router_with_config(store, config), shutdown).await
-}
-
-pub async fn serve_runtime_with_broker(
-    listener: TcpListener,
-    store: Store,
-    config: BridgeConfig,
-    action_broker: ActionBroker,
-    shutdown: impl Future<Output = ()> + Send + 'static,
-) -> io::Result<()> {
-    serve_router(
-        listener,
-        router_with_config_and_broker(store, config, action_broker),
-        shutdown,
-    )
-    .await
 }
 
 async fn serve_router(
@@ -371,60 +360,6 @@ async fn session_events(
         },
         Err(error) => {
             eprintln!("[zimlo:rust-bridge] 查询 session 失败: {error}");
-            api_error(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                "store_unavailable",
-                "本地任务数据暂时不可用。",
-                true,
-            )
-        }
-    }
-}
-
-async fn local_snapshot(
-    ConnectInfo(peer): ConnectInfo<SocketAddr>,
-    State(state): State<BridgeState>,
-) -> Response {
-    if !peer.ip().is_loopback() {
-        return api_error(
-            StatusCode::FORBIDDEN,
-            "loopback_only",
-            "仅允许本机访问。",
-            false,
-        );
-    }
-    let Some(store) = state.store else {
-        return api_error(
-            StatusCode::SERVICE_UNAVAILABLE,
-            "runtime_not_configured",
-            "Rust Runtime 尚未配置数据库。",
-            true,
-        );
-    };
-    if state.writable
-        && let Err(error) = ensure_local_admin(&store).await
-    {
-        eprintln!("[zimlo:rust-bridge] 初始化本机管理设备失败: {error}");
-        return api_error(
-            StatusCode::INTERNAL_SERVER_ERROR,
-            "bootstrap_unavailable",
-            "本机管理设备初始化失败。",
-            true,
-        );
-    }
-    match store
-        .snapshot(SnapshotOptions::local(state.host_name, now()))
-        .await
-    {
-        Ok(snapshot) => Json(snapshot).into_response(),
-        Err(StoreError::MissingHostIdentity | StoreError::MissingLocalAdmin) => api_error(
-            StatusCode::SERVICE_UNAVAILABLE,
-            "snapshot_identity_unavailable",
-            "本机身份尚未初始化，请先由现有 Runtime 启动一次。",
-            true,
-        ),
-        Err(error) => {
-            eprintln!("[zimlo:rust-bridge] 读取 Snapshot 失败: {error}");
             api_error(
                 StatusCode::INTERNAL_SERVER_ERROR,
                 "store_unavailable",
@@ -606,7 +541,10 @@ async fn local_integrations(
             false,
         );
     };
-    if !matches!(target, "all" | "codex_gui" | "cli") {
+    if !matches!(
+        target,
+        "all" | "codex_gui" | "codex_cli" | "claude_cli" | "cli"
+    ) {
         return api_error(
             StatusCode::BAD_REQUEST,
             "unknown_integration_target",

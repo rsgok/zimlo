@@ -33,10 +33,13 @@
     "typecheck": "pnpm --filter @zimlo/protocol build && pnpm --filter @zimlo/adapters build && pnpm -r --if-present typecheck",
     "sites:check": "node scripts/check-sites.mjs",
     "check": "pnpm architecture:check && pnpm build:test-deps && pnpm test && pnpm typecheck && pnpm build && pnpm runtime:check && pnpm runtime:smoke:write && git diff --check",
-    "check:all": "pnpm check && pnpm macos:test && pnpm sites:check",
+    "check:all": "pnpm check && pnpm core:swift:test && pnpm macos:test && pnpm ios:test && pnpm sites:check",
     "macos:build": "apps/macos/scripts/build-dev-app.sh",
     "macos:release": "apps/macos/scripts/build-release-dmg.sh",
-    "macos:test": "swift test --package-path apps/macos"
+    "macos:test": "swift test --package-path apps/macos",
+    "core:swift:test": "swift test --package-path packages/swift/ZimloCore",
+    "ios:test": "bash scripts/test-ios.sh",
+    "performance:check": "pnpm --filter @zimlo/cli build && cargo build --release --locked --manifest-path runtime/Cargo.toml -p zimlo-cli && node scripts/benchmark-product-scale.mjs dist/product-scale.json --check"
   },
   "devDependencies": {
     "@types/node": "^26.1.1",

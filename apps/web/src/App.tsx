@@ -11,6 +11,7 @@ import { PairingRequired } from "./components/PairingRequired";
 import { ProfileView } from "./components/ProfileView";
 import { SessionDetail } from "./components/SessionDetail";
 import { SystemNotices } from "./components/SystemNotices";
+import { HistorySheet } from "./components/HistorySheet";
 import { TasksView } from "./components/TasksView";
 import { TaskComposer } from "./components/TaskComposer";
 import { UndoToast, type UndoToastData } from "./components/UndoToast";
@@ -37,6 +38,7 @@ export function App() {
   const [activeFeedSessionId, setActiveFeedSessionId] = useState<string | null>(null);
   const [activeFeedProjectId, setActiveFeedProjectId] = useState<string | null>(null);
   const [outboxOpen, setOutboxOpen] = useState(false);
+  const [historyOpen, setHistoryOpen] = useState(false);
   const [undoToast, setUndoToast] = useState<UndoToastData | null>(null);
   const scrollPositionsRef = useRef<Partial<Record<Tab, number>>>({});
   const selectedSession = useMemo(
@@ -186,7 +188,7 @@ export function App() {
           {mountedTabs.has("feed") && <FeedView projects={bridge.snapshot.projects} posts={bridge.snapshot.posts} materials={bridge.snapshot.materials} sessions={bridge.snapshot.sessions} actions={bridge.snapshot.actions} commands={commands} tasks={bridge.snapshot.tasks} seenPostIds={bridge.snapshot.seenPostIds} dismissedFeedItemIds={bridge.snapshot.dismissedFeedItemIds} send={send} onOpen={openSession} onOpenProject={openAgent} onActiveSessionChange={setActiveFeedSessionId} onActiveProjectChange={setActiveFeedProjectId} onRequestUndo={showUndo} interactionMode={macosShell ? "desktop" : "swipe"} />}
         </div>
         <div className={tab === "tasks" ? "tab-panel" : "tab-panel tab-panel-hidden"}>
-          {mountedTabs.has("tasks") && <TasksView projects={bridge.snapshot.projects} sessions={bridge.snapshot.sessions} tasks={bridge.snapshot.tasks} posts={bridge.snapshot.posts} preferences={bridge.snapshot.taskPreferences} send={send} onOpen={openSession} onRequestUndo={showUndo} />}
+          {mountedTabs.has("tasks") && <TasksView onHistory={() => setHistoryOpen(true)} projects={bridge.snapshot.projects} sessions={bridge.snapshot.sessions} tasks={bridge.snapshot.tasks} posts={bridge.snapshot.posts} preferences={bridge.snapshot.taskPreferences} send={send} onOpen={openSession} onRequestUndo={showUndo} />}
         </div>
         <div className={tab === "agents" ? "tab-panel" : "tab-panel tab-panel-hidden"}>
           {mountedTabs.has("agents") && <AgentsView projects={bridge.snapshot.projects} sessions={bridge.snapshot.sessions} onOpen={openAgent} onNewTask={openNewTask} />}
@@ -240,6 +242,7 @@ export function App() {
 
       {bridge.notice && <div className="toast" role="status">{bridge.notice}</div>}
       <UndoToast toast={undoToast} onClose={closeUndoToast} />
+      {historyOpen && <HistorySheet hosts={bridge.hosts} projects={bridge.snapshot.projects} page={bridge.historyPage} failure={bridge.historyError} send={send} onOpen={openSession} onClose={() => setHistoryOpen(false)} />}
       {outboxOpen && (
         <OutboxSheet
           entries={bridge.pendingCommandEntries}

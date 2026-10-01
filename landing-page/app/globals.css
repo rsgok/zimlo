@@ -3790,7 +3790,7 @@ button {
   box-sizing: border-box;
 }
 
-.ios-site a {
+:where(.ios-site) a {
   color: inherit;
   text-decoration: none;
 }
@@ -4020,9 +4020,9 @@ button {
   min-height: 820px;
   display: grid;
   place-items: center;
-  transform: translateY(var(--hero-shift, 0)) rotate(var(--hero-tilt, 0));
-  opacity: var(--hero-fade, 1);
-  transition: opacity 80ms linear;
+  align-content: center;
+  gap: 20px;
+
 }
 
 .ios-hero-stage > .ios-phone {
@@ -4031,112 +4031,15 @@ button {
   filter: drop-shadow(0 42px 60px rgba(0, 0, 0, 0.5));
 }
 
-.ios-hero-halo {
-  position: absolute;
-  z-index: 0;
-  width: 690px;
-  aspect-ratio: 1;
-  border: 1px solid rgba(201,255,56,.14);
-  border-radius: 50%;
-  animation: ios-orbit 18s linear infinite;
-}
-
-.ios-hero-halo::before,
-.ios-hero-halo::after {
-  content: "";
-  position: absolute;
-  inset: 11%;
-  border: 1px solid rgba(255,255,255,.08);
-  border-radius: inherit;
-}
-
-.ios-hero-halo::after {
-  inset: 25%;
-  border-color: rgba(201,255,56,.18);
-}
-
-.ios-hero-halo i {
-  position: absolute;
-  width: 9px;
-  height: 9px;
-  border-radius: 50%;
-  background: var(--ios-acid);
-  box-shadow: 0 0 22px rgba(201,255,56,.7);
-}
-
-.ios-hero-halo i:nth-child(1) { left: 5%; top: 27%; }
-.ios-hero-halo i:nth-child(2) { right: 9%; top: 13%; }
-.ios-hero-halo i:nth-child(3) { right: 0; bottom: 34%; }
-
-.ios-hero-source,
-.ios-hero-note {
-  position: absolute;
-  z-index: 5;
-  display: flex;
-  align-items: center;
-  gap: 9px;
-  border: 1px solid rgba(255,255,255,.13);
-  background: rgba(19, 23, 19, .8);
-  backdrop-filter: blur(14px);
-  font-family: var(--font-geist-mono), monospace;
-  font-size: 11px;
-  font-weight: 780;
-  letter-spacing: .07em;
-  box-shadow: 0 20px 44px rgba(0,0,0,.24);
-}
-
-.ios-hero-source {
-  flex-wrap: wrap;
-  width: 178px;
-  padding: 14px 16px;
-  border-radius: 12px;
-  animation: ios-float 5s ease-in-out infinite;
-}
-
-.ios-hero-source i {
-  width: 7px;
-  height: 7px;
-  border-radius: 50%;
-  background: var(--ios-acid);
-}
-
-.ios-hero-source small {
-  width: 100%;
-  padding-left: 16px;
-  color: rgba(255,255,255,.45);
-  font-size: 11px;
-}
-
-.ios-hero-source--one { left: 2%; top: 22%; }
-.ios-hero-source--two { right: 1%; bottom: 24%; animation-delay: -2s; }
-
-.ios-hero-note {
-  padding: 11px 13px;
-  border-radius: 999px;
-  color: rgba(255,255,255,.7);
-}
-
-.ios-hero-note i {
-  display: grid;
-  place-items: center;
-  min-width: 24px;
-  height: 24px;
-  padding: 0 6px;
-  color: var(--ios-ink);
-  background: var(--ios-acid);
-  border-radius: 999px;
-  font-style: normal;
-}
-
-.ios-hero-note--one { right: 3%; top: 26%; }
-.ios-hero-note--two { left: 0; bottom: 28%; }
-
 .ios-hero-principle {
   position: absolute;
   z-index: 5;
   left: 50%;
   bottom: 28px;
   display: flex;
+  width: calc(100% - 36px);
+  justify-content: center;
+  flex-wrap: wrap;
   align-items: center;
   gap: 20px;
   transform: translateX(-50%);
@@ -4268,73 +4171,6 @@ button {
   background: #11150f;
 }
 
-.ios-feed-media {
-  position: absolute;
-  inset: 0;
-  overflow: hidden;
-  background:
-    radial-gradient(circle at 66% 22%, rgba(201,255,56,.44), transparent 18%),
-    radial-gradient(circle at 25% 47%, rgba(43,113,90,.64), transparent 30%),
-    linear-gradient(145deg, #0e1813, #111410 55%, #050605);
-}
-
-.ios-feed-media::after {
-  content: "";
-  position: absolute;
-  inset: 36% -20% -10%;
-  background: linear-gradient(transparent, rgba(0,0,0,.96) 74%);
-}
-
-.ios-feed-orb {
-  position: absolute;
-  top: 21%;
-  left: 21%;
-  width: 59%;
-  aspect-ratio: 1;
-  border-radius: 44% 56% 62% 38%;
-  background: linear-gradient(135deg, var(--ios-acid), #267a5f 56%, #0c0f0c 57%);
-  filter: blur(.2px);
-  box-shadow: 0 0 80px rgba(201,255,56,.14);
-  animation: ios-morph 8s ease-in-out infinite;
-}
-
-.ios-feed-grid {
-  position: absolute;
-  inset: 13% 8% 32%;
-  opacity: .32;
-  border-radius: 30px;
-  transform: perspective(500px) rotateX(58deg) rotateZ(-12deg);
-  background-image: linear-gradient(rgba(255,255,255,.18) 1px, transparent 1px), linear-gradient(90deg, rgba(255,255,255,.18) 1px, transparent 1px);
-  background-size: 30px 30px;
-}
-
-.ios-video-pill {
-  position: absolute;
-  top: 41%;
-  left: 50%;
-  min-width: 86px;
-  padding: 10px 15px;
-  transform: translateX(-50%);
-  border: 1px solid rgba(255,255,255,.2);
-  border-radius: 999px;
-  color: #fff;
-  background: rgba(0,0,0,.52);
-  backdrop-filter: blur(10px);
-  font-size: 11px;
-  font-weight: 800;
-  text-align: center;
-}
-
-.ios-feed-artifact-stack {
-  position: absolute;
-  z-index: 2;
-  top: 48%;
-  left: 15%;
-  display: flex;
-  gap: 6px;
-}
-
-.ios-feed-artifact-stack i,
 .ios-mini-files i {
   display: grid;
   place-items: center;
@@ -4352,8 +4188,6 @@ button {
   animation: ios-file-float 4s ease-in-out infinite;
 }
 
-.ios-feed-artifact-stack i:nth-child(2) { animation-delay: -.8s; }
-.ios-feed-artifact-stack i:nth-child(3) { animation-delay: -1.6s; }
 
 .ios-feed-top {
   position: absolute;
@@ -4391,104 +4225,10 @@ button {
 .ios-feed-top strong { font-size: 11px; }
 .ios-feed-top small { color: rgba(255,255,255,.55); font-size: 11px; transform: scale(.88); transform-origin: left; }
 
-.ios-feed-actions {
-  position: absolute;
-  z-index: 5;
-  right: 14px;
-  bottom: 218px;
-  display: flex;
-  flex-direction: column;
-  gap: 13px;
-}
+.ios-example-caption { position: relative; margin: 0; color: #b9c0b4; font-size: 13px; text-align: center; }
+.ios-site .button:focus-visible, .ios-site .ios-button:focus-visible { outline: 3px solid currentColor; outline-offset: 5px; }
+.ios-site .beta-actions .button:focus-visible { outline-color: #11130f; }
 
-.ios-feed-actions span {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 3px;
-  font-size: 11px;
-}
-
-.ios-feed-actions i {
-  display: grid;
-  place-items: center;
-  width: 35px;
-  height: 35px;
-  border: 1px solid rgba(255,255,255,.15);
-  border-radius: 50%;
-  background: rgba(0,0,0,.42);
-  font-style: normal;
-  font-weight: 800;
-}
-
-.ios-feed-actions small { font-size: 11px; transform: scale(.8); }
-
-.ios-feed-copy {
-  position: absolute;
-  z-index: 5;
-  left: 18px;
-  right: 58px;
-  bottom: 92px;
-}
-
-.ios-feed-copy > span,
-.ios-artifact-caption > span {
-  color: var(--ios-acid);
-  font-family: var(--font-geist-mono), monospace;
-  font-size: 11px;
-  font-weight: 830;
-  letter-spacing: .1em;
-}
-
-.ios-feed-copy h3 {
-  margin: 8px 0 0;
-  font-size: 26px;
-  line-height: .98;
-  letter-spacing: -.055em;
-}
-
-.ios-feed-copy p {
-  margin: 8px 0 0;
-  color: rgba(255,255,255,.66);
-  font-size: 11px;
-  line-height: 1.4;
-}
-
-.ios-feed-copy > div {
-  display: grid;
-  grid-template-columns: auto 1fr auto;
-  align-items: center;
-  gap: 8px;
-  margin-top: 11px;
-  padding: 10px 11px;
-  color: #111;
-  border-radius: 10px;
-  background: var(--ios-acid);
-  font-size: 11px;
-}
-
-.ios-feed-copy > div b { font-size: 11px; opacity: .54; }
-.ios-feed-copy > div strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.ios-feed-copy > div i { font-style: normal; font-size: 15px; }
-
-.ios-swipe-hint {
-  position: absolute;
-  z-index: 5;
-  top: 86px;
-  left: 50%;
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  transform: translateX(-50%) scale(.78);
-  transform-origin: center;
-  color: rgba(255,255,255,.48);
-  font-family: var(--font-geist-mono), monospace;
-  font-size: 11px;
-  font-weight: 760;
-  white-space: nowrap;
-}
-
-.ios-swipe-hint i { width: 3px; height: 18px; border-radius: 3px; background: var(--ios-acid); animation: ios-swipe 1.8s ease-in-out infinite; }
 
 .ios-page-bar,
 .ios-directory-head {
@@ -5120,15 +4860,13 @@ button {
 /* Motion */
 
 .motion-ready .ios-hero-copy,
-.motion-ready .ios-hero-stage,
-.motion-ready .ios-hero-principle {
+.motion-ready .ios-hero-stage {
   opacity: 0;
   transform: translateY(25px);
 }
 
 .motion-loaded .ios-hero-copy,
-.motion-loaded .ios-hero-stage,
-.motion-loaded .ios-hero-principle {
+.motion-loaded .ios-hero-stage {
   opacity: 1;
   transform: translateY(0);
   transition: opacity 720ms ease, transform 720ms cubic-bezier(.2,.8,.2,1);
@@ -5143,7 +4881,6 @@ button {
 }
 
 @keyframes ios-orbit { to { transform: rotate(360deg); } }
-@keyframes ios-float { 0%,100% { transform: translateY(0) rotate(-1deg); } 50% { transform: translateY(-12px) rotate(1deg); } }
 @keyframes ios-morph { 0%,100% { border-radius: 44% 56% 62% 38%; transform: rotate(-4deg) scale(1); } 50% { border-radius: 61% 39% 44% 56%; transform: rotate(5deg) scale(1.05); } }
 @keyframes ios-file-float { 0%,100% { transform: translateY(0); } 50% { transform: translateY(-6px); } }
 @keyframes ios-swipe { 0%,100% { transform: translateY(5px); opacity: .3; } 50% { transform: translateY(-5px); opacity: 1; } }
@@ -5159,10 +4896,6 @@ button {
   .ios-site-header nav { gap: 22px; }
   .ios-hero { grid-template-columns: .9fr 1.1fr; padding-inline: 34px; }
   .ios-hero-stage > .ios-phone { width: min(350px, 52vw); }
-  .ios-hero-source--one { left: -4%; }
-  .ios-hero-source--two { right: -5%; }
-  .ios-hero-note--one { right: -4%; }
-  .ios-hero-note--two { left: -5%; }
   .ios-capabilities { grid-template-columns: 1fr; }
   .ios-capabilities-head { position: static; }
   .ios-capabilities-head p { max-width: 650px; }
@@ -5180,10 +4913,6 @@ button {
   .ios-hero-actions { justify-content: center; }
   .ios-hero-stage { min-height: 760px; }
   .ios-hero-stage > .ios-phone { width: 350px; }
-  .ios-hero-source--one { left: 8%; }
-  .ios-hero-source--two { right: 8%; }
-  .ios-hero-note--one { right: 4%; }
-  .ios-hero-note--two { left: 4%; }
   .ios-flagship-phones { grid-template-columns: 1fr 100px 1fr; }
   .ios-gesture-path > span,
   .ios-gesture-path > small { display: none; }
@@ -5212,11 +4941,6 @@ button {
   .ios-speed-promise strong { font-size: 22px; }
   .ios-hero-stage { min-height: 670px; }
   .ios-hero-stage > .ios-phone { width: min(330px, 90vw); }
-  .ios-hero-halo { width: 540px; }
-  .ios-hero-source { display: none; }
-  .ios-hero-note { transform: scale(.82); }
-  .ios-hero-note--one { top: 17%; right: -7%; }
-  .ios-hero-note--two { left: -8%; bottom: 18%; }
   .ios-hero-principle { bottom: 20px; gap: 10px; transform: translateX(-50%) scale(.82); }
   .ios-flagship,
   .ios-artifacts,
@@ -5284,10 +5008,6 @@ button {
 
 @media (prefers-reduced-motion: reduce) {
   .ios-kicker i,
-  .ios-hero-halo,
-  .ios-hero-source,
-  .ios-feed-orb,
-  .ios-feed-artifact-stack i,
   .ios-swipe-hint i,
   .ios-gesture-path i,
   .ios-routing-lines i,
@@ -5303,3 +5023,41 @@ button {
     transform: none;
   }
 }
+
+.phone-access { max-width: 720px; margin: 28px auto; text-align: left; padding: 24px; border: 1px solid currentColor; border-radius: 20px; }
+.phone-access h3 { margin: 24px 0 10px; font-size: 1.15rem; }
+.phone-access p { font-size: 1rem; line-height: 1.65; }
+.phone-access summary { cursor: pointer; padding: 12px 0; min-height: 44px; }
+.phone-access pre { overflow-x: auto; padding: 16px; background: #0001; border-radius: 10px; }
+.ios-target-note { font-size: .8rem !important; }
+@media (prefers-reduced-motion: reduce) { html { scroll-behavior: auto; } }
+
+/* The hero previews an actual example asset, with selectable campaign layouts. */
+.ios-campaign-card { position: absolute; inset: 96px 13px 74px; display: flex; flex-direction: column; overflow: hidden; border-radius: 15px; background: #f5f2e8; color: #20251e; }
+.ios-campaign-art { position: relative; display: flex; flex: 1; min-height: 170px; flex-direction: column; justify-content: space-between; padding: 17px; overflow: hidden; isolation: isolate; color: #fffdf1; background: #253b36; }
+.ios-campaign-art img { object-fit: cover; object-position: 66% center; z-index: -2; }
+.ios-campaign-art::before { content: ""; position: absolute; inset: 0; z-index: -1; background: linear-gradient(180deg,rgba(9,22,21,.38),transparent 38%,rgba(6,19,20,.7)); }
+.ios-campaign-brand { display: flex; justify-content: space-between; font-size: 11px; font-weight: 850; letter-spacing: .1em; }
+.ios-campaign-brand i { font-style: normal; }
+.ios-campaign-art > strong { margin-top: auto; padding: 12px 0; font-size: clamp(28px,3vw,40px); line-height: .95; letter-spacing: -.06em; font-weight: 900; }
+.ios-campaign-art > small { font-size: 11px; letter-spacing: .12em; }
+.ios-campaign-art--poster { background: #cc431e; }
+.ios-campaign-art--poster img { object-position: center; clip-path: inset(42px 16px 34%); }
+.ios-campaign-art--poster::before { background: none; }
+.ios-campaign-art--social img { object-position: 90% center; transform: scale(1.3); }
+.ios-campaign-gallery { display: grid; grid-template-columns: repeat(3,1fr); gap: 5px; padding: 9px 10px; border-bottom: 1px solid #d9ddcf; }
+.ios-campaign-gallery button { display: flex; align-items: center; gap: 5px; min-height: 44px; padding: 3px; background: transparent; border: 1px solid transparent; border-radius: 6px; color: #404b38; cursor: pointer; text-align: left; }
+.ios-campaign-gallery button[aria-pressed="true"] { border-color: #2e4d31; background: #e7ecd9; }
+.ios-campaign-gallery button:focus-visible, .ios-campaign-card a:focus-visible { outline: 3px solid #bc4b20; outline-offset: -3px; }
+.ios-campaign-gallery button > span:last-child { display: grid; gap: 2px; font-size: 11px; }
+.ios-campaign-gallery b { font-size: 11px; color: #627257; }
+.ios-campaign-thumb { width: 28px; height: 34px; flex-shrink: 0; border-radius: 3px; background: url('/examples/fieldwork-campaign.png') 65% center / cover; }
+.ios-campaign-thumb--poster { border: 5px solid #cc431e; }
+.ios-campaign-thumb--social { background-position: 90% center; background-size: auto 160%; }
+.ios-campaign-summary { padding: 12px 16px 15px; }
+.ios-campaign-summary > span { font-size: 11px; letter-spacing: .09em; font-weight: 800; color: #47603c; }
+.ios-campaign-summary h3 { margin: 7px 0; font-size: 24px; line-height: 1.03; letter-spacing: -.04em; }
+.ios-campaign-summary p { margin: 0 0 12px; color: #4c5745; font-size: 12px; line-height: 1.4; }
+.ios-campaign-open { display: flex; min-height: 44px; align-items: center; justify-content: space-between; padding: 10px 12px; background: #c9ff38; color: #17220f; border-radius: 8px; font-size: 12px; font-weight: 800; }
+
+.ios-artifact-caption > span { color: var(--ios-acid); font-family: var(--font-geist-mono), monospace; font-size: 11px; font-weight: 830; letter-spacing: .1em; }

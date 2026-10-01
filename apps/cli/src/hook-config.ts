@@ -19,7 +19,7 @@ const CODEX_PLUGIN_EVENTS = ["SessionStart", "PreToolUse", "PermissionRequest"] 
 const CLAUDE_EVENTS = ["SessionStart", "PreToolUse", "PermissionRequest"] as const;
 
 export function codexPluginHooks(entrypoint: string, nodePath = process.execPath): JsonObject {
-  const configured = appendHooks({}, CODEX_PLUGIN_EVENTS, zimloHookCommand(entrypoint, "codex", "gui", nodePath), "codex");
+  const configured = appendHooks({}, CODEX_PLUGIN_EVENTS, zimloHookCommand(entrypoint, "codex", "auto", nodePath), "codex");
   return {
     description: "Zimlo session binding and synchronous action bridge for Codex",
     hooks: configured.hooks ?? {},
@@ -32,7 +32,9 @@ function clone(value: JsonObject): JsonObject {
 
 async function readJson(path: string): Promise<JsonObject> {
   try {
-    return JSON.parse(await readFile(path, "utf8")) as JsonObject;
+    const value: unknown = JSON.parse(await readFile(path, "utf8"));
+    if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error("根节点必须是对象");
+    return value as JsonObject;
   } catch (error) {
     if (!existsSync(path)) return {};
     throw new Error(`无法解析 ${path}，请先修复该 JSON 文件。`, { cause: error });
@@ -81,6 +83,7 @@ function appendHooks(
     };
     if (event === "PermissionRequest") handler.statusMessage = "Waiting for Zimlo approval";
     if (event === "PreToolUse") handler.statusMessage = "Waiting for Zimlo input";
+    if (event === "SessionStart") handler.statusMessage = "Binding Zimlo session";
     const group: JsonObject = { hooks: [handler] };
     if (["SessionStart"].includes(event)) group.matcher = "startup|resume|clear";
     if (event === "PreToolUse") group.matcher = provider === "codex" ? "request_user_input" : "AskUserQuestion";
@@ -91,34 +94,12 @@ function appendHooks(
   return next;
 }
 
-function removeCommand(root: JsonObject, command: string): JsonObject {
-  const next = clone(root);
-  if (!next.hooks || typeof next.hooks !== "object" || Array.isArray(next.hooks)) return next;
-  const hooks = next.hooks as JsonObject;
-  for (const [event, rawGroups] of Object.entries(hooks)) {
-    if (!Array.isArray(rawGroups)) continue;
-    const groups = rawGroups.flatMap((rawGroup) => {
-      if (!rawGroup || typeof rawGroup !== "object") return [rawGroup];
-      const group = clone(rawGroup as JsonObject);
-      if (!Array.isArray(group.hooks)) return [group];
-      const remaining = group.hooks.filter((rawHandler) => {
-        return !(rawHandler && typeof rawHandler === "object" && (rawHandler as JsonObject).command === command);
-      });
-      group.hooks = remaining;
-      return remaining.length > 0 ? [group] : [];
-    });
-    if (groups.length > 0) hooks[event] = groups;
-    else delete hooks[event];
-  }
-  return next;
-}
-
 function removeZimloCommands(root: JsonObject, provider: "codex" | "claude"): JsonObject {
   const next = clone(root);
   if (!next.hooks || typeof next.hooks !== "object" || Array.isArray(next.hooks)) return next;
   const hooks = next.hooks as JsonObject;
   for (const [event, rawGroups] of Object.entries(hooks)) {
-    if (!Array.isArray(rawGroups)) continue;
+    if (!Array.isArray(rawGroups) || rawGroups.length === 0) continue;
     const groups = rawGroups.flatMap((rawGroup) => {
       if (!rawGroup || typeof rawGroup !== "object") return [rawGroup];
       const group = clone(rawGroup as JsonObject);
@@ -129,6 +110,7 @@ function removeZimloCommands(root: JsonObject, provider: "codex" | "claude"): Js
         if (typeof command !== "string") return true;
         return !/zimlo/iu.test(command) || !command.includes(`hook --provider ${provider}`);
       });
+      if (remaining.length === group.hooks.length) return [rawGroup];
       group.hooks = remaining;
       return remaining.length > 0 ? [group] : [];
     });
@@ -144,33 +126,27 @@ export async function hookConfigChanges(
   home = homedir(),
   providers: readonly ("codex" | "claude")[] = ["codex", "claude"],
 ): Promise<HookConfigChange[]> {
-  const codexPath = join(home, ".codex", "hooks.json");
-  const claudePath = join(home, ".claude", "settings.json");
-  const codexBefore = await readJson(codexPath);
-  const claudeBefore = await readJson(claudePath);
-  const codexCommand = zimloHookCommand(entrypoint, "codex", "cli");
-  const claudeCommand = zimloHookCommand(entrypoint, "claude", "auto");
-  const codexWithoutZimlo = removeZimloCommands(codexBefore, "codex");
-  const claudeWithoutZimlo = removeZimloCommands(claudeBefore, "claude");
-  return [
-    {
-      provider: "codex" as const,
-      path: codexPath,
-      before: codexBefore,
-      after: uninstall
-        ? removeCommand(codexWithoutZimlo, codexCommand)
-        : appendHooks(codexWithoutZimlo, CODEX_EVENTS, codexCommand, "codex"),
-    },
-    {
-      provider: "claude" as const,
-      path: claudePath,
-      before: claudeBefore,
-      after: uninstall
-        ? removeCommand(claudeWithoutZimlo, claudeCommand)
-        : appendHooks(claudeWithoutZimlo, CLAUDE_EVENTS, claudeCommand, "claude"),
-    },
-  ].filter((change) => providers.includes(change.provider))
-    .map(({ provider: _provider, ...change }) => change);
+  const pluginOwnsHooks = !uninstall && providers.includes("codex") && await codexPluginOwnsHooks(home);
+  return Promise.all(providers.map(async (provider) => {
+    const path = provider === "codex"
+      ? join(home, ".codex", "hooks.json")
+      : join(home, ".claude", "settings.json");
+    const before = await readJson(path);
+    const withoutZimlo = removeZimloCommands(before, provider);
+    const after = uninstall || (provider === "codex" && pluginOwnsHooks)
+      ? withoutZimlo
+      : appendHooks(withoutZimlo, provider === "codex" ? CODEX_EVENTS : CLAUDE_EVENTS,
+        zimloHookCommand(entrypoint, provider, "auto"), provider);
+    return { path, before, after };
+  }));
+}
+
+// User hooks and plugin hooks are additive in both Codex clients. A Zimlo
+// plugin source owns the hooks even when disabled or partially configured;
+// never recreate user-level handlers during a CLI repair.
+export async function codexPluginOwnsHooks(home = homedir()): Promise<boolean> {
+  const manifest = await readJson(join(home, "plugins", "zimlo", ".codex-plugin", "plugin.json"));
+  return manifest.name === "zimlo";
 }
 
 export interface AppliedHookChange {

@@ -10,6 +10,12 @@ use crate::{
     trust_policy,
 };
 
+mod details;
+mod elicitation;
+use details::approval_detail;
+#[cfg(test)]
+pub(super) use elicitation::is_confirmation_elicitation;
+
 struct ApprovalRequest {
     store: Store,
     broker: ActionBroker,
@@ -54,6 +60,7 @@ pub(super) async fn handle_server_request(
         "item/permissions/requestApproval" => {
             resolve_approval(request, "额外能力审批", "direct").await
         }
+        "mcpServer/elicitation/request" => elicitation::resolve(request).await,
         "item/tool/requestUserInput" => resolve_input(request).await,
         _ => Err(format!("Zimlo 不支持服务端请求：{method}")),
     }
@@ -205,6 +212,9 @@ async fn resolve_input(request: ApprovalRequest) -> Result<Value, String> {
 }
 
 pub(super) fn approval_decisions(title: &str, params: &Value) -> Vec<DecisionRecord> {
+    if title == "工具调用审批" {
+        return elicitation::decisions();
+    }
     if title == "额外能力审批" {
         let permissions = params
             .get("permissions")
@@ -429,27 +439,6 @@ async fn insert_need_event(
         .await
         .map_err(store_error)?;
     Ok(())
-}
-
-fn approval_detail(params: &Value) -> String {
-    let network = &params["networkApprovalContext"];
-    if let Some(host) = string(&network["host"]) {
-        return format!(
-            "网络访问：{}://{}{}",
-            string(&network["protocol"]).unwrap_or_else(|| "network".into()),
-            host,
-            network["port"]
-                .as_u64()
-                .map(|port| format!(":{port}"))
-                .unwrap_or_default()
-        );
-    }
-    redact(
-        &string(&params["command"])
-            .or_else(|| string(&params["reason"]))
-            .unwrap_or_else(|| params.to_string()),
-        800,
-    )
 }
 
 async fn approval_context(

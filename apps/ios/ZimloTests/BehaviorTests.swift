@@ -966,3 +966,50 @@ final class TaskDetailProjectionTests: XCTestCase {
         )
     }
 }
+
+final class ArtifactGalleryTests: XCTestCase {
+    private func material(_ id: String, host: String, hash: String = "first") throws -> Material {
+        let data = Data("""
+        {"id":"\(id)","hostId":"\(host)","kind":"image","name":"\(id).png","mimeType":"image/png","sizeBytes":100,"sha256":"\(hash)","origin":"agent","status":"ready","createdAt":"2026-09-06"}
+        """.utf8)
+        return try JSONDecoder().decode(Material.self, from: data)
+    }
+
+    func testGalleryKeepsOrderMissingSlotsAndSelectionWithoutCrossingHosts() throws {
+        let a = try material("a", host: "one"), foreign = try material("b", host: "two")
+        let items = GalleryItem.resolve(ids: ["b", "a", "a", "missing"], materials: [a, foreign], hostID: "one")
+        XCTAssertEqual(items.map(\.id), ["b", "a", "missing"])
+        XCTAssertNil(items[0].material)
+        XCTAssertEqual(items[1].material?.hostId, "one")
+        XCTAssertEqual(GalleryItem.selection("a", in: items), "a")
+        XCTAssertEqual(GalleryItem.selection("removed", in: items), "b")
+    }
+
+    @MainActor func testNewVersionCannotReuseOldURL() async throws {
+        let store = GalleryStore()
+        let old = GalleryItem.resolve(ids: ["a"], materials: [try material("a", host: "one")], hostID: "one")
+        let new = GalleryItem.resolve(ids: ["a"], materials: [try material("a", host: "one", hash: "second")], hostID: "one")
+        await store.load(old, selected: "a") { _ in URL(fileURLWithPath: "/old.png") }
+        await store.load(new, selected: "a") { _ in URL(fileURLWithPath: "/new.png") }
+        XCTAssertNil(store.urls[old[0].key])
+        XCTAssertEqual(store.urls[new[0].key]?.lastPathComponent, "new.png")
+    }
+
+    @MainActor func testLateDownloadCannotOverwriteNewGalleryAndFailureKeepsOtherImages() async throws {
+        let store = GalleryStore()
+        let old = GalleryItem.resolve(ids: ["a"], materials: [try material("a", host: "one")], hostID: "one")
+        var continuation: CheckedContinuation<URL, Never>?
+        let task = Task { await store.load(old, selected: "a") { _ in await withCheckedContinuation { continuation = $0 } } }
+        while continuation == nil { await Task.yield() }
+        let new = GalleryItem.resolve(ids: ["a", "b"], materials: [try material("a", host: "two"), try material("b", host: "two")], hostID: "two")
+        await store.load(new, selected: "b") { material in
+            if material.id == "a" { throw URLError(.notConnectedToInternet) }
+            return URL(fileURLWithPath: "/b.png")
+        }
+        continuation?.resume(returning: URL(fileURLWithPath: "/stale.png"))
+        await task.value
+        XCTAssertNil(store.urls[old[0].key])
+        XCTAssertEqual(store.urls[new[1].key]?.lastPathComponent, "b.png")
+        XCTAssertNotNil(store.errors[new[0].key])
+    }
+}

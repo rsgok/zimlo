@@ -74,6 +74,11 @@ install_name_tool -add_rpath "@executable_path/../Frameworks" "${app_path}/Conte
 cp "${macos_root}/Resources/Info.plist" "${app_path}/Contents/Info.plist"
 /usr/libexec/PlistBuddy -c "Set :CFBundleShortVersionString ${version}" "${app_path}/Contents/Info.plist"
 /usr/libexec/PlistBuddy -c "Set :CFBundleVersion ${build_number}" "${app_path}/Contents/Info.plist"
+source_revision=$(git -C "${repo_root}" rev-parse HEAD)
+source_dirty=false
+if [[ -n "$(git -C "${repo_root}" status --porcelain --untracked-files=normal)" ]]; then source_dirty=true; fi
+/usr/libexec/PlistBuddy -c "Add :ZimloSourceDirty bool ${source_dirty}" "${app_path}/Contents/Info.plist"
+/usr/libexec/PlistBuddy -c "Add :ZimloSourceRevision string ${source_revision}" "${app_path}/Contents/Info.plist"
 /usr/libexec/PlistBuddy -c "Set :SUPublicEDKey ${sparkle_public_key}" "${app_path}/Contents/Info.plist"
 /usr/libexec/PlistBuddy -c "Set :SUFeedURL ${appcast_url}" "${app_path}/Contents/Info.plist"
 /usr/libexec/PlistBuddy -c "Add :ZimloRuntimeManifestURL string ${runtime_manifest_url}" "${app_path}/Contents/Info.plist"

@@ -1,4 +1,5 @@
 import SwiftUI
+import ZimloCore
 import UIKit
 
 private func collapsedDirectorySessions(_ sessions: [AgentSession]) -> [AgentSession] {
@@ -54,9 +55,17 @@ struct TaskDirectoryProjection {
             projectByID[project.id] = project
         }
 
+        let pendingSessionIDs = Set(snapshot.actions.filter { $0.state == "pending" }.map(\.sessionId))
+        var activeCommandDates: [String: String] = [:]
+        for command in snapshot.commands where ["queued", "dispatching", "running"].contains(command.state) {
+            guard let sessionID = command.sessionId else { continue }
+            activeCommandDates[sessionID] = max(activeCommandDates[sessionID] ?? "", command.createdAt)
+        }
         let rows = collapsedDirectorySessions(snapshot.sessions).map { session in
             let task = session.correlationUncertain ? nil : taskBySession[session.id]
-            let state = task?.state ?? session.status
+            let state = CurrentTaskState.resolve(taskState: task?.state, taskUpdatedAt: task?.updatedAt,
+                sessionState: session.status, activeCommandCreatedAt: activeCommandDates[session.id],
+                hasPendingAction: pendingSessionIDs.contains(session.id))
             let priority = Self.statePriority(state)
             let generatedTitle = session.title.hasPrefix("Codex ·") || session.title.hasPrefix("Claude ·")
             let reason = task?.reason.trimmingCharacters(in: CharacterSet(charactersIn: "。"))
@@ -155,6 +164,7 @@ struct TasksDirectoryView: View {
     @State private var search = ""
     @State private var filter = "全部"
     @State private var showingSearch = false
+    @State private var showingHistory = false
     private let filters = ["全部", "待我处理", "进行中", "可继续", "已归档"]
 
     var body: some View {
@@ -165,6 +175,7 @@ struct TasksDirectoryView: View {
         ).sections
         VStack(spacing: 0) {
             VStack(alignment: .leading, spacing: 8) {
+                Button("历史成果", systemImage: "clock.arrow.circlepath") { showingHistory = true }.font(ZFont.body)
                 ZFilterBar(
                     options: filters,
                     selection: $filter,
@@ -240,6 +251,7 @@ struct TasksDirectoryView: View {
             }
         }
         .zPageSurface()
+        .sheet(isPresented: $showingHistory) { MobileHistoryView(model: model) }
     }
 
     private func taskRow(_ row: TaskDirectoryRowProjection) -> some View {
@@ -936,12 +948,15 @@ struct SettingsView: View {
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     @State private var presentedSheet: SettingsSheet?
     @State private var showingForgetConfirmation = false
+    @State private var showingMetrics = false
     @State private var hostPendingRemoval: HostConnectionStatus?
 
     var body: some View {
         ScrollView {
             LazyVStack(alignment: .leading, spacing: 15) {
                 profileSummary
+                MobileSetupChecklist(model: model) { presentedSheet = .pairing }
+                Button("使用与性能", systemImage: "chart.bar") { showingMetrics = true }.font(ZFont.body)
                 runtimeSection
                 hostsSection
                 if !model.bridge.hosts.isEmpty { connectionSection }
@@ -954,6 +969,7 @@ struct SettingsView: View {
         }
         .scrollIndicators(.hidden)
         .zPageSurface()
+        .sheet(isPresented: $showingMetrics) { ExperienceDiagnosticsView() }
         .sheet(item: $presentedSheet) { destination in
             switch destination {
             case .avatars:

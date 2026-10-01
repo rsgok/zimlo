@@ -6,6 +6,7 @@ import { runtimeLabel, sessionLocation } from "./sessionPresentation";
 import { useOutsideClickClose } from "./useModalFocus";
 
 interface TasksViewProps {
+  onHistory?: () => void;
   projects: Project[];
   sessions: Session[];
   tasks: TaskRecord[];
@@ -177,7 +178,7 @@ const TaskRow = memo(function TaskRow({ session, task, preference, post, process
   );
 });
 
-export function TasksView({ projects, sessions, tasks, posts = EMPTY_POSTS, preferences, send, onOpen, onRequestUndo }: TasksViewProps) {
+export function TasksView({ onHistory, projects, sessions, tasks, posts = EMPTY_POSTS, preferences, send, onOpen, onRequestUndo }: TasksViewProps) {
   const now = useNow();
   const [query, setQuery] = useState("");
   const [filter, setFilter] = useState<TaskFilter>("all");
@@ -300,6 +301,7 @@ export function TasksView({ projects, sessions, tasks, posts = EMPTY_POSTS, pref
   return (
     <section className="tasks-view">
       <div className="task-tools">
+        {onHistory && <button onClick={onHistory}>历史成果</button>}
         <nav className="task-filters" aria-label="任务筛选">
           {FILTERS.map((item) => {
             const count = item.id === "all" ? currentSessions.length : item.id === "attention" ? attentionCount : item.id === "active" ? activeCount : readyCount;

@@ -8,6 +8,8 @@ import { DatabaseSync } from "node:sqlite";
 import { fileURLToPath } from "node:url";
 import WebSocket from "../apps/cli/node_modules/ws/wrapper.mjs";
 import { ZimloStore } from "../apps/cli/dist/store.js";
+import { verifyArtifactDelivery } from "./verify-artifact-delivery.mjs";
+import { SnapshotReplica } from "../packages/protocol/dist/snapshotReplica.js";
 import {
   createKeyPair,
   decryptFrame,
@@ -40,9 +42,10 @@ let socket;
 
 function prepareFakeClaude() {
   mkdirSync(workspacePath);
+  const completedAt = Date.now();
   const records = [
-    { type: "system", subtype: "init", sessionId: "claude-rust-smoke", cwd: workspacePath, model: "claude", timestamp: "2026-09-02T00:00:00.000Z", uuid: "turn-rust-smoke" },
-    { type: "assistant", sessionId: "claude-rust-smoke", timestamp: "2026-09-02T00:00:01.000Z", uuid: "turn-rust-smoke", message: { stop_reason: "end_turn", content: [{ type: "text", text: "Rust Claude smoke completed" }] } },
+    { type: "system", subtype: "init", sessionId: "claude-rust-smoke", cwd: workspacePath, model: "claude", timestamp: new Date(completedAt - 1_000).toISOString(), uuid: "turn-rust-smoke" },
+    { type: "assistant", sessionId: "claude-rust-smoke", timestamp: new Date(completedAt).toISOString(), uuid: "turn-rust-smoke", message: { stop_reason: "end_turn", content: [{ type: "text", text: "Rust Claude smoke completed" }] } },
   ];
   const output = records.map((record) => `printf '%s\\n' '${JSON.stringify(record)}'`).join("\n");
   writeFileSync(fakeClaudePath, `#!/bin/sh\n${output}\n`);
@@ -77,7 +80,19 @@ printf '%s\\n' '{"method":"turn/completed","params":{"threadId":"codex-rust-smok
 
 function prepareNodeDatabase() {
   const store = new ZimloStore(databasePath);
-  store.database.exec(readFileSync(fixturePath, "utf8"));
+  // The shared compatibility fixture has fixed dates, but a live Runtime
+  // prunes actions and posts older than seven days on startup. Rebase its
+  // timeline so the latest fixture event is one minute old, retaining the
+  // original ordering and keeping the pending action's expiry in the future.
+  const fixtureOffset = Date.now() - Date.parse("2026-09-01T12:11:00.000Z") - 60_000;
+  const fixture = readFileSync(fixturePath, "utf8").replace(
+    /'(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z)'/gu,
+    (_, timestamp) => `'${new Date(Date.parse(timestamp) + fixtureOffset).toISOString()}'`,
+  );
+  store.database.exec(fixture);
+  const action = store.database.prepare("SELECT state, expires_at FROM actions WHERE action_id = 'action-snapshot'").get();
+  assert.equal(action.state, "pending");
+  assert.ok(Date.parse(action.expires_at) > Date.now(), "Startup recovery must expire an action whose deadline has not passed");
   store.database.prepare("UPDATE project_locations SET path = ? WHERE project_id = 'project-snapshot'").run(workspacePath);
   // Keep the recovered fixture command queued until the encrypted client can
   // cancel it. A deliberately unsupported provider prevents discovery from
@@ -122,8 +137,26 @@ async function startRuntime() {
       const baseUrl = `http://127.0.0.1:${port}`;
       try {
         const response = await fetch(`${baseUrl}/healthz`);
-        if (response.ok) return baseUrl;
-      } catch {}
+        if (response.ok) {
+          const descriptor = JSON.parse(readFileSync(join(temporaryRoot, "run/service.json"), "utf8"));
+          assert.equal(descriptor.pid, runtime.pid);
+          assert.equal(descriptor.port, Number(port));
+          assert.ok(descriptor.hostId);
+          assert.ok(descriptor.instanceId);
+          assert.equal(response.headers.get("x-zimlo-host-id"), descriptor.hostId);
+          assert.equal(response.headers.get("x-zimlo-instance-id"), descriptor.instanceId);
+          const wrongInstance = await fetch(`${baseUrl}/api/local/commands`, {
+            method: "POST",
+            headers: { "content-type": "application/json", "x-zimlo-instance-id": "retired-instance" },
+            body: JSON.stringify({ type: "devices.request" }),
+          });
+          assert.equal(wrongInstance.status, 409);
+          assert.equal((await wrongInstance.json()).code, "local_identity_mismatch");
+          return baseUrl;
+        }
+      } catch (error) {
+        if (error?.code === "ERR_ASSERTION") throw error;
+      }
     }
     if (runtime.exitCode !== null) throw new Error(`Rust Runtime exited early:\n${output}`);
     await new Promise((resolveDelay) => setTimeout(resolveDelay, 25));
@@ -256,6 +289,14 @@ async function verifyWriteFlow(baseUrl, credentials) {
   const bridge = await connect(baseUrl, credentials);
   const snapshot = await bridge.next((message) => message.type === "session.snapshot");
   assert.equal(snapshot.snapshot.sessions.some((session) => session.id === "session-snapshot"), true);
+
+  bridge.send({ type: "history.search", requestId: "encrypted-history", query: "Snapshot 已兼容", kind: "result", limit: 30 });
+  const history = await bridge.next((message) => message.type === "history.page" && message.page.requestId === "encrypted-history");
+  assert.equal(history.page.hostId, snapshot.snapshot.host.id);
+  assert.equal(history.page.items.length, 1);
+  assert.equal(history.page.items[0].title, "Snapshot 已兼容");
+
+  await verifyArtifactDelivery({ repositoryRoot, temporaryRoot, workspacePath, baseUrl, credentials, bridge });
 
   const trustCommand = {
     type: "trust.policy.update",
@@ -466,9 +507,36 @@ async function verifyWriteFlow(baseUrl, credentials) {
   assert.equal(codexSession.status, "idle");
 
   bridge.send({ type: "snapshot.request", afterSequence: 0 });
-  const persisted = await bridge.next((message) => message.type === "session.snapshot");
+  // Change notifications may leave older snapshots in the test inbox. Await
+  // the authoritative state, rather than interpreting an old broadcast as the
+  // reply to this request. SQLite is independently checked after shutdown.
+  const persisted = await bridge.next((message) => message.type === "session.snapshot"
+    && message.snapshot.taskPreferences.some((item) => item.sessionId === "session-snapshot" && item.pinnedAt === null));
   const preference = persisted.snapshot.taskPreferences.find((item) => item.sessionId === "session-snapshot");
   assert.equal(preference.pinnedAt, null);
+}
+
+async function verifyDeltaFlow(baseUrl, credentials) {
+  const bridge = await connect(baseUrl, credentials);
+  const first = await bridge.next((message) => message.type === "session.snapshot");
+  const replica = new SnapshotReplica(first.snapshot.host.id);
+  assert.equal(replica.receive(first).negotiateDelta, true);
+  bridge.send({ type: "snapshot.request", acceptDelta: true });
+  const baseline = await bridge.next((message) => message.type === "session.snapshot");
+  assert.ok(replica.receive(baseline));
+  for (const pinned of [true, false]) {
+    bridge.send({ type: "task.pin", sessionId: "session-snapshot", pinned, idempotencyKey: `delta-pin-${pinned}` });
+    let found = false;
+    for (let attempt = 0; attempt < 20 && !found; attempt += 1) {
+      const message = await bridge.next((item) => ["session.snapshot", "snapshot.delta"].includes(item.type));
+      const applied = replica.receive(message);
+      assert.ok(applied, "The client must accept every ordered server update");
+      const preference = applied.message.snapshot.taskPreferences.find((item) => item.sessionId === "session-snapshot");
+      found = Boolean(preference?.pinnedAt) === pinned;
+      if (found) assert.equal(message.type, "snapshot.delta", "Small mutations should use the negotiated delta transport");
+    }
+    assert.equal(found, true);
+  }
 }
 
 function verifyNodeReopen() {
@@ -512,6 +580,7 @@ function verifyNodeReopen() {
   assert.equal(preference.pinned_at, null);
   assert.equal(command.state, "canceled");
   assert.equal(command.error, null);
+  assert.ok(action, "The recovered action must remain available after retention cleanup");
   assert.equal(action.state, "expired");
   assert.equal(paired.count, 1);
   assert.equal(material.status, "ready");
@@ -546,6 +615,8 @@ try {
   const credentials = await pair(baseUrl);
   await verifyWriteFlow(baseUrl, credentials);
   socket.close();
+  await verifyDeltaFlow(baseUrl, credentials);
+  socket.close();
   const runtimeExited = new Promise((resolveExit) => runtime.once("exit", resolveExit));
   runtime.kill("SIGTERM");
   await runtimeExited;
@@ -564,6 +635,9 @@ try {
     approvalRoundTrip: true,
     restartRecovery: true,
     nodeReopen: true,
+    encryptedHistory: true,
+    realArtifactGallery: true,
+    negotiatedDelta: true,
   }));
 } finally {
   socket?.close();

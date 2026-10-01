@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { afterEach, describe, expect, it } from "vitest";
 import { applyHookChanges, codexPluginHooks, hookConfigChanges, zimloHookCommand } from "../src/hook-config.js";
 
-describe("Codex GUI plugin hooks", () => {
+describe("shared Codex plugin hooks", () => {
   let home: string | null = null;
 
   afterEach(async () => {
@@ -25,8 +25,8 @@ describe("Codex GUI plugin hooks", () => {
     expect(config.hooks.PreToolUse?.[0]?.hooks[0]?.statusMessage).toBe("Waiting for Zimlo input");
     expect(config.hooks.PermissionRequest?.[0]?.hooks[0]?.timeout).toBe(480);
     expect(config.hooks.PermissionRequest?.[0]?.matcher).toBe("*");
-    expect(config.hooks.SessionStart?.[0]?.hooks[0]?.statusMessage).toBeUndefined();
-    expect(config.hooks.SessionStart?.[0]?.hooks[0]?.command).toContain("--surface gui");
+    expect(config.hooks.SessionStart?.[0]?.hooks[0]?.statusMessage).toBe("Binding Zimlo session");
+    expect(config.hooks.SessionStart?.[0]?.hooks[0]?.command).toContain("--surface auto");
   });
 
   it("uses the same three-event set for CLI providers with provider-specific input tools", async () => {

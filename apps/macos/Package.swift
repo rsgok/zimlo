@@ -8,6 +8,7 @@ let package = Package(
         .executable(name: "Zimlo", targets: ["ZimloMac"]),
     ],
     dependencies: [
+        .package(path: "../../packages/swift/ZimloCore"),
         .package(url: "https://github.com/sparkle-project/Sparkle", exact: "2.9.2"),
     ],
     targets: [
@@ -15,6 +16,7 @@ let package = Package(
             name: "ZimloMac",
             dependencies: [
                 .product(name: "Sparkle", package: "Sparkle"),
+                .product(name: "ZimloCore", package: "ZimloCore"),
             ],
             path: "Sources/ZimloMac"
         ),

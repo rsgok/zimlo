@@ -143,7 +143,9 @@ async fn handle_agent_tool(
                 request.arguments.get("name").and_then(Value::as_str),
             )
             .await
-            .map(|material| json!({ "material_id": material.id, "kind": material.kind, "name": material.name })),
+            .map(|material| json!({ "material_id": material.id, "kind": material.kind, "name": material.name,
+                "sha256": material.sha256, "size_bytes": material.size_bytes, "mime_type": material.mime_type,
+                "status": material.status })),
             None => Err("material.publish 字段无效。".into()),
         }
     } else {

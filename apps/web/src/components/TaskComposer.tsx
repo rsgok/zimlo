@@ -4,6 +4,7 @@ import { agentAvatarStyle } from "./AgentsView";
 import { ProviderBadge } from "./ProviderBadge";
 import { AgentAvatar } from "./UserAvatar";
 import { useModalFocus } from "./useModalFocus";
+import { PromptTemplates } from "./PromptTemplates";
 import { VoiceInput } from "./VoiceInput";
 import { AppIcon } from "./AppIcon";
 import { formatMaterialSize, labelForKind, uploadMaterial, validateFile, type PreparedMaterial } from "../lib/materials";
@@ -230,6 +231,7 @@ export function TaskComposer({ workspaces, projects, initialProjectId = null, se
           </div>}
           <section className="composer-brief" aria-label={session ? "回复" : "任务内容"}>
             {!session && <div className="composer-field-heading"><strong>任务内容</strong><span>{text.trim() ? "草稿已保存" : "草稿自动保存"}</span></div>}
+            <PromptTemplates text={text} onSelect={(value) => setText((current) => current ? `${current}\n\n${value}` : value)} />
             <div className="composer-input-row">
               <input ref={attachmentInput} type="file" multiple hidden accept="image/jpeg,image/png,image/webp,image/heic,image/heif,video/mp4,video/quicktime,video/x-m4v,application/pdf,text/plain,text/markdown,text/csv,application/json,.doc,.docx,.xls,.xlsx,.ppt,.pptx" onChange={(event) => { void addFiles([...event.target.files ?? []]); event.currentTarget.value = ""; }} />
               <button className="composer-attach-button" type="button" onClick={() => attachmentInput.current?.click()} disabled={materials.length >= 10} aria-label="添加附件" title="添加附件">

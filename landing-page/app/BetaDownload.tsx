@@ -57,11 +57,12 @@ export function BetaDownload() {
   const load = useCallback((signal?: AbortSignal) => {
     return fetch(RELEASE_MANIFEST_URL, { cache: "no-store", signal })
       .then(async (response) => {
-        if (!response.ok) return { status: "closed" } as const;
+        if (response.status === 404 || response.status === 410) return { status: "closed" } as const;
+        if (!response.ok) throw new Error("release_unavailable");
         const value: unknown = await response.json().catch(() => null);
         return isMacRelease(value)
           ? { status: "ready", release: value } as const
-          : { status: "closed" } as const;
+          : { status: "error" } as const;
       })
       .then((next) => {
         if (!signal?.aborted) setState(next);
@@ -114,14 +115,14 @@ export function BetaDownload() {
             </a>
           </>
         )}
-        <a className="button button--dark" href="#demo">See real cards ↓</a>
+        <a className="button button--dark" href="#demo">Explore sample cards ↓</a>
       </div>
       <p className="beta-release-note">
         {state.status === "ready"
           ? `Zimlo ${state.release.version} · Apple silicon or Intel · macOS ${state.release.minimumSystemVersion}+`
           : state.status === "error"
             ? "Could not reach the release server. Check your connection and retry."
-            : "Signed Mac download and iPhone TestFlight access will appear here when the Beta opens."}
+            : "Signed Mac downloads appear here when a release is available. iPhone access is listed separately above."}
       </p>
     </>
   );

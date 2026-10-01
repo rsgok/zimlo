@@ -1,6 +1,7 @@
 import Combine
 import Foundation
 import SwiftUI
+import ZimloCore
 import UIKit
 import UserNotifications
 
@@ -79,6 +80,8 @@ enum NotificationDeviceRevocationRules {
 @MainActor
 final class AppModel: ObservableObject {
     let bridge = BridgeClient()
+    let history = HistoryRequestBroker()
+    private var firstSnapshots: Set<String> = []
 
     @Published var snapshot: Snapshot
     @Published var snapshotSavedAt: Date?
@@ -102,7 +105,7 @@ final class AppModel: ObservableObject {
     @Published private(set) var pendingRouteSessionId: String?
 
     private var bridgeObserver: AnyCancellable?
-    private var hostSnapshots: [String: Snapshot] = [:]
+    var hostSnapshots: [String: Snapshot] = [:]
     @Published private var outbox: [OutboxEntry] = []
     private var outboxRetryTask: Task<Void, Never>?
     private var snapshotSaveTask: Task<Void, Never>?
@@ -122,7 +125,7 @@ final class AppModel: ObservableObject {
             from: UserDefaults.standard.data(forKey: outboxKey) ?? Data()
         )) ?? []
         bridgeObserver = bridge.objectWillChange.sink { [weak self] _ in self?.objectWillChange.send() }
-        bridge.onMessage = { [weak self] hostId, message in self?.apply(message, hostId: hostId) }
+        bridge.onMessage = { [weak self] hostId, message in self?.receive(message, hostId: hostId) }
         NotificationManager.shared.onRegistration = { [weak self] token, publicKey in
             guard let self else { return }
             _ = self.sendDurableToAll(ClientCommand(type: "notification.device.register", [
@@ -817,7 +820,7 @@ final class AppModel: ObservableObject {
             return false
         }
         let sent = bridge.send(command)
-        if OutboxFeedbackRules.userAuthoredTypes.contains(command.type) { Haptics.persisted() }
+        if OutboxFeedbackRules.userAuthoredTypes.contains(command.type) { Haptics.persisted(); ExperienceMetrics.shared.record(.commandSaved) }
         if let notice = OutboxFeedbackRules.queuedNotice(commandType: command.type, sent: sent) {
             showNotice(notice)
         }
@@ -883,6 +886,7 @@ final class AppModel: ObservableObject {
     }
 
     private func acknowledge(_ message: ServerEnvelope, hostId: String) {
+        let previousEntries = outbox
         let previousCount = outbox.count
         outbox.removeAll { entry in
             if let commandHostId = entry.command.values["hostId"]?.stringValue, commandHostId != hostId { return false }
@@ -946,7 +950,17 @@ final class AppModel: ObservableObject {
             default: return false
             }
         }
-        if outbox.count != previousCount { persistOutbox() }
+        if outbox.count != previousCount, persistOutbox() {
+            for entry in previousEntries where !outbox.contains(where: { $0.id == entry.id }) && ["task.create", "session.message"].contains(entry.command.type) {
+                ExperienceMetrics.shared.record(.commandReceived, milliseconds: max(0, Date().timeIntervalSince(entry.enqueuedAt.zimloDate) * 1000))
+            }
+        }
+    }
+
+    private func receive(_ message: ServerEnvelope, hostId: String) {
+        if message.type == "history.page", let page = message.page, page.hostId == hostId { history.receive(page); return }
+        if message.type == "history.error", let id = message.requestId { history.fail(id: id, hostId: hostId, message: message.message ?? "历史检索失败，请重试。"); return }
+        apply(message, hostId: hostId)
     }
 
     private func apply(_ incoming: ServerEnvelope, hostId: String) {
@@ -976,10 +990,11 @@ final class AppModel: ObservableObject {
             }
         }
         acknowledge(message, hostId: hostId)
-        if approvalConfirmed { Haptics.serverConfirmed() }
+        if approvalConfirmed { Haptics.serverConfirmed(); ExperienceMetrics.shared.record(.approvalReceived) }
         switch message.type {
         case "session.snapshot":
             if var snapshot = message.snapshot {
+                ExperienceMetrics.shared.record(firstSnapshots.insert(hostId).inserted ? .firstSnapshot : .snapshotRefresh)
                 snapshot = scoped(snapshot, hostId: hostId)
                 hostSnapshots[hostId] = snapshot
                 snapshot = mergeHostSnapshots()
@@ -1091,90 +1106,6 @@ final class AppModel: ObservableObject {
             snapshot = mergeHostSnapshots()
         }
         if snapshotChanged || shouldRefreshSnapshotCache { scheduleSnapshotSave() }
-    }
-
-    private func captureHostIncrementalState(hostId: String, messageType: String) {
-        var local = hostSnapshots[hostId] ?? scoped(.empty, hostId: hostId)
-        local.host = local.host ?? bridge.hosts.first(where: { $0.id == hostId })?.host
-        local.projects = snapshot.projects.filter { $0.hostId == hostId }
-        local.sessions = snapshot.sessions.filter { $0.hostId == hostId }
-        local.posts = snapshot.posts.filter { $0.hostId == hostId }
-        local.tasks = snapshot.tasks.filter { $0.hostId == hostId }
-        local.commands = snapshot.commands.filter { $0.hostId == hostId }
-        local.materials = snapshot.materials.filter { $0.hostId == hostId }
-        local.workspaces = snapshot.workspaces.filter { $0.hostId == hostId }
-        local.actions = snapshot.actions.filter { $0.hostId == hostId }
-        let sessionIds = Set(local.sessions.map(\.id))
-        local.taskPreferences = snapshot.taskPreferences.filter { $0.hostId == hostId }
-        local.trustPolicies = snapshot.trustPolicies.filter { $0.hostId == hostId }
-        local.trustAudit = snapshot.trustAudit.filter { $0.hostId == hostId }
-        local.seenPostIds = snapshot.seenPostIds
-        local.dismissedFeedItemIds = snapshot.dismissedFeedItemIds
-        local.taskTimelineCursors = snapshot.taskTimelineCursors.filter { sessionIds.contains($0.key) }
-        if messageType == "user.profile.updated" { local.userProfile = snapshot.userProfile }
-        if messageType == "notification.settings.updated" { local.notificationSettings = snapshot.notificationSettings }
-        if messageType == "notification.device.updated" { local.pushDevices = snapshot.pushDevices }
-        if messageType == "lan.approvals.changed" { local.lanApprovalsEnabled = snapshot.lanApprovalsEnabled }
-        hostSnapshots[hostId] = local
-    }
-
-    private func scoped(_ value: Snapshot, hostId: String) -> Snapshot {
-        var value = value
-        value.host = value.host ?? bridge.hosts.first(where: { $0.id == hostId })?.host
-        value.projects = value.projects.map { item in var item = item; item.hostId = hostId; return item }
-        value.sessions = value.sessions.map { item in var item = item; item.hostId = hostId; return item }
-        value.posts = value.posts.map { item in var item = item; item.hostId = hostId; return item }
-        value.tasks = value.tasks.map { item in var item = item; item.hostId = hostId; return item }
-        value.commands = value.commands.map { item in var item = item; item.hostId = hostId; return item }
-        value.materials = value.materials.map { item in var item = item; item.hostId = hostId; return item }
-        value.workspaces = value.workspaces.map { item in var item = item; item.hostId = hostId; return item }
-        value.actions = value.actions.map { item in var item = item; item.hostId = hostId; return item }
-        value.taskPreferences = value.taskPreferences.map { item in var item = item; item.hostId = hostId; return item }
-        value.trustPolicies = value.trustPolicies.map { item in var item = item; item.hostId = hostId; return item }
-        value.trustAudit = value.trustAudit.map { item in var item = item; item.hostId = hostId; return item }
-        return value
-    }
-
-    private func mergeHostSnapshots() -> Snapshot {
-        let values = hostSnapshots.values.sorted {
-            ($0.host?.lastSeenAt ?? "") > ($1.host?.lastSeenAt ?? "")
-        }
-        guard let primary = values.first else { return snapshot }
-        let newestProfile = values.max { $0.userProfile.updatedAt < $1.userProfile.updatedAt }?.userProfile ?? primary.userProfile
-        let newestNotifications = values.max { $0.notificationSettings.updatedAt < $1.notificationSettings.updatedAt }?.notificationSettings ?? primary.notificationSettings
-        func unique(_ values: [String]) -> [String] { Array(Set(values)).sorted() }
-        let cursors = values.reduce(into: [String: String]()) { result, value in
-            result.merge(value.taskTimelineCursors) { _, incoming in incoming }
-        }
-        return Snapshot(
-            host: primary.host,
-            userProfile: newestProfile,
-            projects: values.flatMap(\.projects),
-            sessions: values.flatMap(\.sessions),
-            posts: values.flatMap(\.posts).sorted { $0.createdAt > $1.createdAt },
-            tasks: values.flatMap(\.tasks),
-            commands: values.flatMap(\.commands),
-            materials: values.flatMap(\.materials),
-            workspaces: values.flatMap(\.workspaces),
-            seenPostIds: unique(values.flatMap(\.seenPostIds)),
-            dismissedFeedItemIds: unique(values.flatMap(\.dismissedFeedItemIds)),
-            taskTimelineCursors: cursors,
-            taskPreferences: values.flatMap(\.taskPreferences),
-            actions: values.flatMap(\.actions),
-            trustPolicies: values.flatMap(\.trustPolicies),
-            trustAudit: values.flatMap(\.trustAudit),
-            notificationSettings: newestNotifications,
-            pushDevices: values.flatMap(\.pushDevices),
-            features: FeatureCapabilities(
-                projectTrustPolicy: values.contains { $0.features.projectTrustPolicy },
-                pushNotifications: values.contains { $0.features.pushNotifications },
-                remoteSync: values.contains { $0.features.remoteSync },
-                multiHost: true
-            ),
-            sequence: values.map(\.sequence).max() ?? 0,
-            lanApprovalsEnabled: values.contains { $0.lanApprovalsEnabled },
-            trustManagementEnabled: values.contains { $0.trustManagementEnabled }
-        )
     }
 
     private func routed(_ input: ClientCommand) -> ClientCommand {

@@ -3,9 +3,9 @@ import { constants } from "node:fs";
 import { access, copyFile, cp, mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
-import { promisify } from "node:util";
+import { isDeepStrictEqual, promisify } from "node:util";
 import { resolveAgentCommand } from "./agent-command.js";
-import { codexPluginHooks } from "./hook-config.js";
+import { applyHookChanges, codexPluginHooks, hookConfigChanges } from "./hook-config.js";
 import { integrationProbeCache, invalidateIntegrationProbes } from "./probe-cache.js";
 
 type JsonObject = Record<string, unknown>;
@@ -117,16 +117,24 @@ export function parseCodexRuntimePlugin(value: unknown): CodexRuntimePlugin {
   };
 }
 
+async function readCodexRuntime(command: string): Promise<CodexRuntimePlugin> {
+  const result = await execFileAsync(command, ["plugin", "list", "--json"], {
+    timeout: 10_000,
+    maxBuffer: 2 * 1024 * 1024,
+  });
+  const value: unknown = JSON.parse(result.stdout);
+  if (!isObject(value) || !Array.isArray(value.installed)) {
+    throw new Error("Codex 未返回有效的插件安装状态。");
+  }
+  return parseCodexRuntimePlugin(value);
+}
+
 async function inspectCodexRuntime(command: string): Promise<CodexRuntimePlugin> {
   // `codex plugin list --json` is the second subprocess the status poll used
   // to spawn every time; share the integration probe cache (10s, single-flight).
   return integrationProbeCache.get(`codex-runtime:${command}`, async () => {
     try {
-      const result = await execFileAsync(command, ["plugin", "list", "--json"], {
-        timeout: 10_000,
-        maxBuffer: 2 * 1024 * 1024,
-      });
-      return parseCodexRuntimePlugin(JSON.parse(result.stdout));
+      return await readCodexRuntime(command);
     } catch {
       return { installed: false, enabled: false, version: null };
     }
@@ -208,12 +216,15 @@ export async function installCodexPlugin(entrypoint: string, options: CodexPlugi
   const paths = codexPluginPaths(options.home);
   const sourceRoot = options.sourceRoot ?? bundledCodexPluginRoot(entrypoint);
   const nodePath = options.nodePath ?? process.execPath;
+  // Validate the legacy file before changing the plugin. Migration must never
+  // overwrite malformed user configuration or remove hooks before activation.
+  await hookConfigChanges(entrypoint, true, options.home, ["codex"]);
   await mkdir(paths.pluginsRoot, { recursive: true, mode: 0o700 });
   const temporary = join(paths.pluginsRoot, `.zimlo-install-${process.pid}-${Date.now()}`);
   const previous = join(paths.pluginsRoot, `.zimlo-previous-${process.pid}-${Date.now()}`);
   let movedPrevious = false;
   let installedNew = false;
-  const codexCommand = options.home === undefined && options.activateRuntime !== false
+  const codexCommand = (options.home === undefined || options.activateRuntime === true) && options.activateRuntime !== false
     ? await resolveAgentCommand("codex")
     : null;
   const runtimeBefore = codexCommand
@@ -247,6 +258,7 @@ export async function installCodexPlugin(entrypoint: string, options: CodexPlugi
       invalidateIntegrationProbes();
     }
   }
+  await applyHookChanges(await hookConfigChanges(entrypoint, true, options.home, ["codex"]));
   return inspectCodexPlugin(entrypoint, options);
 }
 
@@ -267,14 +279,18 @@ export async function inspectCodexPlugin(entrypoint: string, options: CodexPlugi
   const servers = isObject(mcp?.mcpServers) ? mcp.mcpServers : null;
   const server = servers && isObject(servers.zimlo) ? servers.zimlo : null;
   const args = server && Array.isArray(server.args) ? server.args : [];
+  const hooks = await readJson(join(paths.plugin, "hooks", "hooks.json"));
   const commandsCurrent = Boolean(server)
     && server?.command === nodePath
     && args[0] === entrypoint
-    && args.slice(1).join(" ") === "mcp --provider codex";
+    && args.slice(1).join(" ") === "mcp --provider codex"
+    && isDeepStrictEqual(hooks?.hooks, codexPluginHooks(entrypoint, nodePath).hooks);
+  const legacyChanges = await hookConfigChanges(entrypoint, true, options.home, ["codex"]);
+  const duplicateHooks = legacyChanges.some((change) => !isDeepStrictEqual(change.before, change.after));
   const versionCurrent = typeof manifest?.version === "string"
     && typeof bundledManifest?.version === "string"
     && manifest.version === bundledManifest.version;
-  const sourceReady = pluginPresent && marketplacePresent && commandsCurrent && versionCurrent;
+  const sourceReady = pluginPresent && marketplacePresent && commandsCurrent && versionCurrent && !duplicateHooks;
   const codexCommand = options.home === undefined ? await resolveAgentCommand("codex") : null;
   const runtime = codexCommand
     ? await inspectCodexRuntime(codexCommand)
@@ -285,11 +301,13 @@ export async function inspectCodexPlugin(entrypoint: string, options: CodexPlugi
     && runtime.version === bundledManifest.version;
   const installed = sourceReady && runtime.installed && runtime.enabled && runtimeVersionCurrent;
   const detail = installed
-    ? "Codex App 已启用 Zimlo；新任务会自动出现在 Feed。"
+    ? "Codex 桌面版与 CLI 共用 Zimlo 插件；请审核 hooks 并新建任务。"
     : !pluginPresent
       ? "未安装"
       : !marketplacePresent
         ? "插件文件存在，但 Personal marketplace 未注册"
+        : duplicateHooks
+          ? "发现重复的 Zimlo 用户级 hook，请重新安装插件以迁移。"
         : !commandsCurrent
           ? "插件命令指向旧版 CLI，需要重新安装"
           : !versionCurrent
@@ -316,6 +334,29 @@ export async function inspectCodexPlugin(entrypoint: string, options: CodexPlugi
 
 export async function uninstallCodexPlugin(options: CodexPluginOptions = {}): Promise<CodexPluginStatus> {
   const paths = codexPluginPaths(options.home);
+  const codexCommand = (options.home === undefined || options.activateRuntime === true) && options.activateRuntime !== false
+    ? await resolveAgentCommand("codex")
+    : null;
+  let runtimeRemovalError: unknown;
+  if (codexCommand) {
+    try {
+      await execFileAsync(codexCommand, ["plugin", "remove", PLUGIN_SELECTOR, "--json"], {
+        timeout: 15_000,
+        maxBuffer: 2 * 1024 * 1024,
+      });
+    } catch (error) {
+      // Removal can fail because the user already uninstalled the runtime
+      // plugin. Verify that uncached; otherwise report the failure after
+      // cleaning our source, so a broken CLI cannot strand local files.
+      try {
+        if ((await readCodexRuntime(codexCommand)).installed) runtimeRemovalError = error;
+      } catch {
+        runtimeRemovalError = error;
+      }
+    } finally {
+      invalidateIntegrationProbes();
+    }
+  }
   const marketplace = await readJson(paths.marketplace);
   if (marketplace) {
     const plugins = Array.isArray(marketplace.plugins) ? marketplace.plugins : [];
@@ -330,6 +371,11 @@ export async function uninstallCodexPlugin(options: CodexPluginOptions = {}): Pr
   const legacyManifest = await readJson(join(paths.legacyPlugin, ".codex-plugin", "plugin.json"));
   if (legacyManifest?.name === PLUGIN_NAME) await rm(paths.legacyPlugin, { recursive: true, force: true });
   invalidateIntegrationProbes();
+  if (runtimeRemovalError) {
+    throw new Error("Zimlo Personal 插件源已移除，但无法确认 Codex Runtime 中的插件已卸载；请在 Plugins 页面检查。", {
+      cause: runtimeRemovalError,
+    });
+  }
   return {
     installed: false,
     runtimeInstalled: false,

@@ -4,9 +4,9 @@
 [`ARCHITECTURE_AUDIT.md`](./ARCHITECTURE_AUDIT.md)。本文件描述当前运行时行为，审计文件描述
 代码组织方式与演进约束。
 
-## Codex GUI 集成
+## Codex 桌面版与 CLI 共享集成
 
-Codex GUI 不提供 CLI 的 `/hooks` 浏览器，因此 Zimlo 不再把用户级 `~/.codex/hooks.json` 当作 GUI 安装入口。`@zimlo/cli` 内置一个可物化的 Personal 插件模板：
+Codex 桌面版和 CLI 都会合并用户级与插件 hook，`--surface` 不是 Codex 的加载条件。Zimlo 使用单一来源：注册 Personal 插件后，两端共用插件中的三个 hook；没有插件的纯 CLI 安装才使用用户级配置。`@zimlo/cli` 内置一个可物化的 Personal 插件模板：
 
 ```text
 Zimlo Codex plugin
@@ -20,7 +20,7 @@ Zimlo Codex plugin
 
 Codex GUI 插件只安装 `SessionStart`、`PermissionRequest` 和仅匹配 `request_user_input` 的 `PreToolUse`；Claude 的结构化输入 matcher 为 `AskUserQuestion`。普通一轮、context compact 与 SessionEnd 都不触发 hook；用户输入、工具活动、文件修改、测试与结束状态由本地 transcript 增量恢复。MCP 进程会先探测 Unix Socket；Bridge 不存在时以 detached 本地进程自动启动，并在 4 秒内等待就绪。Session 绑定 hook 2.5 秒内 fail-open，只有审批与结构化输入会等待用户，所有 hook 都是确定性本地处理。
 
-用户级 hooks 仍服务 Codex CLI 与 Claude Code，不再作为 Codex GUI 的推荐路径，并使用相同的三个最小实时事件。旧版 `UserPromptSubmit` / `Stop` / `SessionEnd` / 全量 `PreToolUse` / `PostToolUse` 在升级时移除。Task Input 与过程状态由 transcript 提供，Feed 帖子必须由 Agent 在可审阅交付点使用 V3 结构化字段主动编辑。
+插件激活成功后，安装器备份并移除用户级配置中所有 Zimlo handler（包括旧版 `UserPromptSubmit` / `Stop` / `SessionEnd` / `PostToolUse`），保留其他 handler 与配置。插件接入存在时，CLI 安装和修复复用插件，不会再次添加用户级 hook；即使插件被停用，也不绕过用户选择添加另一套。插件与纯 CLI 的 hook 均使用 `--surface auto`，根据 TTY 和父进程链识别实际来源。SessionStart 显示 `Binding Zimlo session`。Task Input 与过程状态由 transcript 提供，Feed 帖子必须由 Agent 在可审阅交付点使用 V3 结构化字段主动编辑。
 
 ## 包边界
 
@@ -65,7 +65,7 @@ Bridge 启动时先读取进程快照，再扫描 transcript。活跃进程能�
 
 关联顺序是 provider session id、绝对 transcript 路径、PID 与启动时间、TTY/打开文件/父进程。cwd 与更新时间只参与弱证据评分。证据冲突时保留独立 session 并设置 `correlationUncertain`，同时关闭不安全的回复能力。
 
-`provider` 与 `surface` 是两个维度：provider 为 Codex/Claude，surface 为 GUI/CLI/managed/unknown。Codex GUI 插件与 Codex CLI hooks 写入明确 surface；Claude 的共享用户级 hook 根据 TTY 和 Claude Desktop 父进程链识别 GUI/CLI，证据不足时保留 unknown；app-server 与 controlled runner 写入 managed。未知来源不能覆盖已经确认的 surface，同一个 provider session 切换界面后仍属于同一 Task Detail。
+`provider` 与 `surface` 是两个维度：provider 为 Codex/Claude，surface 为 GUI/CLI/managed/unknown。Codex 与 Claude 的共享 hook 根据 TTY 和桌面应用父进程链识别 GUI/CLI；无 TTY 的 Codex CLI 可由明确的可执行文件识别，来源不明的 app-server 保留 unknown；app-server 与 controlled runner 写入 managed。未知来源不能覆盖已经确认的 surface，同一个 provider session 切换界面后仍属于同一 Task Detail。
 
 ## Project、Session 与卡片
 

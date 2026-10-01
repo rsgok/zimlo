@@ -765,6 +765,11 @@ fn validate_content(connection: &Connection, value: &Value) -> Result<Value, Sto
             for id in ids {
                 validate_material(connection, id.as_str(), &["image"])?;
             }
+            let unique: std::collections::HashSet<_> =
+                ids.iter().filter_map(Value::as_str).collect();
+            if unique.len() != ids.len() {
+                return Err(StoreError::InvalidMutation);
+            }
             Ok(())
         }
         "video" => {

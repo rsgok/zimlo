@@ -62,3 +62,9 @@ If Zimlo is unavailable, try once and continue the coding task. Never claim a po
 ## Media
 
 For a final image, video, PDF, or document inside the workspace, call `material.publish`, then reference its `material_id` from `feed.post.content`. Never paste binary data, base64, raw file contents, or local paths into card copy.
+
+For an image delivery, publish each actual output file first and wait for every successful receipt. Use distinct returned IDs in `content: {type: "image_album", materialIds: [...]}` in the intended viewing order; the first image is the cover. Do not repeat the same ID to claim multiple outputs, or represent CSS crops as separate files. If a file fails to publish, retry that file or explicitly describe the partial delivery; do not announce the complete set as ready.
+
+Prefer `mediaPlacement: "hero"` with concise headline/takeaway for visual results. Let the app render the gallery. Keep source files attached to the same task, and publish new file IDs when their bytes change. Use video poster/document cover IDs only when those actual files exist. Text-only work should remain a readable text card, without unrelated generated decoration.
+
+For visual results, write the headline about the actual outcome or design choice, not attachment counts or “files are ready”. Put file names and technical versions in material metadata. The iPhone gallery uses horizontal paging without thumbnails; avoid thumbnail instructions in card copy.

@@ -1,3 +1,4 @@
+import { PhoneAccess } from "./PhoneAccess";
 import { BetaDownload } from "./BetaDownload";
 import { ArtifactShowcase, FeatureTour, FlagshipExperience, HeroPhone } from "./IOSShowcase";
 import { MotionController } from "./MotionController";
@@ -5,14 +6,14 @@ import { WaitlistForm } from "./WaitlistForm";
 import { isWaitlistLive } from "./waitlist-live";
 
 const capabilities = [
-  ["01", "TikTok-style Feed", "Full-screen, one-card paging for only the results, decisions, failures, and approvals that deserve you."],
-  ["02", "X-style Task Profile", "Task input, current state, latest conclusion, next action, and the human–Agent conversation in one session profile."],
+  ["01", "One result at a time", "Full-screen, one-card paging for only the results, decisions, failures, and approvals that deserve you."],
+  ["02", "Complete task context", "Task input, current state, latest conclusion, next action, and the human–Agent conversation in one session profile."],
   ["03", "Rich Artifact viewers", "Image albums, inline video, readable Markdown and text, embedded PDFs, source files, and Quick Look."],
   ["04", "Approvals + input", "Review purpose, target, source, and risk; approve, decline, or answer the Agent without leaving the task."],
   ["05", "Create + continue", "Start new work or reply in context with text, voice, photos, video, PDFs, and working files."],
   ["06", "Task management", "Search, filter, pin, archive, retry, resume, and group sessions by what needs you next."],
   ["07", "Project Agents", "Keep project identity, avatar, workspace, default runtime, and active tasks together."],
-  ["08", "Multi-Mac sources", "Bring Codex and Claude Code from every Mac into one iPhone while preserving the correct source."],
+  ["08", "Multiple source devices", "Bring Codex and Claude Code from your Macs and Linux servers into one iPhone while preserving the correct source."],
   ["09", "Offline outbox", "Draft recovery, persistent queues, reconnect retries, and idempotency protect every mobile action."],
   ["10", "Secure pairing", "Scan a QR code, keep device keys locally, and route only end-to-end encrypted content through the cloud."],
   ["11", "Smart notifications", "Open the exact task from a notification and keep a recoverable route when a session is still syncing."],
@@ -51,15 +52,16 @@ export default async function Home() {
         <div className="ios-hero-copy">
           <div className="ios-kicker"><i /> ZIMLO FOR IPHONE</div>
           <h1>Your Agents<br />keep working.<br /><em>Your iPhone</em><br />keeps you in control.</h1>
-          <p>A mobile attention layer for Codex and Claude Code—built around a TikTok-style main Feed and an X-style profile for every session.</p>
+          <p>See what needs your attention, approve a decision, read a result, or send the next instruction. Your Agents keep running on your Mac or Linux device.</p>
           {waitlistLive ? (
             <WaitlistForm source="hero" tone="dark" />
           ) : (
             <div className="ios-hero-actions">
-              <a className="ios-button ios-button--acid" href="#beta">Join the iPhone Beta <span aria-hidden="true">↗</span></a>
+              <a className="ios-button ios-button--acid" href="#beta">Check iPhone access <span aria-hidden="true">↗</span></a>
               <a className="ios-button ios-button--line" href="#flagship">See the experience <span aria-hidden="true">↓</span></a>
             </div>
           )}
+          <p className="ios-target-note">Experience goals, not measured speed guarantees.</p>
           <div className="ios-speed-promise" aria-label="Core mobile experience targets">
             <span><strong>3s</strong><small>know what matters</small></span>
             <span><strong>10s</strong><small>review or act</small></span>
@@ -67,13 +69,9 @@ export default async function Home() {
           </div>
         </div>
 
-        <div className="ios-hero-stage" aria-label="Zimlo running on iPhone">
-          <div className="ios-hero-halo" aria-hidden="true"><i /><i /><i /></div>
-          <div className="ios-hero-source ios-hero-source--one" aria-hidden="true"><i /> CODEX <small>MacBook Pro</small></div>
-          <div className="ios-hero-source ios-hero-source--two" aria-hidden="true"><i /> CLAUDE CODE <small>Mac Studio</small></div>
+        <div className="ios-hero-stage" aria-label="Zimlo task example">
           <HeroPhone />
-          <span className="ios-hero-note ios-hero-note--one">FULL-SCREEN FEED <i>↗</i></span>
-          <span className="ios-hero-note ios-hero-note--two">ARTIFACTS INSIDE <i>04</i></span>
+          <p className="ios-example-caption">Illustrative task · sample content</p>
         </div>
         <div className="ios-hero-principle"><span>IPHONE RUNS THE EXPERIENCE</span><i>✦</i><span>MACS RUN THE WORK</span></div>
       </section>
@@ -132,9 +130,9 @@ export default async function Home() {
 
       <section className="ios-routing" id="privacy">
         <div className="ios-routing-copy" data-reveal>
-          <span>MULTIPLE MACS · ONE IPHONE</span>
-          <h2>The phone is the product.<br /><em>Macs are its sources.</em></h2>
-          <p>Each Mac remains the source of truth for its own Agent work. Zimlo keeps machine, project, runtime, and session identity intact as everything arrives on one iPhone.</p>
+          <span>MAC + LINUX · ONE IPHONE</span>
+          <h2>The phone is the product.<br /><em>Your devices run the work.</em></h2>
+          <p>Each Mac or Linux server remains the source of truth for its own Agent work. Zimlo keeps machine, project, runtime, and session identity intact as everything arrives on one iPhone.</p>
           <div><b>END-TO-END ENCRYPTED</b><b>NO REMOTE SHELL</b><b>NO READABLE CLOUD CONTENT</b></div>
         </div>
         <div className="ios-routing-map" data-reveal aria-label="Multiple Mac Agent sources connecting securely to one iPhone">
@@ -149,7 +147,7 @@ export default async function Home() {
       </section>
 
       <section className="ios-setup" id="setup">
-        <div className="ios-section-copy" data-reveal><span>ZERO-COMMAND ONBOARDING</span><h2>Three steps.<br />Then leave the desk.</h2></div>
+        <div className="ios-section-copy" data-reveal><span>A CLEAR FIRST CONNECTION</span><h2>Three steps.<br />Then leave the desk.</h2></div>
         <div>{setupSteps.map(([number, title, body]) => <article data-reveal key={number}><span>{number}</span><h3>{title}</h3><p>{body}</p><i>→</i></article>)}</div>
       </section>
 
@@ -158,8 +156,10 @@ export default async function Home() {
         <BrandMark />
         <span>IPHONE-FIRST BETA</span>
         <h2>Put your Agents<br />in your pocket.</h2>
-        <p>Install the lightweight Mac companion, pair your iPhone, and keep the work moving from anywhere.</p>
-        {waitlistLive ? <WaitlistForm source="beta" tone="acid" /> : <BetaDownload />}
+        <p>Get iPhone access, connect your source device, then confirm your first operation.</p>
+        <PhoneAccess />
+        <BetaDownload />
+        {waitlistLive && <WaitlistForm source="beta" tone="acid" />}
       </section>
 
       <footer className="ios-footer">

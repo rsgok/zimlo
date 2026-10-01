@@ -14,10 +14,17 @@ final class NativeSpeechRecognizer: ObservableObject {
     @Published private(set) var state: State = .idle
     @Published private(set) var transcript = ""
 
-    private let recognizer = SFSpeechRecognizer(locale: Locale(identifier: "zh-CN"))
-    private let audioEngine = AVAudioEngine()
+    private lazy var recognizer = SFSpeechRecognizer(locale: Locale(identifier: "zh-CN"))
+    private let makeAudioEngine: () -> AVAudioEngine
+    private var audioEngine: AVAudioEngine?
+    private var tappedInput: AVAudioInputNode?
     private var request: SFSpeechAudioBufferRecognitionRequest?
     private var task: SFSpeechRecognitionTask?
+    private var generation = UUID()
+
+    init(makeAudioEngine: @escaping () -> AVAudioEngine = { AVAudioEngine() }) {
+        self.makeAudioEngine = makeAudioEngine
+    }
 
     var isListening: Bool { state == .listening }
 
@@ -28,19 +35,27 @@ final class NativeSpeechRecognizer: ObservableObject {
 
     func start() async {
         stop()
+        let current = generation
         do {
             try await authorize()
-            try beginRecognition()
+            guard current == generation else { return }
+            try beginRecognition(generation: current)
             state = .listening
         } catch {
+            guard current == generation else { return }
             stop()
             state = .failed(error.localizedDescription)
         }
     }
 
     func stop() {
-        if audioEngine.isRunning { audioEngine.stop() }
-        audioEngine.inputNode.removeTap(onBus: 0)
+        generation = UUID()
+        // Closing a text-only composer must not initialize microphone hardware.
+        // Resolving inputNode here can block AppKit while CoreAudio opens a device.
+        if audioEngine?.isRunning == true { audioEngine?.stop() }
+        tappedInput?.removeTap(onBus: 0)
+        tappedInput = nil
+        audioEngine = nil
         request?.endAudio()
         task?.cancel()
         request = nil
@@ -64,12 +79,14 @@ final class NativeSpeechRecognizer: ObservableObject {
         }
     }
 
-    private func beginRecognition() throws {
+    private func beginRecognition(generation current: UUID) throws {
         transcript = ""
         let request = SFSpeechAudioBufferRecognitionRequest()
         request.shouldReportPartialResults = true
         self.request = request
 
+        let audioEngine = makeAudioEngine()
+        self.audioEngine = audioEngine
         let input = audioEngine.inputNode
         let format = input.outputFormat(forBus: 0)
         guard format.sampleRate > 0, format.channelCount > 0 else {
@@ -78,11 +95,12 @@ final class NativeSpeechRecognizer: ObservableObject {
         input.installTap(onBus: 0, bufferSize: 1_024, format: format) { buffer, _ in
             request.append(buffer)
         }
+        tappedInput = input
         audioEngine.prepare()
         try audioEngine.start()
         task = recognizer?.recognitionTask(with: request) { [weak self] result, error in
             Task { @MainActor in
-                guard let self else { return }
+                guard let self, self.generation == current else { return }
                 if let result {
                     self.transcript = result.bestTranscription.formattedString
                     if result.isFinal { self.stop() }

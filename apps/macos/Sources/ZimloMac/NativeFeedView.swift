@@ -4,21 +4,9 @@ struct NativeFeedView: View {
     @ObservedObject var store: NativeAppStore
     let scrollToLatestRequest: Int
 
-    private var posts: [FeedPost] {
-        let dismissed = Set(store.snapshot.dismissedFeedItemIds)
-        let seen = Set(store.snapshot.seenPostIds)
-        return store.snapshot.posts
-            .filter { !dismissed.contains($0.id) }
-            .sorted { left, right in
-                let leftAction = left.sessionId.flatMap(store.snapshot.pendingAction(for:)) != nil
-                let rightAction = right.sessionId.flatMap(store.snapshot.pendingAction(for:)) != nil
-                if leftAction != rightAction { return leftAction }
-                let leftUnread = !seen.contains(left.id)
-                let rightUnread = !seen.contains(right.id)
-                if leftUnread != rightUnread { return leftUnread }
-                return left.createdAt > right.createdAt
-            }
-    }
+    var onSetup: () -> Void = {}
+    @State private var sequence = NativeFeedSequence()
+    @State private var visibleID: String?
 
     var body: some View {
         GeometryReader { geometry in
@@ -26,26 +14,33 @@ struct NativeFeedView: View {
                 ScrollViewReader { proxy in
                     ScrollView {
                         LazyVStack(alignment: .leading, spacing: 0) {
-                            if posts.isEmpty {
-                                ContentUnavailableView("All Caught Up", systemImage: "checkmark.circle.fill")
+                            if sequence.entries.isEmpty {
+                                ContentUnavailableView {
+                                    Label(store.snapshot.workspaces.isEmpty ? "先接入一个项目" : "暂时没有需要你处理的事", systemImage: "checkmark.circle.fill")
+                                } description: {
+                                    Text(store.snapshot.workspaces.isEmpty ? "在 Codex 或 Claude Code 中打开项目并开始任务，Zimlo 会自动发现。" : "Agent 的结果和需要你决定的操作会出现在这里。")
+                                } actions: {
+                                    if store.snapshot.workspaces.isEmpty { Button("检查 Agent 接入", action: onSetup) }
+                                }
                                     .frame(maxWidth: .infinity)
                                     .frame(height: geometry.size.height)
                                     .foregroundStyle(NativeTheme.muted)
                                     .id(NativeFeedScrollAnchor.latest)
                             } else {
-                                ForEach(posts) { post in
-                                    NativeFeedCard(
-                                        store: store,
-                                        post: post,
-                                        minimumHeight: NativeFeedLayout.cardMinimumHeight(
-                                            scrollViewportHeight: geometry.size.height
-                                        )
-                                    )
+                                ForEach(sequence.entries) { entry in
+                                    Group {
+                                        switch entry {
+                                        case .post(let post):
+                                            NativeFeedCard(store: store, post: post, minimumHeight: NativeFeedLayout.cardMinimumHeight(scrollViewportHeight: geometry.size.height))
+                                        case .action(let action):
+                                            NativeFeedActionPage(store: store, action: action)
+                                        case .command(let command):
+                                            NativeFeedCommandPage(store: store, command: command)
+                                        }
+                                    }
                                     .padding(.vertical, NativeFeedLayout.edgeInset)
-                                    // The scroll target occupies exactly one viewport;
-                                    // the shorter card is centered inside that page.
-                                    .frame(height: geometry.size.height, alignment: .center)
-                                    .id(post.id)
+                                    .frame(minHeight: geometry.size.height, alignment: .center)
+                                    .id(entry.id)
                                 }
                             }
                         }
@@ -54,13 +49,44 @@ struct NativeFeedView: View {
                         .frame(maxWidth: NativeFeedLayout.maximumCardWidth, alignment: .leading)
                         .frame(maxWidth: .infinity, alignment: .center)
                     }
+                    .scrollPosition(id: $visibleID)
                     .scrollIndicators(.hidden)
+                    .onChange(of: store.feedSnapshot, initial: true) { _, snapshot in
+                        let previous = visibleID
+                        let oldIDs = sequence.entries.map(\.id)
+                        sequence.reconcile(snapshot)
+                        guard oldIDs != sequence.entries.map(\.id) else { return }
+                        if let previous, sequence.entries.contains(where: { $0.id == previous }) {
+                            visibleID = previous
+                            proxy.scrollTo(previous, anchor: .top)
+                        } else { visibleID = sequence.entries.first?.id }
+                    }
+                    .onChange(of: visibleID) { old, new in
+                        if old != nil, old != new { sequence.clearFresh() }
+                    }
+                    .task(id: visibleID) {
+                        guard let id = visibleID,
+                              let entry = sequence.entries.first(where: { $0.id == id }),
+                              case .post(let post) = entry else { return }
+                        try? await Task.sleep(for: .seconds(1))
+                        guard !Task.isCancelled, visibleID == id else { return }
+                        await store.markFeedSeen(post.id)
+                    }
+                    .overlay(alignment: .top) {
+                        if !sequence.fresh.isEmpty {
+                            Button("有新内容 · \(sequence.fresh.count)") {
+                                if let id = sequence.fresh.first { proxy.scrollTo(id, anchor: .top); visibleID = id }
+                                sequence.clearFresh()
+                            }
+                            .buttonStyle(.borderedProminent).padding(.top, 8)
+                        }
+                    }
                     // Snap each trackpad or wheel gesture with the chosen card centered
                     // in the viewport instead of pinning its top edge to the window.
                     .nativeFeedScrollTargetBehavior()
                     .onChange(of: scrollToLatestRequest) { _, _ in
                         withAnimation(.snappy(duration: 0.24)) {
-                            if let latestID = posts.first?.id {
+                            if let latestID = sequence.entries.first?.id {
                                 proxy.scrollTo(latestID, anchor: .center)
                             } else {
                                 proxy.scrollTo(NativeFeedScrollAnchor.latest, anchor: .top)
@@ -120,7 +146,7 @@ enum NativeFeedArchiveGesture {
     }
 }
 
-private struct NativeFeedCard: View {
+struct NativeFeedCard: View {
     @ObservedObject var store: NativeAppStore
     let post: FeedPost
     let minimumHeight: CGFloat
@@ -170,7 +196,7 @@ private struct NativeFeedCard: View {
         ZStack(alignment: .trailing) {
             archiveBackground
             Group {
-                if let sessionID = post.sessionId {
+                if let sessionID = post.sessionId, mediaContent?.type != "image_album" {
                     NavigationLink(value: NativeRoute.task(sessionID)) { cardBody }
                         .buttonStyle(.plain)
                 } else {
@@ -181,19 +207,13 @@ private struct NativeFeedCard: View {
             .opacity(isArchiving ? 0.72 : 1)
         }
         .clipShape(RoundedRectangle(cornerRadius: 19, style: .continuous))
-        .highPriorityGesture(archiveGesture)
+        .highPriorityGesture(archiveGesture, including: mediaContent?.type == "image_album" ? .none : .all)
         .accessibilityAction(named: "归档") { archive() }
         .onAppear {
             // Lazy stacks may reuse a card's view state if an archive is undone
             // before the row is fully discarded. Always re-enter at rest.
             dragOffset = 0
             isArchiving = false
-        }
-        .task(id: post.id) {
-            guard isUnread else { return }
-            try? await Task.sleep(for: .milliseconds(900))
-            guard !Task.isCancelled else { return }
-            await store.markFeedSeen(post.id)
         }
         .contextMenu {
             Button("归档", systemImage: "archivebox") {
@@ -239,7 +259,7 @@ private struct NativeFeedCard: View {
         withAnimation(.easeIn(duration: 0.18)) { dragOffset = -1_100 }
         Task {
             try? await Task.sleep(for: .milliseconds(180))
-            if !(await store.dismissFeedItem(post.id, dismissed: true)) {
+            if !(await store.dismissFeedItem("post:" + post.id, dismissed: true)) {
                 isArchiving = false
                 withAnimation(.spring(response: 0.34, dampingFraction: 0.82)) { dragOffset = 0 }
             }
@@ -270,7 +290,7 @@ private struct NativeFeedCard: View {
                             .opacity(0.62)
                     }
                     Spacer()
-                    Text("\(post.kind.uppercased()) / \(post.presentation.system.uppercased())")
+                    Text(["result": "成果", "progress": "进展", "decision": "决策", "attention": "需要关注", "failure": "遇到问题"][post.kind] ?? "动态")
                         .font(.system(size: 9, weight: .black, design: .monospaced))
                         .tracking(1)
                         .foregroundStyle(isFullBleed ? Color.white.opacity(0.78) : palette.accent)
@@ -279,7 +299,7 @@ private struct NativeFeedCard: View {
                 .foregroundStyle(isFullBleed ? Color.white : palette.ink)
                 .padding(.bottom, 20)
 
-                if post.presentation.mediaPlacement == "split", let mediaContent {
+                if post.presentation.mediaPlacement == "split", let mediaContent, mediaContent.type != "image_album" {
                     HStack(alignment: .center, spacing: 24) {
                         NativeFeedMaterialSummary(store: store, content: mediaContent)
                             .frame(maxWidth: .infinity)
@@ -293,7 +313,8 @@ private struct NativeFeedCard: View {
                     copy
                 }
 
-                Spacer(minLength: 24)
+                if mediaContent?.type != "image_album" { Spacer(minLength: 24) }
+                if post.proof?.isEmpty == false || pendingAction != nil || post.sessionId != nil {
                 HStack(spacing: 10) {
                     if let proof = post.proof, !proof.isEmpty {
                         Label(proof, systemImage: "checkmark.seal.fill")
@@ -302,12 +323,24 @@ private struct NativeFeedCard: View {
                     }
                     Spacer()
                     if let pendingAction {
-                        Label(pendingAction.title, systemImage: "arrow.right.circle.fill")
+                        Group {
+                            if mediaContent?.type == "image_album" {
+                                NavigationLink(value: NativeRoute.task(pendingAction.sessionId)) {
+                                    Label(pendingAction.title, systemImage: "arrow.right.circle.fill")
+                                }.buttonStyle(.plain)
+                            } else {
+                                Label(pendingAction.title, systemImage: "arrow.right.circle.fill")
+                            }
+                        }
                             .font(.system(size: 11, weight: .bold))
                             .foregroundStyle(isFullBleed ? Color.white : palette.accent)
                             .lineLimit(1)
-                    } else if post.sessionId != nil {
-                        Label("查看任务", systemImage: "arrow.right")
+                    } else if let sessionID = post.sessionId {
+                        Group {
+                            if mediaContent?.type == "image_album" {
+                                NavigationLink(value: NativeRoute.task(sessionID)) { Label("查看任务", systemImage: "arrow.right") }.buttonStyle(.plain)
+                            } else { Label("查看任务", systemImage: "arrow.right") }
+                        }
                             .font(.system(size: 11, weight: .bold))
                             .foregroundStyle(isFullBleed ? Color.white : palette.accent)
                     }
@@ -315,6 +348,8 @@ private struct NativeFeedCard: View {
                 .foregroundStyle(isFullBleed ? Color.white.opacity(0.76) : palette.ink.opacity(0.66))
                 .padding(.top, 14)
                 .overlay(alignment: .top) { Rectangle().fill(isFullBleed ? Color.white.opacity(0.22) : palette.ink.opacity(0.18)).frame(height: 1) }
+                .padding(.top, mediaContent?.type == "image_album" ? 16 : 0)
+                }
             }
             .padding(cardPadding)
         }
@@ -468,24 +503,12 @@ private struct NativeFeedMaterialSummary: View {
     var body: some View {
         switch presentation {
         case .imageAlbum(let ids):
-            let images = ids.prefix(3).compactMap { material($0) }
-            if !images.isEmpty {
-                HStack(spacing: 10) {
-                    ForEach(images) { image in
-                        NativeFeedImagePreview(
-                            material: image,
-                            url: store.materialURL(image),
-                            height: images.count == 1 ? 220 : 180
-                        ) { store.openMaterial(image) }
-                    }
-                }
-                if let caption = content.caption, !caption.isEmpty {
-                    Text(caption)
-                        .font(.system(size: 10, weight: .semibold))
-                        .foregroundStyle(NativeTheme.muted)
-                        .padding(.top, 7)
-                }
-            }
+            NativeArtifactGallery(ids: ids, materials: store.snapshot.materials,
+                                  hostID: store.snapshot.host?.id ?? "unknown",
+                                  source: { store.materialURL($0) },
+                                  opened: { store.metrics?.record(.artifactOpened) })
+                .frame(height: 390)
+                .clipShape(RoundedRectangle(cornerRadius: 14))
         case .video(let materialID, let posterID):
             if let video = material(materialID), let poster = material(posterID) {
                 NativeFeedImagePreview(

@@ -95,7 +95,7 @@ private struct OnboardingSidebar: View {
                     .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
                     .accessibilityElement(children: .ignore)
                     .accessibilityLabel("第 \(index + 1) 步，共 \(labels.count) 步：\(label)")
-                    .accessibilityValue(index < step ? "已完成" : (index == step ? "当前步骤" : "未开始"))
+                    .accessibilityValue(index < step ? "已浏览" : (index == step ? "当前步骤" : "未开始"))
                 }
             }
             Spacer()
@@ -181,10 +181,8 @@ private struct AgentStep: View {
         _service = ObservedObject(wrappedValue: model.service)
     }
 
-    private var allReady: Bool {
-        groups.allSatisfy { _, values in
-            !values.isEmpty && values.allSatisfy(\.isReady)
-        }
+    private var hasReadyAgent: Bool {
+        service.status?.integrations.contains(where: \.isReady) == true
     }
 
     private var groups: [(String, [IntegrationStatus])] {
@@ -199,7 +197,7 @@ private struct AgentStep: View {
         StepShell {
             Text("连接你已经在用的 Agent")
                 .font(.system(size: 31, weight: .black, design: .rounded))
-            Text("Zimlo 只会在你确认后准备接入配置。已有设置会保留，也可以随时移除。")
+            Text("Codex 或 Claude Code 任选一个即可。已有设置会保留，也可以随时移除。")
                 .font(.system(size: 14, weight: .medium))
                 .foregroundStyle(ZColor.muted)
                 .padding(.top, 3)
@@ -220,12 +218,14 @@ private struct AgentStep: View {
             Spacer()
             OperationIssueView(issue: service.integrationIssue)
                 .frame(width: 160, height: 38, alignment: .trailing)
-            if allReady {
+            if hasReadyAgent {
                 Color.clear.frame(width: 109, height: 40).accessibilityHidden(true)
             } else {
-                SecondaryButton(service.integrationBusy ? "正在连接…" : "一键连接", disabled: service.integrationBusy) {
-                    Task { await service.installIntegration("all") }
-                }
+                Menu(service.integrationBusy ? "正在连接…" : "选择 Agent") {
+                    Button("Codex App") { Task { await service.installIntegration("codex_gui") } }
+                    Button("Codex CLI") { Task { await service.installIntegration("codex_cli") } }
+                    Button("Claude Code") { Task { await service.installIntegration("claude_cli") } }
+                }.disabled(service.integrationBusy)
             }
             PrimaryButton("继续", disabled: service.integrationBusy) {
                 model.onboarding.step = 2
@@ -373,7 +373,7 @@ private struct CompleteStep: View {
                     .font(.system(size: 29, weight: .black))
                     .foregroundStyle(canFinish ? ZColor.acid : ZColor.coral)
             }
-            Text(canFinish ? "Zimlo 已经准备好了" : "后台服务还没准备好")
+            Text(canFinish ? "运行设备已就绪" : "后台服务还没准备好")
                 .font(.system(size: 34, weight: .black, design: .rounded))
             Text(statusMessage)
                 .font(.system(size: 15, weight: .medium))

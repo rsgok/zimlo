@@ -5,8 +5,8 @@ import { join } from "node:path";
 import { promisify } from "node:util";
 import type { IntegrationStatus } from "@zimlo/protocol";
 import { detectInstalledProviders, resolveAgentCommand } from "./agent-command.js";
-import { inspectCodexPlugin } from "./codex-plugin.js";
-import { applyHookChanges, hookConfigChanges } from "./hook-config.js";
+import { inspectCodexPlugin, installCodexPlugin } from "./codex-plugin.js";
+import { applyHookChanges, codexPluginOwnsHooks, hookConfigChanges } from "./hook-config.js";
 import { integrationProbeCache, invalidateIntegrationProbes } from "./probe-cache.js";
 
 const execFileAsync = promisify(execFile);
@@ -86,11 +86,12 @@ export async function inspectIntegrationStatuses(entrypoint: string): Promise<In
     resolveAgentCommand("codex"),
     resolveAgentCommand("claude"),
   ]);
-  const [changes, plugin, codexMcp, claudeMcp] = await Promise.all([
+  const [changes, plugin, codexMcp, claudeMcp, pluginOwnsHooks] = await Promise.all([
     hookConfigChanges(entrypoint),
     inspectCodexPlugin(entrypoint),
     mcpConfigured("codex", codexCommand, entrypoint),
     mcpConfigured("claude", claudeCommand, entrypoint),
+    codexPluginOwnsHooks(),
   ]);
   const codexHooks = changes.some((change) => change.path.includes("/.codex/") && JSON.stringify(change.before) === JSON.stringify(change.after));
   const claudeHooks = changes.some((change) => change.path.includes("/.claude/") && JSON.stringify(change.before) === JSON.stringify(change.after));
@@ -104,7 +105,11 @@ export async function inspectIntegrationStatuses(entrypoint: string): Promise<In
       label: "Codex · GUI",
       detail: plugin.detail,
     },
-    cliStatus("codex_cli", "codex", codexCommand !== null, codexHooks, codexMcp),
+    pluginOwnsHooks ? {
+      id: "codex_cli", provider: "codex", surface: "cli",
+      state: plugin.installed ? "shared" : codexCommand ? "partial" : "unavailable",
+      label: "Codex · CLI", detail: plugin.detail,
+    } : cliStatus("codex_cli", "codex", codexCommand !== null, codexHooks, codexMcp),
     {
       id: "claude_gui",
       provider: "claude",
@@ -126,13 +131,15 @@ export async function installCliIntegrations(entrypoint: string): Promise<void> 
   if (providers.length === 0) throw new Error("尚未发现 Codex 或 Claude Code。");
   const codexCommand = providers.includes("codex") ? await resolveAgentCommand("codex") : null;
   const claudeCommand = providers.includes("claude") ? await resolveAgentCommand("claude") : null;
+  const pluginOwnsHooks = codexCommand !== null && await codexPluginOwnsHooks();
 
   const [codexReady, claudeReady] = await Promise.all([
     mcpConfigured("codex", codexCommand, entrypoint),
     mcpConfigured("claude", claudeCommand, entrypoint),
   ]);
+  if (pluginOwnsHooks) await installCodexPlugin(entrypoint);
   await applyHookChanges(await hookConfigChanges(entrypoint, false, undefined, providers));
-  if (codexCommand && !codexReady) {
+  if (codexCommand && !pluginOwnsHooks && !codexReady) {
     await execFileAsync(codexCommand, ["mcp", "remove", "zimlo"], { timeout: 10_000 }).catch(() => undefined);
     await execFileAsync(codexCommand, ["mcp", "add", "zimlo", "--", process.execPath, entrypoint, "mcp", "--provider", "codex"], { timeout: 10_000 });
   }

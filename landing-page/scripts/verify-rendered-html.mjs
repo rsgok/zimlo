@@ -36,17 +36,17 @@ test("server-renders the finished Zimlo landing page", async () => {
   assert.match(html, /<title>Zimlo — Your Agents keep working\. Your iPhone keeps you in control\.<\/title>/i);
   assert.match(html, /Your Agents/);
   assert.match(html, /Your iPhone/);
-  assert.match(html, /TikTok-style main Feed/);
-  assert.match(html, /X-style profile for every session/);
+  assert.match(html, /approve a decision/);
+  assert.match(html, /Mac or Linux device/);
   assert.match(html, /THE TWO EXPERIENCES WE ARE PROUD OF/);
   assert.match(html, /ARTIFACTS ARE FIRST-CLASS/);
-  assert.match(html, /MULTIPLE MACS · ONE IPHONE/);
+  assert.match(html, /MAC \+ LINUX · ONE IPHONE/);
   assert.match(html, /MACBOOK PRO/);
   assert.match(html, /MAC STUDIO/);
   assert.match(html, /WORK MAC/);
   assert.match(html, /END-TO-END ENCRYPTED/);
-  assert.match(html, /ZERO-COMMAND ONBOARDING/);
-  assert.match(html, /Signed Mac download and iPhone TestFlight access will appear here/);
+  assert.match(html, /A CLEAR FIRST CONNECTION/);
+  assert.match(html, /iPhone access is by invitation/);
   assert.doesNotMatch(html, /zimlo-feed-(?:mobile|desktop)-en\.png/);
   assert.doesNotMatch(html, /codex-preview|react-loading-skeleton|Your site is taking shape/i);
 });
@@ -60,8 +60,8 @@ test("homepage presents rich outputs and multiple machine sources as first-class
   assert.match(html, /Markdown \+ text/);
   assert.match(html, /PDF \+ files/);
   assert.match(html, /Send artifacts back to the Agent/);
-  assert.match(html, /TikTok-style Feed/);
-  assert.match(html, /X-style Task Profile/);
+  assert.match(html, /One result at a time/);
+  assert.match(html, /Complete task context/);
   assert.match(html, /Offline outbox/);
   assert.match(html, /Secure pairing/);
   assert.match(html, /Smart notifications/);
@@ -71,8 +71,9 @@ test("hero is iPhone-first and shows the flagship mobile surfaces", async () => 
   const worker = await loadWorker();
   const html = await (await render(worker, "/")).text();
   assert.match(html, /ZIMLO FOR IPHONE/);
-  assert.match(html, /aria-label="Zimlo running on iPhone"/);
-  assert.match(html, /FULL-SCREEN FEED/);
+  assert.match(html, /aria-label="Zimlo task example"/);
+  assert.match(html, /Illustrative task · sample content/);
+  assert.match(html, /Your launch visuals/);
   assert.match(html, /Task Profile/);
   assert.match(html, /Conversation/);
   assert.match(html, /IPHONE RUNS THE EXPERIENCE/);
@@ -185,4 +186,15 @@ test("POST /api/waitlist is 404 while the gate is off", async () => {
     ctx,
   );
   assert.equal(response.status, 404);
+});
+
+
+test("TestFlight link uses only trusted deployment configuration", async () => {
+  const worker = await loadWorker();
+  const configured = await render(worker, "/", baseEnv({ ZIMLO_TESTFLIGHT_URL: "https://testflight.apple.com/join/Fixture1" }));
+  assert.match(await configured.text(), /href="https:\/\/testflight\.apple\.com\/join\/Fixture1"/);
+  const spoof = await worker.fetch(new Request("http://localhost/", { headers: { accept: "text/html", "x-zimlo-testflight-url": "https://testflight.apple.com/join/Attacker" } }), baseEnv(), ctx);
+  assert.doesNotMatch(await spoof.text(), /join\/Attacker/);
+  const invalid = await render(worker, "/", baseEnv({ ZIMLO_TESTFLIGHT_URL: "https://example.com/fake" }));
+  assert.doesNotMatch(await invalid.text(), /example\.com\/fake/);
 });

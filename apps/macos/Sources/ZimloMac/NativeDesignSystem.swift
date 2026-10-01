@@ -1,5 +1,6 @@
 import AppKit
 import SwiftUI
+import ZimloCore
 
 enum NativeTheme {
     static let paper = Color(red: 0.045, green: 0.052, blue: 0.049)
@@ -22,28 +23,12 @@ struct NativeSegmentedTabs<Value: Hashable>: View {
     let title: (Value) -> String
 
     var body: some View {
-        HStack(spacing: 3) {
-            ForEach(options, id: \.self) { option in
-                Button {
-                    selection = option
-                } label: {
-                    Text(title(option))
-                        .font(.system(size: 11, weight: .semibold))
-                        .foregroundStyle(selection == option ? NativeTheme.paper : NativeTheme.ink.opacity(0.72))
-                        .padding(.horizontal, 13)
-                        .frame(minHeight: 26)
-                        .background(selection == option ? NativeTheme.acid : Color.clear)
-                        .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
-                        .contentShape(Rectangle())
-                }
-                .buttonStyle(.plain)
-                .accessibilityLabel(title(option))
-                .accessibilityAddTraits(selection == option ? .isSelected : [])
-            }
+        Picker("筛选", selection: $selection) {
+            ForEach(options, id: \.self) { option in Text(title(option)).tag(option) }
         }
-        .padding(3)
-        .background(NativeTheme.control)
-        .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+        .pickerStyle(.segmented)
+        .labelsHidden()
+        .fixedSize()
     }
 }
 
@@ -157,6 +142,14 @@ enum CoreActionState: Equatable {
 }
 
 extension NativeSnapshot {
+    func currentState(for session: AgentSession) -> String {
+        let task = task(for: session.id)
+        let active = commands.filter { $0.sessionId == session.id && ["queued", "dispatching", "running"].contains($0.state) }.map(\.createdAt).max()
+        return CurrentTaskState.resolve(taskState: task?.state, taskUpdatedAt: task?.updatedAt,
+            sessionState: session.status, activeCommandCreatedAt: active,
+            hasPendingAction: pendingAction(for: session.id) != nil)
+    }
+
     func project(for session: AgentSession) -> Project? {
         if let projectID = session.projectId,
            let project = projects.first(where: { $0.id == projectID }) {

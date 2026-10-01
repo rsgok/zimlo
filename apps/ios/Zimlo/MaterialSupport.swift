@@ -5,6 +5,7 @@ import Foundation
 import PDFKit
 import QuickLook
 import SwiftUI
+import ZimloCore
 import UIKit
 import UniformTypeIdentifiers
 
@@ -136,8 +137,8 @@ struct MaterialThumbnail: View {
 
     var body: some View {
         Group {
-            if material.kind == "image", let url, let image = UIImage(contentsOfFile: url.path) {
-                Image(uiImage: image).resizable().scaledToFill()
+            if material.kind == "image", let url {
+                DownsampledImage(url: url, maxPixel: 180).scaledToFill()
             } else if material.kind == "video" {
                 Image(systemName: "play.fill").font(.title3)
             } else {
@@ -156,6 +157,8 @@ struct MaterialThumbnail: View {
 struct FeedMaterialCard: View {
     @ObservedObject var model: AppModel
     let content: FeedContent
+    var hostID: String? = nil
+    var materialLoader: ((Material) async throws -> URL)? = nil
     var fullBleed = false
     @State private var urls: [String: URL] = [:]
     @State private var previewURL: URL?
@@ -193,14 +196,15 @@ struct FeedMaterialCard: View {
     var body: some View {
         Group {
             if content.type == "image_album" {
-                TabView {
-                    ForEach(materials) { material in
-                        if let url = urls[material.id], let image = UIImage(contentsOfFile: url.path) {
-                            Image(uiImage: image).resizable().scaledToFit().tag(material.id)
-                        } else { unavailable }
+                ArtifactGallery(
+                    items: GalleryItem.resolve(ids: content.materialIds ?? [], materials: model.snapshot.materials, hostID: hostID),
+                    connected: model.bridge.connected,
+                    fullBleed: fullBleed,
+                    fetch: { material in
+                        if let materialLoader { return try await materialLoader(material) }
+                        return try await model.localURL(for: material)
                     }
-                }
-                .tabViewStyle(.page(indexDisplayMode: materials.count > 1 ? .automatic : .never))
+                )
             } else if content.type == "video", let material = materials.first(where: { $0.id == content.materialId }), let url = urls[material.id] {
                 InlineFeedVideoPlayer(url: url)
             } else if content.type == "document", let material = materials.first(where: { $0.id == content.materialId }) {
@@ -267,10 +271,10 @@ struct FeedMaterialCard: View {
         .frame(
             maxWidth: .infinity,
             minHeight: fullBleed ? 0 : content.type == "document" ? 106 : 220,
-            maxHeight: fullBleed ? .infinity : hasInlinePDF ? 460 : hasReadableDocument ? 330 : content.type == "document" ? 130 : 330
+            maxHeight: fullBleed || content.type == "image_album" ? .infinity : hasInlinePDF ? 460 : hasReadableDocument ? 330 : content.type == "document" ? 130 : 330
         )
         .background(Color.black.opacity(0.34))
-        .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
+        .clipShape(RoundedRectangle(cornerRadius: content.type == "image_album" ? 0 : 18, style: .continuous))
         .task(id: "\(referencedIDs.joined(separator: ":")):\(model.bridge.connected)") { await load() }
         .sheet(isPresented: Binding(get: { previewURL != nil }, set: { if !$0 { previewURL = nil } })) {
             if let previewURL { QuickLookSheet(url: previewURL).ignoresSafeArea() }
@@ -299,7 +303,7 @@ struct FeedMaterialCard: View {
 
     @MainActor
     private func load() async {
-        guard !isLoading else { return }
+        guard content.type != "image_album", !isLoading else { return }
         isLoading = true
         defer { isLoading = false }
         loadError = nil
@@ -339,6 +343,7 @@ private struct InlinePDFReader: UIViewRepresentable {
 private struct InlineFeedVideoPlayer: View {
     let url: URL
     @State private var player = AVPlayer()
+    @Environment(\.scenePhase) private var scenePhase
 
     var body: some View {
         VideoPlayer(player: player)
@@ -347,6 +352,7 @@ private struct InlineFeedVideoPlayer: View {
                 player.isMuted = true
                 player.play()
             }
+            .onChange(of: scenePhase) { _, phase in if phase != .active { player.pause() } }
             .onDisappear {
                 player.pause()
                 player.replaceCurrentItem(with: nil)

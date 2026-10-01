@@ -367,7 +367,7 @@ fn sessions(
     host_id: &str,
     project_names: &HashMap<String, String>,
 ) -> Result<Vec<Value>, StoreError> {
-    let inputs = first_task_inputs(connection)?;
+    let inputs = super::task_inputs::first_task_inputs(connection)?;
     list_sessions(connection)?
         .into_iter()
         .map(|mut session| {
@@ -395,37 +395,6 @@ fn sessions(
             Ok(value)
         })
         .collect()
-}
-
-fn first_task_inputs(connection: &Connection) -> Result<HashMap<String, String>, StoreError> {
-    let mut statement = connection
-        .prepare(
-            "SELECT session_id, payload_json FROM events WHERE kind = 'user_instruction' ORDER BY sequence ASC",
-        )
-        .map_err(sqlite_error)?;
-    let rows = statement
-        .query_map([], |row| {
-            Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
-        })
-        .map_err(sqlite_error)?;
-    let mut inputs = HashMap::new();
-    for row in rows {
-        let (session_id, payload) = row.map_err(sqlite_error)?;
-        if inputs.contains_key(&session_id) {
-            continue;
-        }
-        let Ok(payload) = serde_json::from_str::<Value>(&payload) else {
-            continue;
-        };
-        let input = payload
-            .as_str()
-            .map(str::to_owned)
-            .or_else(|| payload.get("prompt")?.as_str().map(str::to_owned));
-        if let Some(input) = input {
-            inputs.insert(session_id, input);
-        }
-    }
-    Ok(inputs)
 }
 
 fn has_generated_title(session: &StoredSession) -> bool {

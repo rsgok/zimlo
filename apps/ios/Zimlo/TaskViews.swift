@@ -1,5 +1,6 @@
 import PhotosUI
 import SwiftUI
+import ZimloCore
 import UniformTypeIdentifiers
 
 struct TaskDetailView: View {
@@ -214,10 +215,7 @@ struct TaskDetailProjection {
         commands = (localFollowUps + snapshot.commands.filter { $0.sessionId == session.id })
             .sorted { $0.createdAt > $1.createdAt }
 
-        let task = snapshot.tasks.lazy
-            .filter { $0.sessionId == session.id }
-            .max { $0.updatedAt < $1.updatedAt }
-        currentState = task?.state ?? session.status
+        currentState = snapshot.currentState(for: session)
         pendingActions = snapshot.actions.filter { $0.sessionId == session.id && $0.state == "pending" }
         activeQueue = commands.filter { ["queued", "dispatching", "running"].contains($0.state) }
         taskInput = Self.originalInput(sessionTitle: session.title, sessionEvents: sessionEvents)
@@ -436,6 +434,7 @@ struct NewTaskView: View {
     @State private var text: String
     @State private var search = ""
     @State private var choosingAgent = false
+    @State private var showingTemplates = false
     @State private var submitting = false
     @State private var selectedPhotos: [PhotosPickerItem] = []
     @State private var showingFileImporter = false
@@ -517,6 +516,7 @@ struct NewTaskView: View {
                                         .font(ZFont.caption2).foregroundStyle(ZColor.muted)
                                 }
                             }
+                            Button("常用指令", systemImage: "text.badge.plus") { showingTemplates = true }.font(ZFont.body)
                             HStack(alignment: .center, spacing: 8) {
                                 Menu {
                                     PhotosPicker(
@@ -720,6 +720,7 @@ struct NewTaskView: View {
 
             }
             .foregroundStyle(ZColor.ink).background(ZColor.paper)
+            .sheet(isPresented: $showingTemplates) { PromptTemplateLibrary { template in text = text.isEmpty ? template.text : text + "\n\n" + template.text } }
             .navigationTitle(session == nil ? "新任务" : "回复")
             .navigationBarTitleDisplayMode(.inline)
             .fileImporter(

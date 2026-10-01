@@ -55,6 +55,10 @@ open apps/macos/.build/Zimlo.app
 
 开发包只包含当前 Mac 架构，并内置同架构原生 Rust Runtime；首次启动无需下载。正式发布分别产出 arm64 与 x86_64 的 App、DMG 和 Sparkle 更新流，Runtime 工件不包含 Node 可执行文件或 `node_modules`。发布命令会完成 Developer ID 签名、公证、两份 DMG、两条 Sparkle appcast 与 Cloudflare R2 上传；第一次公开发布仍需提供 Apple Developer 凭据、Sparkle 密钥并在 Cloudflare 账号中启用 R2。普通用户不会接触 `pnpm`、Node.js 或 `zimlo start`。
 
+维护者验收：`pnpm check:all` 覆盖协议、Web、Rust、共享 Swift、Mac、iOS 模拟器和站点；`pnpm performance:check` 运行隔离大库基准并检查相对性能预算。实现清单与实测边界见 [优化验收](docs/OPTIMIZATION_ACCEPTANCE_2026-09-06.md)。
+
+正式发布要求干净且已审阅的源码。在同一终端设置本次 `ZIMLO_VERSION` 和 `ZIMLO_BUILD_NUMBER`，完成对应平台检查后运行 `node scripts/release-provenance.mjs record`，再运行发布构建；构建和上传会检查该回执。改动源码或版本后必须重新验收。GitHub 发布工作流自动执行这些步骤，日常 `pnpm macos:build` 不需要发布回执。
+
 ## Linux 服务器：无界面运行
 
 Linux 不需要移植 macOS App。Zimlo 将同一个 Rust Runtime 打包成无 GUI 的 x86_64/aarch64 服务，由 systemd 用户服务托管；它主动连接 Cloudflare，因此服务器不需要公网 IP，也不需要开放入站端口。
@@ -224,7 +228,9 @@ zimlo codex-plugin install
 
 ### Codex CLI 与 Claude Code
 
-Codex CLI 和 Claude Code 仍可使用手动集成：
+安装了 Zimlo Personal 插件时，Codex 桌面版与 CLI 共用插件中的三个 hook；安装器会备份并清理旧的 Zimlo 用户级 hook。两端均由实际进程来源识别 GUI/CLI，后续 CLI 修复不会重新添加另一套 hook。CLI 使用 `/hooks` 审核，桌面版在设置中审核。
+
+没有插件的纯 Codex CLI 安装，以及 Claude Code，仍可使用手动集成：
 
 ```bash
 zimlo hooks diff

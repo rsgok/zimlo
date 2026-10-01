@@ -158,14 +158,16 @@ private extension View {
     }
 }
 
-private struct FeedPage: View {
+struct FeedPage: View {
     // NativeFeedView is the single observation boundary. Nested full-screen cards
     // receive the reference only for actions, avoiding duplicate invalidations of
     // every visible page for one AppModel publication.
     let model: AppModel
     let entry: FeedEntry
     var historical = false
+    var materialLoader: ((Material) async throws -> URL)? = nil
     @State private var offset: CGFloat = 0
+    @State private var galleryBounds: CGRect = .null
 
     var body: some View {
         ZStack {
@@ -180,7 +182,7 @@ private struct FeedPage: View {
             Group {
                 switch entry.content {
                 case .post(let post):
-                    PostCard(model: model, post: post, historical: historical)
+                    PostCard(model: model, post: post, historical: historical, materialLoader: materialLoader)
                 case .action(let action):
                     ActionCard(model: model, action: action, historical: historical)
                 case .command(let command):
@@ -196,12 +198,14 @@ private struct FeedPage: View {
                 // Give the ScrollView's vertical pan recognizer a clear head start.
                 // Horizontal card actions remain available, but a normal vertical
                 // flick no longer has to negotiate with a full-card drag at touch-down.
-                DragGesture(minimumDistance: 28)
+                DragGesture(minimumDistance: 28, coordinateSpace: .named("feed-card"))
                     .onChanged { value in
+                        guard !galleryBounds.contains(value.startLocation) else { return }
                         guard abs(value.translation.width) > abs(value.translation.height) * 1.35 else { return }
                         offset = min(120, max(-120, value.translation.width))
                     }
                     .onEnded { value in
+                        guard !galleryBounds.contains(value.startLocation) else { return }
                         let horizontal = abs(value.translation.width) > abs(value.translation.height) * 1.35
                         if horizontal, value.translation.width < -82, let sessionId = entry.sessionId {
                             model.openTask(sessionId: sessionId)
@@ -212,6 +216,8 @@ private struct FeedPage: View {
                     }
             )
         }
+        .coordinateSpace(name: "feed-card")
+        .onPreferenceChange(GalleryBoundsPreferenceKey.self) { galleryBounds = $0 }
         .accessibilityActions {
             if let sessionID = entry.sessionId {
                 Button("查看任务") { model.openTask(sessionId: sessionID) }
@@ -221,10 +227,11 @@ private struct FeedPage: View {
     }
 }
 
-private struct PostCard: View {
+struct PostCard: View {
     let model: AppModel
     let post: FeedPost
     let historical: Bool
+    var materialLoader: ((Material) async throws -> URL)? = nil
 
     private var session: AgentSession? { post.sessionId.flatMap { id in model.snapshot.sessions.first { $0.id == id } } }
     private var project: Project? {
@@ -239,6 +246,7 @@ private struct PostCard: View {
     }
     private var palette: ZimloCardPalette { ZimloCardPalette(theme: post.presentation.theme) }
     private var isFullBleed: Bool { post.presentation.mediaPlacement == "full_bleed" && mediaContent != nil }
+    private var isImageStory: Bool { mediaContent?.type == "image_album" && !isFullBleed }
     private var cardPadding: CGFloat {
         switch post.presentation.density {
         case "airy": 28
@@ -259,11 +267,22 @@ private struct PostCard: View {
     var body: some View {
         ZStack {
             if isFullBleed, let mediaContent {
-                FeedMaterialCard(model: model, content: mediaContent, fullBleed: true)
+                FeedMaterialCard(model: model, content: mediaContent, hostID: post.hostId, materialLoader: materialLoader, fullBleed: true)
                     .ignoresSafeArea()
                 LinearGradient(colors: [.black.opacity(0.54), .clear, .black.opacity(0.88)], startPoint: .top, endPoint: .bottom)
             }
-            VStack(alignment: .leading, spacing: 0) {
+            if isImageStory, let mediaContent {
+                VStack(alignment: .leading, spacing: 0) {
+                    header.padding(.horizontal, 20).padding(.vertical, 16)
+                    FeedMaterialCard(model: model, content: mediaContent, hostID: post.hostId, materialLoader: materialLoader)
+                        .layoutPriority(-1)
+                    copy.padding(20).fixedSize(horizontal: false, vertical: true)
+                    if session != nil || historical || post.proof?.isEmpty == false {
+                        footer.padding(.horizontal, 20).padding(.bottom, 18)
+                    }
+                }
+            } else {
+                VStack(alignment: .leading, spacing: 0) {
                 header
                 Spacer(minLength: isFullBleed ? 110 : 18)
                 mainContent
@@ -271,6 +290,7 @@ private struct PostCard: View {
                 footer
             }
             .padding(cardPadding)
+            }
         }
         .foregroundStyle(isFullBleed ? Color.white : palette.ink)
         .background(isFullBleed ? Color.black : palette.surface)
@@ -302,7 +322,7 @@ private struct PostCard: View {
     @ViewBuilder private var mainContent: some View {
         if post.presentation.mediaPlacement == "split", let mediaContent {
             HStack(alignment: .center, spacing: 16) {
-                FeedMaterialCard(model: model, content: mediaContent)
+                FeedMaterialCard(model: model, content: mediaContent, hostID: post.hostId, materialLoader: materialLoader)
                     .frame(maxWidth: .infinity)
                 copy
                     .frame(maxWidth: .infinity, alignment: .leading)
@@ -310,8 +330,8 @@ private struct PostCard: View {
         } else {
             VStack(alignment: .leading, spacing: 0) {
                 if !isFullBleed, let mediaContent {
-                    FeedMaterialCard(model: model, content: mediaContent)
-                        .frame(maxHeight: post.presentation.mediaPlacement == "inline" ? 330 : 240)
+                    FeedMaterialCard(model: model, content: mediaContent, hostID: post.hostId, materialLoader: materialLoader)
+                        .frame(maxHeight: mediaContent.type == "image_album" ? 330 : post.presentation.mediaPlacement == "inline" ? 330 : 240)
                         .padding(.bottom, 16)
                 }
                 copy
@@ -321,7 +341,7 @@ private struct PostCard: View {
 
     private var copy: some View {
         VStack(alignment: .leading, spacing: 0) {
-            Text("\(post.kind.uppercased()) / \(post.presentation.system.uppercased())")
+            Text(["result": "成果", "decision": "决策", "progress": "进展", "attention": "需要关注", "failure": "遇到问题"][post.kind] ?? "动态")
                 .font(ZFont.caption2.monospaced().weight(.black))
                 .tracking(1.2)
                 .foregroundStyle(isFullBleed ? Color.white.opacity(0.78) : palette.accent)

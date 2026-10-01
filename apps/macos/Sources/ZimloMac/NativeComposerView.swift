@@ -1,25 +1,32 @@
 import SwiftUI
+import ZimloCore
 import UniformTypeIdentifiers
 
 struct NativeComposerContext: Identifiable, Equatable {
     let id = UUID()
     var projectID: String?
     var sessionID: String?
+    var editingEntry: NativeOutboxEntry?
 }
 
 struct NativeComposerOverlay: View {
     let context: NativeComposerContext
     @ObservedObject var store: NativeAppStore
     let onDismiss: () -> Void
+    var onSetup: () -> Void = {}
 
     @StateObject private var speech = NativeSpeechRecognizer()
     @State private var text = ""
+    @State private var showingTemplates = false
     @State private var workspaceID = ""
     @State private var provider: Provider = .codex
     @State private var materials: [Material] = []
     @State private var choosingFiles = false
     @State private var sending = false
     @State private var dictationPrefix = ""
+    @State private var draftHostID: String?
+    @State private var restored = false
+    @State private var unresolvedMaterialIDs: [String] = []
     @FocusState private var inputFocused: Bool
 
     private var session: AgentSession? {
@@ -41,7 +48,8 @@ struct NativeComposerOverlay: View {
     }
     private var canSend: Bool {
         !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-            && !sending
+            && !sending && !store.importingFiles && unresolvedMaterialIDs.isEmpty
+            && (draftHostID == nil || draftHostID == store.snapshot.host?.id)
             && (session != nil || (!workspaceID.isEmpty && selectedWorkspace?.providers.contains(provider) == true))
     }
 
@@ -50,17 +58,30 @@ struct NativeComposerOverlay: View {
             Color.black.opacity(0.52)
                 .ignoresSafeArea()
                 .contentShape(Rectangle())
-                .onTapGesture(perform: onDismiss)
+                .onTapGesture(perform: dismissComposer)
 
             VStack(spacing: 0) {
                 header
                 Divider().overlay(NativeTheme.border)
                 VStack(spacing: 15) {
-                    if session == nil { destinationPicker }
+                    if session == nil {
+                        if store.snapshot.workspaces.isEmpty { setupPrompt }
+                        else { destinationPicker }
+                    }
+                    if let draftHostID, draftHostID != store.snapshot.host?.id {
+                        Text("这份草稿属于另一台运行设备，连接原设备后可以继续发送。")
+                            .foregroundStyle(NativeTheme.coral)
+                    }
+                    if !unresolvedMaterialIDs.isEmpty {
+                        Text("有 \(unresolvedMaterialIDs.count) 个附件暂不可用，确认后才能重新发送。")
+                            .foregroundStyle(NativeTheme.coral)
+                        Button("移除不可用附件") { unresolvedMaterialIDs = []; saveDraft() }
+                    }
                     if !materials.isEmpty { attachmentList }
+                    Button("常用指令", systemImage: "text.badge.plus") { showingTemplates = true }.frame(maxWidth: .infinity, alignment: .leading)
                     inputRow
                     Text("可拖入图片、视频、PDF 或文档 · 草稿会自动保留")
-                        .font(.system(size: 9.5, weight: .medium))
+                        .font(.callout)
                         .foregroundStyle(NativeTheme.muted)
                         .frame(maxWidth: .infinity, alignment: .leading)
                 }
@@ -78,7 +99,8 @@ struct NativeComposerOverlay: View {
                 return true
             }
         }
-        .onExitCommand(perform: onDismiss)
+        .sheet(isPresented: $showingTemplates) { PromptTemplateLibrary { template in text = text.isEmpty ? template.text : text + "\n\n" + template.text }.frame(width: 520, height: 500) }
+        .onExitCommand(perform: dismissComposer)
         .fileImporter(
             isPresented: $choosingFiles,
             allowedContentTypes: [.image, .movie, .pdf, .text, .spreadsheet, .presentation, .data],
@@ -91,7 +113,15 @@ struct NativeComposerOverlay: View {
             restoreDefaults()
             inputFocused = true
         }
-        .onChange(of: text) { _, value in UserDefaults.standard.set(value, forKey: draftKey) }
+        .onChange(of: text) { _, _ in saveDraft() }
+        .onChange(of: materials) { _, _ in saveDraft() }
+        .onChange(of: store.snapshot.workspaces) { _, workspaces in
+            guard session == nil, !workspaces.contains(where: { $0.id == workspaceID }) else { return }
+            workspaceID = workspaces.sorted { $0.lastUsedAt > $1.lastUsedAt }.first?.id ?? ""
+            coerceProvider()
+        }
+        .onChange(of: workspaceID) { _, _ in saveDraft() }
+        .onChange(of: provider) { _, _ in saveDraft() }
         .onChange(of: speech.transcript) { _, transcript in
             guard !transcript.isEmpty else { return }
             text = [dictationPrefix, transcript].filter { !$0.isEmpty }.joined(separator: dictationPrefix.isEmpty ? "" : " ")
@@ -102,6 +132,33 @@ struct NativeComposerOverlay: View {
         .onDisappear { speech.stop() }
     }
 
+    private var setupPrompt: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Label("先接入一个项目", systemImage: "folder.badge.plus").font(.headline)
+            Text("在 Codex 或 Claude Code 中打开项目并开始一次任务，Zimlo 会自动发现。你的输入会保留。")
+                .font(.callout).foregroundStyle(NativeTheme.muted)
+            HStack {
+                Button("检查 Agent 接入") { saveDraft(); onSetup() }
+                Button("重新检查项目") { Task { await store.refresh() } }
+            }
+        }.frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private func saveDraft() {
+        guard restored else { return }
+        NativeComposerDraft(hostID: draftHostID ?? store.snapshot.host?.id, text: text,
+                            workspaceID: workspaceID, provider: provider, materials: materials, unresolvedMaterialIDs: unresolvedMaterialIDs).save(key: draftKey)
+    }
+
+    private func dismissComposer() {
+        guard !store.importingFiles else {
+            store.showNotice("附件正在保存，完成后即可收起。")
+            return
+        }
+        saveDraft()
+        onDismiss()
+    }
+
     private var header: some View {
         HStack(spacing: 12) {
             NativeTaskAvatar(project: project, provider: session?.provider ?? provider, size: 38)
@@ -109,13 +166,13 @@ struct NativeComposerOverlay: View {
                 Text(session == nil ? "新任务" : "回复 Agent")
                     .font(.system(size: 17, weight: .bold, design: .rounded))
                 Text(session?.title ?? project?.agentProfile.displayName ?? "把清晰目标交给 Agent")
-                    .font(.system(size: 10.5, weight: .medium))
+                    .font(.callout)
                     .foregroundStyle(NativeTheme.muted)
                     .lineLimit(1)
             }
             Spacer()
             Text("点空白处或 Esc 收起")
-                .font(.system(size: 9.5, weight: .medium))
+                .font(.callout)
                 .foregroundStyle(NativeTheme.muted)
         }
         .padding(.horizontal, 18)
@@ -232,7 +289,8 @@ struct NativeComposerOverlay: View {
             else { sent = await store.createTask(text: value, provider: provider, workspaceID: workspaceID, materialIDs: ids) }
             sending = false
             guard sent else { return }
-            UserDefaults.standard.removeObject(forKey: draftKey)
+            NativeComposerDraft.clear(key: draftKey)
+            if let entry = context.editingEntry { _ = store.outbox.discardFailure(entry.id) }
             if session == nil {
                 UserDefaults.standard.set(workspaceID, forKey: "zimlo.mac.last-workspace")
                 UserDefaults.standard.set(provider.rawValue, forKey: "zimlo.mac.last-provider")
@@ -242,6 +300,25 @@ struct NativeComposerOverlay: View {
     }
 
     private func restoreDefaults() {
+        defer { restored = true }
+        if let entry = context.editingEntry {
+            text = entry.preview
+            workspaceID = entry.command.values["workspaceId"]?.stringValue ?? ""
+            provider = entry.command.values["provider"]?.stringValue.flatMap(Provider.init(rawValue:)) ?? session?.provider ?? .codex
+            draftHostID = entry.hostID
+            if case .array(let ids) = entry.command.values["materialIds"] {
+                materials = ids.compactMap { id in store.snapshot.materials.first { $0.id == id.stringValue } }
+                unresolvedMaterialIDs = ids.compactMap(\.stringValue).filter { id in !materials.contains { $0.id == id } }
+            }
+            return
+        }
+        if let draft = NativeComposerDraft.load(key: draftKey) {
+            text = draft.text; workspaceID = draft.workspaceID; provider = draft.provider
+            materials = draft.materials; draftHostID = draft.hostID
+            unresolvedMaterialIDs = draft.unresolvedMaterialIDs ?? []
+            return
+        }
+        draftHostID = store.snapshot.host?.id
         text = UserDefaults.standard.string(forKey: draftKey) ?? ""
         guard session == nil else { return }
         let preferredWorkspace = project.flatMap { project in

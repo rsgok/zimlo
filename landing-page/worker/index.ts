@@ -13,6 +13,7 @@ interface Env {
   ASSETS: Fetcher;
   DB?: D1Database;
   WAITLIST_ENABLED?: string;
+  ZIMLO_TESTFLIGHT_URL?: string;
   PRIVACY_CONTACT_VERIFIED?: string;
   WAITLIST_BETA_ENDED_AT?: string;
   IMAGES: {
@@ -100,6 +101,10 @@ const worker = {
 
     const headers = new Headers(request.headers);
     headers.delete(WAITLIST_ENABLED_HEADER);
+    headers.delete("x-zimlo-testflight-url");
+    if (/^https:\/\/testflight\.apple\.com\/join\/[A-Za-z0-9]+$/u.test(env.ZIMLO_TESTFLIGHT_URL ?? "")) {
+      headers.set("x-zimlo-testflight-url", env.ZIMLO_TESTFLIGHT_URL!);
+    }
     if (isWaitlistEnabled(env as unknown as Record<string, unknown>)) {
       headers.set(WAITLIST_ENABLED_HEADER, "1");
     }

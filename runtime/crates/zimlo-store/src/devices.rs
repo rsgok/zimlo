@@ -186,8 +186,8 @@ pub(super) fn execute(connection: &Connection, command: DeviceCommand) -> bool {
         }
         DeviceCommand::EnsureLocalAdmin { candidate, reply } => {
             let result = ensure_local_admin(connection, candidate);
-            let changed = result.is_ok();
-            let _ = reply.send(result);
+            let changed = result.as_ref().is_ok_and(|(_, inserted)| *inserted);
+            let _ = reply.send(result.map(|(device, _)| device));
             changed
         }
         DeviceCommand::Revoke {
@@ -322,7 +322,7 @@ fn upsert_device(connection: &Connection, device: &DeviceRecord) -> Result<(), S
 fn ensure_local_admin(
     connection: &Connection,
     candidate: DeviceRecord,
-) -> Result<DeviceRecord, StoreError> {
+) -> Result<(DeviceRecord, bool), StoreError> {
     let existing = connection
         .query_row(
             "SELECT id, name, key_base64, created_at, last_seen_at, revoked_at,
@@ -335,10 +335,10 @@ fn ensure_local_admin(
         .optional()
         .map_err(sqlite_error)?;
     if let Some(existing) = existing {
-        return Ok(existing);
+        return Ok((existing, false));
     }
     upsert_device(connection, &candidate)?;
-    Ok(candidate)
+    Ok((candidate, true))
 }
 
 fn revoke_device(
