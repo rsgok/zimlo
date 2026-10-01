@@ -56,6 +56,9 @@ case "$approval" in *'"decision":"accept"'*) ;; *) printf '%s\n' 'approval respo
 printf '%s\n' '{"id":102,"method":"item/tool/requestUserInput","params":{"threadId":"codex-fake-thread","turnId":"turn-fake","itemId":"input-fake","questions":[{"id":"q1","header":"Continue","question":"Proceed?"}]}}'
 IFS= read -r input
 case "$input" in *'from-phone'*) ;; *) printf '%s\n' 'input response mismatch' >&2; exit 42;; esac
+printf '%s\n' '{"id":103,"method":"mcpServer/elicitation/request","params":{"threadId":"codex-fake-thread","turnId":"turn-fake","serverName":"zimlo","mode":"form","message":"Allow material.publish?","requestedSchema":{"type":"object","properties":{}},"_meta":{"codex_approval_kind":"mcp_tool_call"}}}'
+IFS= read -r mcp
+case "$mcp" in *'"action":"accept"'*) ;; *) printf '%s\n' 'mcp response mismatch' >&2; exit 43;; esac
 printf '%s\n' '{"method":"item/started","params":{"threadId":"codex-fake-thread","turnId":"turn-fake","item":{"id":"command-fake","type":"commandExecution","command":"cargo test"}}}'
 printf '%s\n' '{"method":"item/completed","params":{"threadId":"codex-fake-thread","turnId":"turn-fake","item":{"id":"command-fake","type":"commandExecution","command":"cargo test","exitCode":0}}}'
 printf '%s\n' '{"method":"turn/completed","params":{"threadId":"codex-fake-thread","turn":{"id":"turn-fake","status":"completed"}}}'
@@ -140,6 +143,23 @@ async fn codex_app_server_create_closes_approval_and_input_loops() {
         .await
         .expect("input");
     assert!(input_result.ok);
+
+    let mcp = wait_action(&store, "approval").await;
+    assert_eq!(mcp.title, "工具调用审批");
+    assert!(mcp.detail.contains("material.publish"));
+    let result = broker
+        .decide(DecisionSubmission {
+            device_id: "phone-codex-test".into(),
+            action_id: mcp.action_id,
+            session_id: mcp.session_id,
+            decision_id: "mcp-accept".into(),
+            idempotency_key: "mcp-once".into(),
+            confirmation_phrase: None,
+            input: None,
+        })
+        .await
+        .expect("mcp approval");
+    assert!(result.ok);
 
     let completed = running
         .await

@@ -17,7 +17,7 @@ import { formatDeviceList } from "./device-list.js";
 import { DeviceManager } from "./device-manager.js";
 import { DiscoveryService } from "./discovery-service.js";
 import { doctorHasBlockingFailure, formatDoctor, runDoctor } from "./doctor.js";
-import { applyHookChanges, formatHookChanges, formatHookChangesSummary, hookConfigChanges } from "./hook-config.js";
+import { applyHookChanges, codexPluginOwnsHooks, formatHookChanges, formatHookChangesSummary, hookConfigChanges } from "./hook-config.js";
 import { HookServer, runHookClient } from "./hook-server.js";
 import { detectHookSurface } from "./hook-surface.js";
 import { followFile, latestLogFile, readTail } from "./log-view.js";
@@ -266,7 +266,8 @@ hooks.command("diff")
   });
 hooks.command("status").action(async () => {
   const changes = await hookConfigChanges(entrypoint);
-  const installed = changes.every((change) => JSON.stringify(change.before) === JSON.stringify(change.after));
+  const pluginReady = !await codexPluginOwnsHooks() || (await inspectCodexPlugin(entrypoint)).installed;
+  const installed = pluginReady && changes.every((change) => JSON.stringify(change.before) === JSON.stringify(change.after));
   console.log(installed ? "Zimlo hooks 已安装且为当前版本。" : "Zimlo hooks 未安装或需要升级。运行 `zimlo hooks diff` 预览。" );
 });
 hooks.command("install").action(async () => {
@@ -276,6 +277,7 @@ hooks.command("install").action(async () => {
   if (providers.length === 0) {
     throw new Error("尚未发现 Codex 或 Claude Code，未写入任何配置。请先安装其中一个 Agent。");
   }
+  if (providers.includes("codex") && await codexPluginOwnsHooks()) await installCodexPlugin(entrypoint);
   const changes = await hookConfigChanges(entrypoint, false, undefined, providers);
   const applied = await applyHookChanges(changes);
   for (const item of applied) {
@@ -283,7 +285,7 @@ hooks.command("install").action(async () => {
     if (item.backupPath) console.log(`备份 ${item.backupPath}`);
   }
   console.log("Zimlo hooks 已原子合并；原配置已保留，已有文件同时创建了时间戳备份。");
-  console.log("Codex CLI 用户请运行 `/hooks` 检查并信任新 hook；Codex GUI 请改用 `zimlo codex-plugin install`。" );
+  console.log("已安装 Codex 插件时，桌面版与 CLI 共用插件 hooks；CLI 请用 `/hooks` 审核，桌面版请在 Settings 审核。" );
 });
 hooks.command("uninstall").action(async () => {
   const changes = await hookConfigChanges(entrypoint, true);
@@ -291,7 +293,7 @@ hooks.command("uninstall").action(async () => {
   console.log("仅 Zimlo 自己的 hook 项已移除；用户原配置已保留。");
 });
 
-const codexPlugin = program.command("codex-plugin").description("Manage the Zimlo integration for Codex GUI");
+const codexPlugin = program.command("codex-plugin").description("Manage the shared Zimlo integration for Codex desktop and CLI");
 codexPlugin.command("install").action(async () => {
   const status = await installCodexPlugin(entrypoint);
   console.log("Zimlo 已加入 Codex GUI 的 Personal 插件源。" );

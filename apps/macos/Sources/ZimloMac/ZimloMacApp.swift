@@ -25,7 +25,26 @@ struct ZimloMacApp: App {
 
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate {
+    #if DEBUG
+    private var artifactReviewWindow: NSWindow?
+    #endif
     func applicationDidFinishLaunching(_ notification: Notification) {
+        #if DEBUG
+        if let directory = Bundle.main.object(forInfoDictionaryKey: "ZimloArtifactReviewDirectory") as? String {
+            NSApp.setActivationPolicy(.regular)
+            let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 960, height: 820),
+                                  styleMask: [.titled, .closable, .miniaturizable, .resizable], backing: .buffered, defer: false)
+            window.title = "Zimlo · Mac 成果验收"
+            window.contentView = NSHostingView(rootView: NativeArtifactReview(directory: directory))
+            window.contentMinSize = NSSize(width: 740, height: 640)
+            window.setContentSize(NSSize(width: 960, height: 820))
+            window.isReleasedWhenClosed = false
+            window.center(); window.makeKeyAndOrderFront(nil)
+            artifactReviewWindow = window
+            NSApp.activate(ignoringOtherApps: true)
+            return
+        }
+        #endif
         // Zimlo has a real app window in addition to its menu-bar control.
         // A regular activation policy keeps the app discoverable in the Dock,
         // app switcher, and macOS application menu while that window is open.
@@ -43,6 +62,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         _ sender: NSApplication,
         hasVisibleWindows flag: Bool
     ) -> Bool {
+        #if DEBUG
+        if let artifactReviewWindow { artifactReviewWindow.makeKeyAndOrderFront(nil); return true }
+        #endif
         guard !flag else { return true }
         if AppModel.shared.onboarding.completed {
             WindowCoordinator.shared.showMainApp()

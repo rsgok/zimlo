@@ -11,6 +11,8 @@ cargo run --locked --manifest-path runtime/Cargo.toml -p zimlo-cli -- codex-plug
 
 旧版兼容回归：给 hook transport 输入一个没有 Feed 决策的 `Stop` 事件，stdout 必须为空，SQLite 对应 checkpoint 应变为 `implicit_skip`；重复同一 Stop 仍为空且不会覆盖显式 `post/skip`。新安装配置不得再声明 Stop hook。
 
+重复接入回归：先准备三个用户级 Zimlo hook，再安装 Personal 插件。桌面版与 CLI 的有效配置合并后只能包含三个 Zimlo handler；旧的 Stop / PostToolUse / UserPromptSubmit 也必须清理，其他 handler 与原配置备份必须保留。重复执行 CLI 修复与插件安装不得重新添加用户级 hook。三个共享 hook 使用 `--surface auto`，SessionStart 显示 `Binding Zimlo session`；桌面进程链、交互 CLI、无 TTY 的 Codex exec 和来源不明的 app-server 分别识别为 gui、cli、cli、unknown。
+
 ## 自动验证
 
 ```bash

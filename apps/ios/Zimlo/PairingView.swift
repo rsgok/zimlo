@@ -206,9 +206,9 @@ struct PairingView: View {
         attemptedPairing = true
         connecting = true
         Task {
-            await model.bridge.pair(using: url)
+            let paired = await model.bridge.pair(using: url)
             connecting = false
-            if !model.bridge.pairingRequired, model.bridge.error == nil {
+            if paired {
                 onPaired?()
             }
         }

@@ -4,6 +4,14 @@ import XCTest
 @testable import ZimloCore
 
 final class ProductExperienceTests: XCTestCase {
+    func testResumedTaskAndApprovalOverrideAnEarlierCompletedResult() {
+        XCTAssertEqual(CurrentTaskState.resolve(taskState: "completed", taskUpdatedAt: "2026-09-05T10:00:00Z",
+            sessionState: "idle", activeCommandCreatedAt: "2026-09-05T11:00:00Z", hasPendingAction: false), "running")
+        XCTAssertEqual(CurrentTaskState.resolve(taskState: "completed", taskUpdatedAt: "2026-09-05T10:00:00Z",
+            sessionState: "idle", activeCommandCreatedAt: nil, hasPendingAction: true), "waiting")
+        XCTAssertEqual(CurrentTaskState.resolve(taskState: "user_review", taskUpdatedAt: "2026-09-05T12:00:00Z",
+            sessionState: "running", activeCommandCreatedAt: "2026-09-05T11:00:00Z", hasPendingAction: false), "user_review")
+    }
     @MainActor func testTemplatesPersistAndDeletingAllDoesNotRestoreDefaults() throws {
         let suite = "zimlo-tests-\(UUID())"; let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
         defer { defaults.removePersistentDomain(forName: suite) }

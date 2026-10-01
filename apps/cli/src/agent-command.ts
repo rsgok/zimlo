@@ -13,6 +13,7 @@ const COMMON_BIN_DIRS = [
 
 const APP_BINARIES: Record<"codex" | "claude", string[]> = {
   codex: [
+    "/Applications/ChatGPT.app/Contents/Resources/codex-cli/CodexCLI.app/Contents/MacOS/codex",
     "/Applications/ChatGPT.app/Contents/Resources/codex",
     "/Applications/Codex.app/Contents/Resources/codex",
   ],

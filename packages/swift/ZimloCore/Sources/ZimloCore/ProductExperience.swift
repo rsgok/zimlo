@@ -1,6 +1,15 @@
 import Combine
 import Foundation
 
+public enum CurrentTaskState {
+    public static func resolve(taskState: String?, taskUpdatedAt: String?, sessionState: String,
+                               activeCommandCreatedAt: String?, hasPendingAction: Bool) -> String {
+        if hasPendingAction { return "waiting" }
+        if let started = activeCommandCreatedAt, started > (taskUpdatedAt ?? "") { return "running" }
+        return taskState ?? sessionState
+    }
+}
+
 public struct HistoryEntry: Codable, Hashable, Identifiable, Sendable {
     public var id: String
     public var hostId: String

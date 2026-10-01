@@ -146,7 +146,7 @@ enum NativeFeedArchiveGesture {
     }
 }
 
-private struct NativeFeedCard: View {
+struct NativeFeedCard: View {
     @ObservedObject var store: NativeAppStore
     let post: FeedPost
     let minimumHeight: CGFloat
@@ -196,7 +196,7 @@ private struct NativeFeedCard: View {
         ZStack(alignment: .trailing) {
             archiveBackground
             Group {
-                if let sessionID = post.sessionId {
+                if let sessionID = post.sessionId, mediaContent?.type != "image_album" {
                     NavigationLink(value: NativeRoute.task(sessionID)) { cardBody }
                         .buttonStyle(.plain)
                 } else {
@@ -207,7 +207,7 @@ private struct NativeFeedCard: View {
             .opacity(isArchiving ? 0.72 : 1)
         }
         .clipShape(RoundedRectangle(cornerRadius: 19, style: .continuous))
-        .highPriorityGesture(archiveGesture)
+        .highPriorityGesture(archiveGesture, including: mediaContent?.type == "image_album" ? .none : .all)
         .accessibilityAction(named: "归档") { archive() }
         .onAppear {
             // Lazy stacks may reuse a card's view state if an archive is undone
@@ -290,7 +290,7 @@ private struct NativeFeedCard: View {
                             .opacity(0.62)
                     }
                     Spacer()
-                    Text("\(post.kind.uppercased()) / \(post.presentation.system.uppercased())")
+                    Text(["result": "成果", "progress": "进展", "decision": "决策", "attention": "需要关注", "failure": "遇到问题"][post.kind] ?? "动态")
                         .font(.system(size: 9, weight: .black, design: .monospaced))
                         .tracking(1)
                         .foregroundStyle(isFullBleed ? Color.white.opacity(0.78) : palette.accent)
@@ -299,7 +299,7 @@ private struct NativeFeedCard: View {
                 .foregroundStyle(isFullBleed ? Color.white : palette.ink)
                 .padding(.bottom, 20)
 
-                if post.presentation.mediaPlacement == "split", let mediaContent {
+                if post.presentation.mediaPlacement == "split", let mediaContent, mediaContent.type != "image_album" {
                     HStack(alignment: .center, spacing: 24) {
                         NativeFeedMaterialSummary(store: store, content: mediaContent)
                             .frame(maxWidth: .infinity)
@@ -313,7 +313,8 @@ private struct NativeFeedCard: View {
                     copy
                 }
 
-                Spacer(minLength: 24)
+                if mediaContent?.type != "image_album" { Spacer(minLength: 24) }
+                if post.proof?.isEmpty == false || pendingAction != nil || post.sessionId != nil {
                 HStack(spacing: 10) {
                     if let proof = post.proof, !proof.isEmpty {
                         Label(proof, systemImage: "checkmark.seal.fill")
@@ -322,12 +323,24 @@ private struct NativeFeedCard: View {
                     }
                     Spacer()
                     if let pendingAction {
-                        Label(pendingAction.title, systemImage: "arrow.right.circle.fill")
+                        Group {
+                            if mediaContent?.type == "image_album" {
+                                NavigationLink(value: NativeRoute.task(pendingAction.sessionId)) {
+                                    Label(pendingAction.title, systemImage: "arrow.right.circle.fill")
+                                }.buttonStyle(.plain)
+                            } else {
+                                Label(pendingAction.title, systemImage: "arrow.right.circle.fill")
+                            }
+                        }
                             .font(.system(size: 11, weight: .bold))
                             .foregroundStyle(isFullBleed ? Color.white : palette.accent)
                             .lineLimit(1)
-                    } else if post.sessionId != nil {
-                        Label("查看任务", systemImage: "arrow.right")
+                    } else if let sessionID = post.sessionId {
+                        Group {
+                            if mediaContent?.type == "image_album" {
+                                NavigationLink(value: NativeRoute.task(sessionID)) { Label("查看任务", systemImage: "arrow.right") }.buttonStyle(.plain)
+                            } else { Label("查看任务", systemImage: "arrow.right") }
+                        }
                             .font(.system(size: 11, weight: .bold))
                             .foregroundStyle(isFullBleed ? Color.white : palette.accent)
                     }
@@ -335,6 +348,8 @@ private struct NativeFeedCard: View {
                 .foregroundStyle(isFullBleed ? Color.white.opacity(0.76) : palette.ink.opacity(0.66))
                 .padding(.top, 14)
                 .overlay(alignment: .top) { Rectangle().fill(isFullBleed ? Color.white.opacity(0.22) : palette.ink.opacity(0.18)).frame(height: 1) }
+                .padding(.top, mediaContent?.type == "image_album" ? 16 : 0)
+                }
             }
             .padding(cardPadding)
         }
@@ -488,24 +503,12 @@ private struct NativeFeedMaterialSummary: View {
     var body: some View {
         switch presentation {
         case .imageAlbum(let ids):
-            let images = ids.prefix(3).compactMap { material($0) }
-            if !images.isEmpty {
-                HStack(spacing: 10) {
-                    ForEach(images) { image in
-                        NativeFeedImagePreview(
-                            material: image,
-                            url: store.materialURL(image),
-                            height: images.count == 1 ? 220 : 180
-                        ) { store.openMaterial(image) }
-                    }
-                }
-                if let caption = content.caption, !caption.isEmpty {
-                    Text(caption)
-                        .font(.system(size: 10, weight: .semibold))
-                        .foregroundStyle(NativeTheme.muted)
-                        .padding(.top, 7)
-                }
-            }
+            NativeArtifactGallery(ids: ids, materials: store.snapshot.materials,
+                                  hostID: store.snapshot.host?.id ?? "unknown",
+                                  source: { store.materialURL($0) },
+                                  opened: { store.metrics?.record(.artifactOpened) })
+                .frame(height: 390)
+                .clipShape(RoundedRectangle(cornerRadius: 14))
         case .video(let materialID, let posterID):
             if let video = material(materialID), let poster = material(posterID) {
                 NativeFeedImagePreview(

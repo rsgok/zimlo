@@ -458,6 +458,16 @@ struct UnifiedEvent: Codable, Hashable, Identifiable {
     var provenance: String
 }
 
+extension Snapshot {
+    func currentState(for session: AgentSession) -> String {
+        let task = session.correlationUncertain ? nil : tasks.filter { $0.sessionId == session.id }.max { $0.updatedAt < $1.updatedAt }
+        let active = commands.filter { $0.sessionId == session.id && ["queued", "dispatching", "running"].contains($0.state) }.map(\.createdAt).max()
+        return CurrentTaskState.resolve(taskState: task?.state, taskUpdatedAt: task?.updatedAt,
+            sessionState: session.status, activeCommandCreatedAt: active,
+            hasPendingAction: actions.contains { $0.sessionId == session.id && $0.state == "pending" })
+    }
+}
+
 struct Snapshot: Codable, Hashable {
     var host: ZimloHost?
     var userProfile: UserProfile

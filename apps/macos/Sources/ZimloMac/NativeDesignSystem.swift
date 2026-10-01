@@ -1,5 +1,6 @@
 import AppKit
 import SwiftUI
+import ZimloCore
 
 enum NativeTheme {
     static let paper = Color(red: 0.045, green: 0.052, blue: 0.049)
@@ -141,6 +142,14 @@ enum CoreActionState: Equatable {
 }
 
 extension NativeSnapshot {
+    func currentState(for session: AgentSession) -> String {
+        let task = task(for: session.id)
+        let active = commands.filter { $0.sessionId == session.id && ["queued", "dispatching", "running"].contains($0.state) }.map(\.createdAt).max()
+        return CurrentTaskState.resolve(taskState: task?.state, taskUpdatedAt: task?.updatedAt,
+            sessionState: session.status, activeCommandCreatedAt: active,
+            hasPendingAction: pendingAction(for: session.id) != nil)
+    }
+
     func project(for session: AgentSession) -> Project? {
         if let projectID = session.projectId,
            let project = projects.first(where: { $0.id == projectID }) {

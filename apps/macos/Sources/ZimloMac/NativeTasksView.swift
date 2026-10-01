@@ -36,7 +36,7 @@ struct NativeTasksView: View {
         let recentBoundary = Date().addingTimeInterval(-7 * 24 * 60 * 60)
         return collapsedSessions
             .filter { session in
-                let state = store.snapshot.task(for: session.id)?.state ?? session.status
+                let state = store.snapshot.currentState(for: session)
                 let preference = store.snapshot.preference(for: session.id)
                 let archived = preference?.archivedAt != nil
                 switch filter {
@@ -63,8 +63,8 @@ struct NativeTasksView: View {
                 let leftPinned = store.snapshot.preference(for: left.id)?.pinnedAt != nil
                 let rightPinned = store.snapshot.preference(for: right.id)?.pinnedAt != nil
                 if leftPinned != rightPinned { return leftPinned }
-                let leftState = store.snapshot.task(for: left.id)?.state ?? left.status
-                let rightState = store.snapshot.task(for: right.id)?.state ?? right.status
+                let leftState = store.snapshot.currentState(for: left)
+                let rightState = store.snapshot.currentState(for: right)
                 let leftPriority = priority(leftState)
                 let rightPriority = priority(rightState)
                 if leftPriority != rightPriority { return leftPriority < rightPriority }
@@ -145,7 +145,7 @@ private struct NativeTaskRow: View {
 
     private var task: TaskRecord? { store.snapshot.task(for: session.id) }
     private var project: Project? { store.snapshot.project(for: session) }
-    private var state: String { task?.state ?? session.status }
+    private var state: String { store.snapshot.currentState(for: session) }
     private var pinned: Bool { store.snapshot.preference(for: session.id)?.pinnedAt != nil }
 
     var body: some View {
@@ -202,7 +202,7 @@ struct NativeTaskProfileView: View {
 
     private var project: Project? { store.snapshot.project(for: session) }
     private var task: TaskRecord? { store.snapshot.task(for: session.id) }
-    private var state: String { task?.state ?? session.status }
+    private var state: String { store.snapshot.currentState(for: session) }
     private var events: [UnifiedEvent] { store.eventsBySession[session.id] ?? [] }
     private var posts: [FeedPost] {
         store.snapshot.posts.filter { $0.sessionId == session.id }.sorted { $0.createdAt > $1.createdAt }

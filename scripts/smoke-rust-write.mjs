@@ -8,6 +8,7 @@ import { DatabaseSync } from "node:sqlite";
 import { fileURLToPath } from "node:url";
 import WebSocket from "../apps/cli/node_modules/ws/wrapper.mjs";
 import { ZimloStore } from "../apps/cli/dist/store.js";
+import { verifyArtifactDelivery } from "./verify-artifact-delivery.mjs";
 import { SnapshotReplica } from "../packages/protocol/dist/snapshotReplica.js";
 import {
   createKeyPair,
@@ -41,9 +42,10 @@ let socket;
 
 function prepareFakeClaude() {
   mkdirSync(workspacePath);
+  const completedAt = Date.now();
   const records = [
-    { type: "system", subtype: "init", sessionId: "claude-rust-smoke", cwd: workspacePath, model: "claude", timestamp: "2026-09-02T00:00:00.000Z", uuid: "turn-rust-smoke" },
-    { type: "assistant", sessionId: "claude-rust-smoke", timestamp: "2026-09-02T00:00:01.000Z", uuid: "turn-rust-smoke", message: { stop_reason: "end_turn", content: [{ type: "text", text: "Rust Claude smoke completed" }] } },
+    { type: "system", subtype: "init", sessionId: "claude-rust-smoke", cwd: workspacePath, model: "claude", timestamp: new Date(completedAt - 1_000).toISOString(), uuid: "turn-rust-smoke" },
+    { type: "assistant", sessionId: "claude-rust-smoke", timestamp: new Date(completedAt).toISOString(), uuid: "turn-rust-smoke", message: { stop_reason: "end_turn", content: [{ type: "text", text: "Rust Claude smoke completed" }] } },
   ];
   const output = records.map((record) => `printf '%s\\n' '${JSON.stringify(record)}'`).join("\n");
   writeFileSync(fakeClaudePath, `#!/bin/sh\n${output}\n`);
@@ -78,7 +80,19 @@ printf '%s\\n' '{"method":"turn/completed","params":{"threadId":"codex-rust-smok
 
 function prepareNodeDatabase() {
   const store = new ZimloStore(databasePath);
-  store.database.exec(readFileSync(fixturePath, "utf8"));
+  // The shared compatibility fixture has fixed dates, but a live Runtime
+  // prunes actions and posts older than seven days on startup. Rebase its
+  // timeline so the latest fixture event is one minute old, retaining the
+  // original ordering and keeping the pending action's expiry in the future.
+  const fixtureOffset = Date.now() - Date.parse("2026-09-01T12:11:00.000Z") - 60_000;
+  const fixture = readFileSync(fixturePath, "utf8").replace(
+    /'(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z)'/gu,
+    (_, timestamp) => `'${new Date(Date.parse(timestamp) + fixtureOffset).toISOString()}'`,
+  );
+  store.database.exec(fixture);
+  const action = store.database.prepare("SELECT state, expires_at FROM actions WHERE action_id = 'action-snapshot'").get();
+  assert.equal(action.state, "pending");
+  assert.ok(Date.parse(action.expires_at) > Date.now(), "Startup recovery must expire an action whose deadline has not passed");
   store.database.prepare("UPDATE project_locations SET path = ? WHERE project_id = 'project-snapshot'").run(workspacePath);
   // Keep the recovered fixture command queued until the encrypted client can
   // cancel it. A deliberately unsupported provider prevents discovery from
@@ -281,6 +295,8 @@ async function verifyWriteFlow(baseUrl, credentials) {
   assert.equal(history.page.hostId, snapshot.snapshot.host.id);
   assert.equal(history.page.items.length, 1);
   assert.equal(history.page.items[0].title, "Snapshot 已兼容");
+
+  await verifyArtifactDelivery({ repositoryRoot, temporaryRoot, workspacePath, baseUrl, credentials, bridge });
 
   const trustCommand = {
     type: "trust.policy.update",
@@ -564,6 +580,7 @@ function verifyNodeReopen() {
   assert.equal(preference.pinned_at, null);
   assert.equal(command.state, "canceled");
   assert.equal(command.error, null);
+  assert.ok(action, "The recovered action must remain available after retention cleanup");
   assert.equal(action.state, "expired");
   assert.equal(paired.count, 1);
   assert.equal(material.status, "ready");
@@ -619,6 +636,7 @@ try {
     restartRecovery: true,
     nodeReopen: true,
     encryptedHistory: true,
+    realArtifactGallery: true,
     negotiatedDelta: true,
   }));
 } finally {

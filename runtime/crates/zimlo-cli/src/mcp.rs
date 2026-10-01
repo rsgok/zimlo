@@ -135,6 +135,11 @@ pub async fn run_hook(provider: &str, surface: &str, socket_path: &Path) -> Resu
     let Ok(payload) = serde_json::from_slice::<Value>(&input) else {
         return Ok(());
     };
+    let surface = if surface == "auto" {
+        crate::hook_surface::detect_hook_surface().await
+    } else {
+        surface
+    };
     let waits = payload
         .get("hook_event_name")
         .and_then(Value::as_str)

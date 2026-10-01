@@ -22,19 +22,28 @@ pub async fn statuses(executable: &Path) -> Vec<Value> {
     };
     let claude_mcp = claude_mcp_ready(executable);
     let plugin = plugin_status(executable).await;
+    let plugin_owns_hooks = dirs::home_dir().is_some_and(|home| codex_plugin_owns_hooks(&home));
     vec![
         json!({
             "id": "codex_gui", "provider": "codex", "surface": "gui",
             "state": if plugin["installed"] == true { "ready" } else if codex.is_some() { "partial" } else { "unavailable" },
             "label": "Codex · GUI", "detail": plugin["detail"],
         }),
-        cli_status(
-            "codex_cli",
-            "codex",
-            codex.is_some(),
-            codex_hooks,
-            codex_mcp,
-        ),
+        if plugin_owns_hooks {
+            json!({
+                "id": "codex_cli", "provider": "codex", "surface": "cli",
+                "state": if plugin["installed"] == true { "shared" } else if codex.is_some() { "partial" } else { "unavailable" },
+                "label": "Codex · CLI", "detail": plugin["detail"],
+            })
+        } else {
+            cli_status(
+                "codex_cli",
+                "codex",
+                codex.is_some(),
+                codex_hooks,
+                codex_mcp,
+            )
+        },
         json!({
             "id": "claude_gui", "provider": "claude", "surface": "gui",
             "state": if claude_hooks && claude_mcp { "shared" } else if claude.is_some() { "partial" } else { "unavailable" },
@@ -67,10 +76,14 @@ pub async fn install_selected_cli(
     if providers.is_empty() {
         return Err("尚未发现 Codex 或 Claude Code。".into());
     }
-    for (provider, _) in &providers {
-        write_hook_config(provider, executable, false)?;
-    }
     for (provider, command) in providers {
+        if provider == "codex"
+            && dirs::home_dir().is_some_and(|home| codex_plugin_owns_hooks(&home))
+        {
+            install_plugin(executable).await?;
+            continue;
+        }
+        write_hook_config(provider, executable, false)?;
         let executable = executable.to_string_lossy().into_owned();
         if provider == "codex" {
             let _ = command_output(&command, &["mcp", "remove", "zimlo"]).await;
@@ -112,25 +125,48 @@ pub async fn install_selected_cli(
 }
 
 pub fn hooks_diff(executable: &Path) -> Result<Vec<Value>, String> {
-    ["codex", "claude"]
+    let home = dirs::home_dir().ok_or_else(|| "无法定位用户目录。".to_owned())?;
+    let plugin_owns_hooks = codex_plugin_owns_hooks(&home);
+    let mut changes = ["codex", "claude"]
         .into_iter()
         .map(|provider| {
             let path = hook_path(provider)?;
             let before = read_object(&path)?;
-            let after = merged_hooks(before.clone(), provider, executable, false);
+            let after = desired_user_hooks(
+                before.clone(),
+                provider,
+                executable,
+                false,
+                plugin_owns_hooks,
+            );
             Ok(json!({ "path": path, "before": before, "after": after }))
         })
-        .collect()
+        .collect::<Result<Vec<_>, String>>()?;
+    if plugin_owns_hooks {
+        let path = home.join("plugins/zimlo/hooks/hooks.json");
+        let before = read_object(&path)?;
+        let after = json!({ "description": "Zimlo session binding and synchronous action bridge for Codex", "hooks": hook_groups("codex", executable) });
+        changes.push(json!({ "path": path, "before": before, "after": after }));
+    }
+    Ok(changes)
 }
 
-pub fn install_hooks(executable: &Path, uninstall: bool) -> Result<(), String> {
-    let mut changed = false;
+pub async fn install_hooks(executable: &Path, uninstall: bool) -> Result<(), String> {
+    let mut found = false;
     for provider in ["codex", "claude"] {
         if uninstall || resolve_command(provider).is_some() {
-            changed |= write_hook_config(provider, executable, uninstall)?;
+            found = true;
+            if !uninstall
+                && provider == "codex"
+                && dirs::home_dir().is_some_and(|home| codex_plugin_owns_hooks(&home))
+            {
+                install_plugin(executable).await?;
+            } else {
+                write_hook_config(provider, executable, uninstall)?;
+            }
         }
     }
-    if !changed && !uninstall {
+    if !found && !uninstall {
         return Err("尚未发现 Codex 或 Claude Code。".into());
     }
     Ok(())
@@ -151,11 +187,17 @@ pub async fn plugin_status(executable: &Path) -> Value {
     let mcp = Value::Object(read_object(&plugin.join(".mcp.json")).unwrap_or_default());
     let command = mcp["mcpServers"]["zimlo"]["command"].as_str();
     let args = mcp["mcpServers"]["zimlo"]["args"].as_array();
+    let hooks = Value::Object(read_object(&plugin.join("hooks/hooks.json")).unwrap_or_default());
     let commands_current = command == Some(executable.to_string_lossy().as_ref())
         && args.is_some_and(|args| {
             args.iter().filter_map(Value::as_str).collect::<Vec<_>>()
                 == ["mcp", "--provider", "codex"]
-        });
+        })
+        && hooks["hooks"] == hook_groups("codex", executable);
+    let legacy_hooks = read_object(&home.join(".codex/hooks.json"));
+    let duplicate_hooks = legacy_hooks
+        .as_ref()
+        .is_ok_and(|before| before != &merged_hooks(before.clone(), "codex", executable, true));
     let marketplace = Value::Object(
         read_object(&home.join(".agents/plugins/marketplace.json")).unwrap_or_default(),
     );
@@ -180,14 +222,21 @@ pub async fn plugin_status(executable: &Path) -> Value {
         .as_str()
         .is_some_and(|version| runtime.2.as_deref() == Some(version));
     let plugin_present = manifest.is_file() && installed_manifest["name"] == "zimlo";
-    let source_ready = plugin_present && marketplace_present && commands_current && version_current;
+    let source_ready = plugin_present
+        && marketplace_present
+        && commands_current
+        && version_current
+        && legacy_hooks.is_ok()
+        && !duplicate_hooks;
     let installed = source_ready && runtime.0 && runtime.1 && runtime_version_current;
     let detail = if installed {
-        "Codex App 已启用 Zimlo；新任务会自动出现在 Feed。"
+        "Codex 桌面版与 CLI 共用 Zimlo 插件；请审核 hooks 并新建任务。"
     } else if !plugin_present {
         "未安装"
     } else if !marketplace_present {
         "插件文件存在，但 Personal marketplace 未注册"
+    } else if duplicate_hooks || legacy_hooks.is_err() {
+        "发现重复或无效的 Zimlo 用户级 hook，请修复配置并重新安装插件。"
     } else if !commands_current {
         "插件命令指向旧版 Runtime，需要重新安装"
     } else if !version_current {
@@ -217,6 +266,8 @@ pub async fn plugin_status(executable: &Path) -> Value {
 
 pub async fn install_plugin(executable: &Path) -> Result<Value, String> {
     let home = dirs::home_dir().ok_or_else(|| "无法定位用户目录。".to_owned())?;
+    // Validate before activation; migrate only after the plugin is active.
+    read_object(&home.join(".codex/hooks.json"))?;
     let source = bundled_plugin_root(executable)
         .ok_or_else(|| "Runtime 包中缺少 Codex 插件资源。".to_owned())?;
     let plugins_root = home.join("plugins");
@@ -310,6 +361,7 @@ pub async fn install_plugin(executable: &Path) -> Result<Value, String> {
     if moved_previous {
         fs::remove_dir_all(&previous).map_err(display)?;
     }
+    migrate_codex_hooks(&home, executable)?;
     Ok(plugin_status(executable).await)
 }
 
@@ -413,6 +465,18 @@ fn hook_path(provider: &str) -> Result<PathBuf, String> {
 }
 
 fn hook_ready(provider: &str, executable: &Path) -> bool {
+    if provider == "codex"
+        && let Some(home) = dirs::home_dir()
+        && codex_plugin_owns_hooks(&home)
+    {
+        let config = read_object(&home.join("plugins/zimlo/hooks/hooks.json"));
+        let legacy = read_object(&home.join(".codex/hooks.json"));
+        return config
+            .is_ok_and(|config| config.get("hooks") == Some(&hook_groups("codex", executable)))
+            && legacy.is_ok_and(|config| {
+                config == merged_hooks(config.clone(), "codex", executable, true)
+            });
+    }
     let Ok(path) = hook_path(provider) else {
         return false;
     };
@@ -465,12 +529,50 @@ fn claude_mcp_ready(executable: &Path) -> bool {
 fn write_hook_config(provider: &str, executable: &Path, uninstall: bool) -> Result<bool, String> {
     let path = hook_path(provider)?;
     let before = read_object(&path)?;
-    let after = merged_hooks(before.clone(), provider, executable, uninstall);
+    let plugin_owns_hooks = dirs::home_dir().is_some_and(|home| codex_plugin_owns_hooks(&home));
+    let after = desired_user_hooks(
+        before.clone(),
+        provider,
+        executable,
+        uninstall,
+        plugin_owns_hooks,
+    );
     if before == after {
         return Ok(false);
     }
     write_json(&path, &Value::Object(after))?;
     Ok(true)
+}
+
+fn codex_plugin_owns_hooks(home: &Path) -> bool {
+    let manifest = read_object(&home.join("plugins/zimlo/.codex-plugin/plugin.json"));
+    manifest.is_ok_and(|value| value.get("name") == Some(&json!("zimlo")))
+}
+
+fn migrate_codex_hooks(home: &Path, executable: &Path) -> Result<bool, String> {
+    let path = home.join(".codex/hooks.json");
+    let before = read_object(&path)?;
+    let after = merged_hooks(before.clone(), "codex", executable, true);
+    if before == after {
+        return Ok(false);
+    }
+    write_json(&path, &Value::Object(after))?;
+    Ok(true)
+}
+
+fn desired_user_hooks(
+    root: Map<String, Value>,
+    provider: &str,
+    executable: &Path,
+    uninstall: bool,
+    plugin_owns_hooks: bool,
+) -> Map<String, Value> {
+    merged_hooks(
+        root,
+        provider,
+        executable,
+        uninstall || (provider == "codex" && plugin_owns_hooks),
+    )
 }
 
 fn merged_hooks(
@@ -479,46 +581,59 @@ fn merged_hooks(
     executable: &Path,
     uninstall: bool,
 ) -> Map<String, Value> {
-    let command = hook_command(
-        executable,
-        provider,
-        if provider == "codex" { "cli" } else { "auto" },
-    );
+    let command = hook_command(executable, provider, "auto");
+    if uninstall && !root.get("hooks").is_some_and(Value::is_object) {
+        return root;
+    }
     let hooks = root.entry("hooks").or_insert_with(|| json!({}));
     if !hooks.is_object() {
         *hooks = json!({});
     }
     let hooks = hooks.as_object_mut().expect("object");
-    for event in EVENTS {
-        let groups = hooks.entry(event).or_insert_with(|| json!([]));
-        if !groups.is_array() {
-            *groups = json!([]);
-        }
-        let groups = groups.as_array_mut().expect("array");
-        for group in groups.iter_mut() {
-            if let Some(handlers) = group["hooks"].as_array_mut() {
+    let mut empty_events = Vec::new();
+    for (event, raw_groups) in hooks.iter_mut() {
+        let Some(groups) = raw_groups.as_array_mut() else {
+            continue;
+        };
+        let count = groups.len();
+        groups.retain_mut(|group| {
+            if let Some(handlers) = group.get_mut("hooks").and_then(Value::as_array_mut) {
+                let count = handlers.len();
                 handlers.retain(|handler| {
                     !handler["command"].as_str().is_some_and(|value| {
                         value.contains("zimlo")
                             && value.contains(&format!("hook --provider {provider}"))
                     })
                 });
+                count == handlers.len() || !handlers.is_empty()
+            } else {
+                true
             }
-        }
-        groups.retain(|group| {
-            group["hooks"]
-                .as_array()
-                .is_none_or(|handlers| !handlers.is_empty())
         });
-        if !uninstall {
-            groups.push(single_hook_group(event, provider, &command));
+        if count > 0 && groups.is_empty() {
+            empty_events.push(event.clone());
+        }
+    }
+    for event in empty_events {
+        hooks.remove(&event);
+    }
+    if !uninstall {
+        for event in EVENTS {
+            let groups = hooks.entry(event).or_insert_with(|| json!([]));
+            if !groups.is_array() {
+                *groups = json!([]);
+            }
+            groups
+                .as_array_mut()
+                .expect("array")
+                .push(single_hook_group(event, provider, &command));
         }
     }
     root
 }
 
 fn hook_groups(provider: &str, executable: &Path) -> Value {
-    let command = hook_command(executable, provider, "gui");
+    let command = hook_command(executable, provider, "auto");
     Value::Object(
         EVENTS
             .into_iter()
@@ -543,6 +658,9 @@ fn single_hook_group(event: &str, provider: &str, command: &str) -> Value {
     }
     if event == "PreToolUse" {
         handler["statusMessage"] = json!("Waiting for Zimlo input");
+    }
+    if event == "SessionStart" {
+        handler["statusMessage"] = json!("Binding Zimlo session");
     }
     json!({
         "matcher": if event == "SessionStart" { "startup|resume|clear" } else if event == "PreToolUse" { if provider == "codex" { "request_user_input" } else { "AskUserQuestion" } } else { "*" },
@@ -579,6 +697,24 @@ fn bundled_plugin_root(executable: &Path) -> Option<PathBuf> {
 }
 
 fn resolve_command(name: &str) -> Option<PathBuf> {
+    let override_name = match name {
+        "codex" => "ZIMLO_CODEX_BIN",
+        "claude" => "ZIMLO_CLAUDE_BIN",
+        _ => return None,
+    };
+    if let Some(path) = std::env::var_os(override_name).filter(|value| !value.is_empty()) {
+        let path = PathBuf::from(path);
+        return executable(&path).then_some(path);
+    }
+    let applications: &[&str] = if name == "codex" {
+        &[
+            "/Applications/ChatGPT.app/Contents/Resources/codex-cli/CodexCLI.app/Contents/MacOS/codex",
+            "/Applications/ChatGPT.app/Contents/Resources/codex",
+            "/Applications/Codex.app/Contents/Resources/codex",
+        ]
+    } else {
+        &["/Applications/Claude.app/Contents/Resources/claude"]
+    };
     let paths = std::env::var_os("PATH")
         .into_iter()
         .flat_map(|value| std::env::split_paths(&value).collect::<Vec<_>>())
@@ -587,9 +723,29 @@ fn resolve_command(name: &str) -> Option<PathBuf> {
             PathBuf::from("/opt/homebrew/bin"),
             PathBuf::from("/usr/local/bin"),
         ]);
-    paths
-        .map(|directory| directory.join(name))
-        .find(|path| path.is_file())
+    applications
+        .iter()
+        .map(PathBuf::from)
+        .chain(paths.map(|directory| directory.join(name)))
+        .find(|path| executable(path))
+}
+
+fn executable(path: &Path) -> bool {
+    let Ok(metadata) = fs::metadata(path) else {
+        return false;
+    };
+    if !metadata.is_file() {
+        return false;
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt as _;
+        metadata.permissions().mode() & 0o111 != 0
+    }
+    #[cfg(not(unix))]
+    {
+        true
+    }
 }
 
 async fn command_output(command: &Path, arguments: &[&str]) -> Option<String> {
@@ -701,7 +857,10 @@ mod tests {
 
     use serde_json::Map;
 
-    use super::{hook_config_ready, merged_hooks, shell_quote};
+    use super::{
+        codex_plugin_owns_hooks, desired_user_hooks, hook_config_ready, hook_groups, merged_hooks,
+        migrate_codex_hooks, read_object, shell_quote, write_json,
+    };
 
     #[test]
     fn hook_merge_preserves_unrelated_entries_and_is_idempotent() {
@@ -731,5 +890,72 @@ mod tests {
             "codex",
             Path::new("/opt/zimlo")
         ));
+    }
+
+    #[test]
+    fn plugin_and_cli_repairs_keep_exactly_one_three_hook_set() {
+        let home = tempfile::tempdir().expect("home");
+        write_json(
+            &home.path().join("plugins/zimlo/.codex-plugin/plugin.json"),
+            &serde_json::json!({"name": "zimlo"}),
+        )
+        .expect("manifest");
+        write_json(&home.path().join(".agents/plugins/marketplace.json"),
+            &serde_json::json!({"plugins": [{"name": "zimlo", "source": {"source": "local", "path": "./plugins/zimlo"}}]})).expect("marketplace");
+        assert!(codex_plugin_owns_hooks(home.path()));
+        let executable = Path::new("/opt/zimlo");
+        let legacy = merged_hooks(Map::new(), "codex", executable, false);
+        let repaired = desired_user_hooks(legacy, "codex", executable, false, true);
+        let again = desired_user_hooks(repaired.clone(), "codex", executable, false, true);
+        assert_eq!(repaired, again);
+        let combined = serde_json::json!([repaired, hook_groups("codex", executable)]).to_string();
+        assert_eq!(combined.matches("hook --provider codex").count(), 3);
+        assert_eq!(combined.matches("--surface auto").count(), 3);
+        assert!(combined.contains("Binding Zimlo session"));
+    }
+
+    #[test]
+    fn migration_backs_up_all_legacy_events_and_preserves_user_handlers() {
+        let home = tempfile::tempdir().expect("home");
+        let path = home.path().join(".codex/hooks.json");
+        let legacy = serde_json::json!({ "custom": true, "hooks": {
+            "SessionStart": [{"hooks": [{"command": "'/old/zimlo' hook --provider codex --surface cli"}]}],
+            "Stop": [{"matcher": "*", "hooks": [
+                {"command": "'/old/zimlo' hook --provider codex --surface cli"},
+                {"command": "my-review-hook", "timeout": 17}
+            ]}],
+            "PostToolUse": [{"hooks": [{"command": "'/old/zimlo' hook --provider codex --surface cli"}]}],
+            "UserPromptSubmit": [{"hooks": [{"command": "'/old/zimlo' hook --provider codex --surface cli"}]}]
+        }});
+        write_json(&path, &legacy).expect("legacy");
+        assert!(migrate_codex_hooks(home.path(), Path::new("/opt/zimlo")).expect("migration"));
+        assert_eq!(
+            serde_json::Value::Object(read_object(&path).expect("read")),
+            serde_json::json!({ "custom": true, "hooks": { "Stop": [{"matcher": "*", "hooks": [{"command": "my-review-hook", "timeout": 17}]}] }})
+        );
+        assert!(!migrate_codex_hooks(home.path(), Path::new("/opt/zimlo")).expect("repeat"));
+        let backups = std::fs::read_dir(path.parent().expect("parent"))
+            .expect("list")
+            .filter_map(Result::ok)
+            .filter(|entry| entry.file_name().to_string_lossy().contains("zimlo-backup"))
+            .collect::<Vec<_>>();
+        assert_eq!(backups.len(), 1);
+        assert_eq!(
+            serde_json::Value::Object(read_object(&backups[0].path()).expect("backup")),
+            legacy
+        );
+    }
+
+    #[test]
+    fn migrating_missing_or_malformed_user_config_never_creates_or_overwrites_it() {
+        let home = tempfile::tempdir().expect("home");
+        let executable = Path::new("/opt/zimlo");
+        assert!(!migrate_codex_hooks(home.path(), executable).expect("missing"));
+        let path = home.path().join(".codex/hooks.json");
+        assert!(!path.exists());
+        std::fs::create_dir_all(path.parent().expect("parent")).expect("directory");
+        std::fs::write(&path, "invalid json").expect("write");
+        assert!(migrate_codex_hooks(home.path(), executable).is_err());
+        assert_eq!(std::fs::read_to_string(path).expect("read"), "invalid json");
     }
 }

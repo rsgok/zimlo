@@ -184,22 +184,28 @@ struct MainAppView: View {
 
     @ViewBuilder
     private var loadOverlay: some View {
-        switch store.loadState {
-        case .idle, .loading:
-            NativeLoadingView(message: "正在连接本地 Zimlo…")
+        if service.state == .starting {
+            NativeLoadingView(message: "正在准备 Zimlo 后台…")
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
                 .background(NativeTheme.paper)
-        case .failed(let message):
-            NativeFailureView(message: message) {
-                Task {
-                    if !service.isReady { await service.retry() }
-                    await store.refresh()
+        } else {
+            switch store.loadState {
+            case .idle, .loading:
+                NativeLoadingView(message: "正在连接本地 Zimlo…")
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .background(NativeTheme.paper)
+            case .failed(let message):
+                NativeFailureView(message: message) {
+                    Task {
+                        if !service.isReady { await service.retry() }
+                        await store.refresh()
+                    }
                 }
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .background(NativeTheme.paper)
+            case .loaded:
+                EmptyView()
             }
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
-            .background(NativeTheme.paper)
-        case .loaded:
-            EmptyView()
         }
     }
 }

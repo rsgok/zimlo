@@ -228,7 +228,9 @@ zimlo codex-plugin install
 
 ### Codex CLI 与 Claude Code
 
-Codex CLI 和 Claude Code 仍可使用手动集成：
+安装了 Zimlo Personal 插件时，Codex 桌面版与 CLI 共用插件中的三个 hook；安装器会备份并清理旧的 Zimlo 用户级 hook。两端均由实际进程来源识别 GUI/CLI，后续 CLI 修复不会重新添加另一套 hook。CLI 使用 `/hooks` 审核，桌面版在设置中审核。
+
+没有插件的纯 Codex CLI 安装，以及 Claude Code，仍可使用手动集成：
 
 ```bash
 zimlo hooks diff

@@ -215,10 +215,7 @@ struct TaskDetailProjection {
         commands = (localFollowUps + snapshot.commands.filter { $0.sessionId == session.id })
             .sorted { $0.createdAt > $1.createdAt }
 
-        let task = snapshot.tasks.lazy
-            .filter { $0.sessionId == session.id }
-            .max { $0.updatedAt < $1.updatedAt }
-        currentState = task?.state ?? session.status
+        currentState = snapshot.currentState(for: session)
         pendingActions = snapshot.actions.filter { $0.sessionId == session.id && $0.state == "pending" }
         activeQueue = commands.filter { ["queued", "dispatching", "running"].contains($0.state) }
         taskInput = Self.originalInput(sessionTitle: session.title, sessionEvents: sessionEvents)

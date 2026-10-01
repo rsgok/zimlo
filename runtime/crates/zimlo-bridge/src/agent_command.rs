@@ -24,6 +24,7 @@ impl AgentProvider {
     fn application_binaries(self) -> &'static [&'static str] {
         match self {
             Self::Codex => &[
+                "/Applications/ChatGPT.app/Contents/Resources/codex-cli/CodexCLI.app/Contents/MacOS/codex",
                 "/Applications/ChatGPT.app/Contents/Resources/codex",
                 "/Applications/Codex.app/Contents/Resources/codex",
             ],

@@ -740,8 +740,10 @@ final class BridgeClient: ObservableObject {
         channels.values.forEach { $0.retryNow() }
     }
 
-    func pair(using pairingURL: URL) async {
+    @discardableResult
+    func pair(using pairingURL: URL) async -> Bool {
         error = nil
+        var saved = false
         let channel = HostBridgeClient()
         channel.backoffRandom = backoffRandom
         channel.onPaired = { [weak self, weak channel] credentials in
@@ -751,13 +753,17 @@ final class BridgeClient: ObservableObject {
                 self.attach(channel, credentials: credentials)
                 self.pairingRequired = false
                 self.refreshState()
+                saved = true
             } catch {
-                self.error = "无法安全保存这台运行设备的连接信息"
+                self.error = (error as NSError).code == -34018
+                    ? "无法安全保存配对信息，请安装已签名的 App 后重试。"
+                    : "无法安全保存这台运行设备的连接信息"
                 channel.stop()
             }
         }
         await channel.pair(using: pairingURL)
         if let value = channel.error { error = value }
+        return saved
     }
 
     func send(_ command: ClientCommand) -> Bool {

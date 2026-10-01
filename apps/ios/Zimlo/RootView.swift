@@ -385,11 +385,7 @@ struct RootView: View {
 
     private var selectedSessionState: String? {
         guard let session = model.selectedSession else { return nil }
-        guard !session.correlationUncertain else { return session.status }
-        return model.snapshot.tasks.lazy
-            .filter { $0.sessionId == session.id }
-            .max { $0.updatedAt < $1.updatedAt }?
-            .state ?? session.status
+        return model.snapshot.currentState(for: session)
     }
 
     private var detailStatusColor: Color? {

@@ -4,7 +4,9 @@ use serde::Deserialize;
 use sha2::{Digest as _, Sha256};
 use tempfile::tempdir;
 
-use super::{SnapshotOptions, Store, StoreError, StoreMode, StoredSession, UnifiedEvent};
+use super::{
+    DeviceRecord, SnapshotOptions, Store, StoreError, StoreMode, StoredSession, UnifiedEvent,
+};
 
 #[derive(Deserialize)]
 struct StoreCompatibilityVector {
@@ -102,6 +104,50 @@ async fn enforces_event_query_bounds() {
         store.list_events("session-1", 1_001).await,
         Err(StoreError::InvalidEventLimit)
     );
+}
+
+#[tokio::test]
+async fn reusing_local_admin_preserves_version_and_does_not_notify_subscribers() {
+    let store = Store::open(":memory:", StoreMode::ReadWriteCreate)
+        .await
+        .expect("memory store");
+    let mut changes = store.subscribe_changes();
+    let before = store.data_version().await.expect("initial version");
+    let candidate = DeviceRecord {
+        id: "first-local-admin".into(),
+        name: "Local Admin".into(),
+        key_base64: "fixture-key".into(),
+        created_at: "2026-09-01T10:00:00.000Z".into(),
+        last_seen_at: "2026-09-01T10:00:00.000Z".into(),
+        revoked_at: None,
+        is_local_admin: true,
+        can_approve: true,
+        can_manage_trust: true,
+    };
+    let created = store
+        .ensure_local_admin(candidate.clone())
+        .await
+        .expect("create local admin");
+    let version = store.data_version().await.expect("created version");
+    assert_ne!(version, before);
+    assert!(changes.has_changed().expect("change subscription"));
+    changes.borrow_and_update();
+
+    for index in 0..3 {
+        let existing = store
+            .ensure_local_admin(DeviceRecord {
+                id: format!("unused-candidate-{index}"),
+                ..candidate.clone()
+            })
+            .await
+            .expect("reuse local admin");
+        assert_eq!(existing, created);
+        assert_eq!(
+            store.data_version().await.expect("unchanged version"),
+            version
+        );
+        assert!(!changes.has_changed().expect("change subscription"));
+    }
 }
 
 #[tokio::test]
